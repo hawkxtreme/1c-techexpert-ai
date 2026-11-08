@@ -10,6 +10,6 @@ Explain what changed and why.
 
 ## Knowledge contributions
 
-- [ ] Mark new knowledge cases as drafts pending expert review.
+- [ ] Use `knowledge/cases/TEMPLATE.md` and mark new cases as drafts pending expert review.
 - [ ] State applicable platform, configuration and DBMS versions.
 - [ ] Explain the evidence supporting a claimed root cause.

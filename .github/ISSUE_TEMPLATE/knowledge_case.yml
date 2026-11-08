@@ -1,6 +1,7 @@
 name: Suggest a knowledge case
 description: Propose a sanitized 1C diagnostic case for expert review
 title: "[Knowledge] "
+labels: [knowledge, expert-review]
 body:
   - type: textarea
     id: symptom

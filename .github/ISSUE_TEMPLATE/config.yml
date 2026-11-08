@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions and discussions
+    url: https://github.com/hawkxtreme/1c-techexpert-ai/discussions
+    about: Ask questions or discuss diagnostic techniques using anonymized examples.

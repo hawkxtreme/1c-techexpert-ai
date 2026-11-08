@@ -1,0 +1,19 @@
+name: Feature request
+description: Suggest a diagnostic capability or an improvement to the investigation workflow
+title: "[Feature] "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the diagnostic scenario using anonymized examples.
+    validations:
+      required: true
+  - type: textarea
+    id: expected_result
+    attributes:
+      label: Expected result
+      description: Explain what the expert should return and how you would verify it.
+    validations:
+      required: true
