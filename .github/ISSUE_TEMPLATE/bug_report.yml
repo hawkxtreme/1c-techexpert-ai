@@ -1,0 +1,19 @@
+name: Bug report
+description: Report an issue in 1C TechExpert AI (do not share production logs or credentials)
+title: "[Bug] "
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the issue without private or production data.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Safe reproduction steps
+  - type: input
+    id: environment
+    attributes:
+      label: OS and 1C/platform versions (if relevant)

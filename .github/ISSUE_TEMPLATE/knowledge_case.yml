@@ -1,0 +1,19 @@
+name: Suggest a knowledge case
+description: Propose a sanitized 1C diagnostic case for expert review
+title: "[Knowledge] "
+body:
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom and environment
+      description: No personal, corporate or secret information.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or diagnostic procedure
+  - type: textarea
+    id: cause
+    attributes:
+      label: Root cause (confirmed or hypothesis?)
