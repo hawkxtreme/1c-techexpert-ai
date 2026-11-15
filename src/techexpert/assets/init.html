@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Источники · 1C TechExpert AI</title>
+  <style nonce="__CSP_NONCE__">
+    :root { color-scheme: light dark; --background: light-dark(#f6f4ee,#22211f); --surface: light-dark(#fff,#2c2a27); --text: light-dark(#302c22,#f1ede3); --muted: light-dark(#6b6355,#bfb7a7); --border: light-dark(#dcd6c9,#514a3e); --soft: light-dark(#f7f3e7,#363228); --yellow: light-dark(#ffe15a,#e3bc3e); --red: light-dark(#ad252a,#ff9d98); --error: light-dark(#a52725,#ffb1a9); }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--background); color: var(--text); font: 15px/1.5 system-ui,sans-serif; }
+    [hidden] { display: none !important; }
+    header { background: var(--yellow); color: #6b171b; padding: 17px max(18px,calc((100% - 940px)/2)); }
+    header strong { font-size: 19px; font-weight: 600; }
+    header p { color: #4d421b; margin: 3px 0 0; font-size: 13px; }
+    main { max-width: 940px; margin: 0 auto; padding: 22px 18px 40px; }
+    h1 { font-size: 26px; font-weight: 600; line-height: 1.2; margin: 0 0 7px; }
+    h2 { font-size: 17px; font-weight: 600; margin: 0; }
+    p { margin: 0; }
+    .sub { color: var(--muted); margin-bottom: 20px; }
+    .steps { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 22px; }
+    button { font: inherit; padding: 9px 14px; min-height: 42px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface); cursor: pointer; }
+    button:hover { background: var(--soft); }
+    button:disabled { opacity: .55; cursor: default; }
+    button.primary { background: var(--yellow); color: #302716; border-color: #baa044; font-weight: 600; }
+    button.link { color: var(--red); border: none; background: transparent; padding-inline: 2px; }
+    .steps button { flex: 1 1 160px; font-size: 14px; }
+    .steps button[aria-current="step"] { border-color: var(--red); color: var(--red); background: var(--soft); }
+    label.field { display: grid; gap: 5px; min-width: 0; }
+    label.field > span { font-weight: 500; }
+    input[type="text"], select { width: 100%; min-width: 0; font: inherit; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+    input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--red); margin: 2px 0 0; }
+    .check { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+    .check span { min-width: 0; overflow-wrap: anywhere; }
+    .grid { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 13px; }
+    .stack { display: grid; gap: 15px; }
+    .inline { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+    .inline > .field { flex: 1 1 260px; }
+    .note { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+    .hint { padding: 11px 13px; border-radius: 7px; background: var(--soft); color: var(--muted); font-size: 13px; }
+    .box { border: 1px solid var(--border); border-radius: 9px; padding: 16px; background: var(--surface); }
+    details > summary { cursor: pointer; font-weight: 600; overflow-wrap: anywhere; }
+    details[open] > summary { margin-bottom: 14px; }
+    .base { padding: 13px 0; display: flex; align-items: start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); }
+    .base .check { flex: 1; }
+    .base-title { display: block; font-weight: 600; }
+    .base-info { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
+    .base button { padding: 4px 8px; min-height: 32px; }
+    fieldset { padding: 0; margin: 0; border: none; min-width: 0; }
+    legend { padding: 0 0 6px; font-weight: 500; }
+    .bindings { display: flex; flex-wrap: wrap; gap: 10px 20px; }
+    .bindings .check { padding-block: 5px; }
+    footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-top: 1px solid var(--border); padding-top: 20px; margin-top: 23px; }
+    #notice { padding: 12px 14px; background: var(--soft); margin-bottom: 18px; border-radius: 6px; overflow-wrap: anywhere; }
+    #notice.error { color: var(--error); }
+    #saved-list { padding: 0; margin: 0; display: grid; gap: 13px; }
+    #saved-list > div { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    #saved-list dt { font-weight: 600; }
+    #saved-list dd { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
+    @media(max-width:600px) { .grid { grid-template-columns: 1fr; } .box { padding: 13px; } main { padding: 18px 14px 30px; } h1 { font-size: 23px; } .inline > button { width: 100%; } footer > button { flex: 1 1 180px; } .steps { gap: 5px; } .steps button { flex-basis: 130px; padding-inline: 8px; } }
+    @media(pointer:coarse) { button, .check { min-height: 44px; } input[type="text"], select { font-size: 16px; } }
+  </style>
+</head>
+<body>
+  <header><strong>1C TechExpert AI</strong><p>Настройка источников для агента в текущем чате</p></header>
+  <main id="source-app">
+    <nav class="steps" aria-label="Настройка окружения">
+      <button type="button" data-step="bases" aria-current="step">1 · Базы окружения</button>
+      <button type="button" data-step="sources">2 · Источники</button>
+      <button type="button" data-step="review">3 · Сохранить</button>
+    </nav>
+    <p id="notice" role="status" aria-live="polite" hidden></p>
+    <section data-view="bases" class="stack">
+      <div><h1>Базы окружения</h1><p class="sub">Добавьте нужные базы вручную или прочитайте свой список стартера 1С.</p></div>
+      <label class="field"><span>Название окружения</span><input type="text" id="environment-name" maxlength="120" placeholder="Например, рабочее окружение" autocomplete="off"></label>
+      <details class="box"><summary>Прочитать список стартера 1С</summary><div class="stack"><div class="inline"><label class="field"><span>Путь к .v8i или ibases.v8i на этом компьютере</span><input type="text" id="starter-path" maxlength="1500" placeholder="C:\Users\…\AppData\Roaming\1C\1CEStart\ibases.v8i" spellcheck="false" autocomplete="off"></label><button type="button" id="read-starter">Получить список баз</button></div><p class="note">Читается только указанный файл. Подключений к 1С нет. File обозначает файловую базу; Srvr/Ref — серверную. Адрес SQL из списка не определяется.</p></div></details>
+      <div class="box stack"><h2>Добавить базу вручную</h2><div class="grid"><label class="field"><span>Название базы</span><input type="text" id="manual-name" maxlength="120" placeholder="Как вы называете эту базу" autocomplete="off"></label><label class="field"><span>Тип базы</span><select id="manual-mode"><option value="unknown">Пока не знаю</option><option value="file">Файловая</option><option value="server">Серверная</option></select></label></div><label class="field"><span id="manual-connection-label">Известный адрес · необязательно</span><input type="text" id="manual-connection" maxlength="1500" spellcheck="false" autocomplete="off"><small class="note">Без паролей и токенов. Общая папка UNC и web-адрес сами по себе не определяют тип базы.</small></label><div><button type="button" id="add-base">Добавить базу</button></div></div>
+      <div><h2>Базы для этого профиля</h2><div id="base-list"></div><p id="empty-bases" class="note">Пока ни одной базы. Если подробности неизвестны, добавьте название и оставьте тип «Пока не знаю».</p></div>
+      <footer><span class="note" id="base-count">Выбрано: 0</span><button type="button" class="primary" id="to-sources">К источникам</button></footer>
+    </section>
+    <section data-view="sources" class="stack" hidden>
+      <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
+      <p class="hint" id="source-context"></p>
+      <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
+      <div id="source-list" class="stack"></div>
+      <p id="empty-sources" class="note">Источников пока нет. Можно сохранить выбранные базы и вместе с агентом подготовить необходимые данные.</p>
+      <p class="hint">Этот помощник сохраняет адреса и связи. Доступ, форматы журналов и подключённые системы не проверяются. Нативные адаптеры ещё ожидают реализации; анализ и сбор при сохранении не запускаются.</p>
+      <footer><button type="button" data-back="bases">Назад к базам</button><button type="button" class="primary" id="to-review">Проверить настройки</button></footer>
+    </section>
+    <section data-view="review" class="stack" hidden>
+      <div><h1 id="review-title">Сохранить настройки</h1><p class="sub" id="review-sub">Проверьте состав профиля. Исходные данные останутся по указанным адресам.</p></div>
+      <dl id="saved-list"></dl>
+      <p class="hint" id="save-status">Сохранение не подтверждает доступность источников и не запускает расследование.</p>
+      <footer><button type="button" data-back="sources">Вернуться к источникам</button><button type="button" class="primary" id="save-profile">Сохранить и вернуться к агенту</button><button type="button" class="primary" id="close-helper" hidden>Закрыть помощник</button></footer>
+    </section>
+  </main>
+  <script nonce="__CSP_NONCE__">
+    (() => {
+      'use strict';
+      const root = document.getElementById('source-app');
+      const q = selector => root.querySelector(selector);
+      const token = new URLSearchParams(location.hash.slice(1)).get('token') || '';
+      const typeNames = {tj:'Технологический журнал', jr:'Нативный журнал регистрации', source:'Исходники 1С', sql:'SQL Server / PostgreSQL', os:'Метрики узлов Windows / Linux'};
+      const modeNames = {file:'файловая', server:'серверная', unknown:'тип пока неизвестен'};
+      let state = {schema_version:1, name:'', bases:[], sources:[]};
+      let selected = new Set();
+      let step = 'bases';
+      let saved = null;
+      let busy = false;
+      let serial = 0;
+      const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
+      const baseName = id => state.bases.find(base => base.id === id)?.name || id;
+      const selectedBases = () => state.bases.filter(base => selected.has(base.id));
+      const eligibleBases = type => selectedBases().filter(base => type !== 'sql' || base.mode === 'server');
+      const activeSources = () => state.sources.filter(source => source.type !== 'sql' || eligibleBases('sql').length);
+
+      function message(text, error=false) {
+        const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
+      }
+      function markChanged() { saved = null; message(''); }
+      async function api(route, data) {
+        if (!token) throw new Error('Откройте актуальную ссылку init из текущего чата. В этой вкладке нет ключа доступа.');
+        const options = {method:data === undefined ? 'GET' : 'POST', cache:'no-store', credentials:'omit', headers:{Authorization:'Bearer ' + token}};
+        if (data !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(data); }
+        let response;
+        try { response = await fetch(route, options); }
+        catch (_error) { throw new Error('Помощник недоступен или время его работы истекло. Повторите init в текущем чате.'); }
+        const body = await response.json();
+        if (!response.ok) throw new Error(body.error || 'Не удалось выполнить действие.');
+        return body;
+      }
+      async function perform(action) {
+        if (busy) return;
+        busy = true; root.querySelectorAll('button').forEach(button => { button.disabled = true; });
+        try { await action(); }
+        catch (error) { message(error.message, true); }
+        finally { busy = false; root.querySelectorAll('button').forEach(button => { button.disabled = false; }); }
+      }
+      function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
+      function field(labelText, value, onInput, placeholder='') {
+        const label = element('label', undefined, 'field'); label.append(element('span',labelText));
+        const input = document.createElement('input'); input.type = 'text'; input.value = value || ''; input.maxLength = 1500; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = placeholder;
+        input.addEventListener('input', () => { markChanged(); onInput(input.value); }); label.append(input); return label;
+      }
+      function pruneBindings() {
+        state.sources.forEach(source => { const ids = new Set(eligibleBases(source.type).map(base => base.id)); source.base_ids = source.base_ids.filter(id => ids.has(id)); });
+      }
+      function renderBases() {
+        const box = q('#base-list'); box.replaceChildren();
+        state.bases.forEach(base => {
+          const row = element('div',undefined,'base'); row.dataset.baseId = base.id;
+          const label = element('label',undefined,'check');
+          const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(base.id); check.dataset.selectBase = base.id;
+          check.addEventListener('change', () => { markChanged(); if (check.checked) selected.add(base.id); else selected.delete(base.id); pruneBindings(); renderBases(); renderSources(); });
+          const text = element('span'); text.append(element('span',base.name,'base-title'),element('span',modeNames[base.mode] + (base.connection ? ' · ' + base.connection : ' · адрес не указан'),'base-info'));
+          label.append(check,text);
+          const remove = element('button','Убрать','link'); remove.type = 'button'; remove.setAttribute('aria-label','Убрать базу ' + base.name);
+          remove.addEventListener('click', () => { markChanged(); selected.delete(base.id); state.bases = state.bases.filter(item => item.id !== base.id); pruneBindings(); renderBases(); renderSources(); });
+          row.append(label,remove); box.append(row);
+        });
+        q('#empty-bases').hidden = !!state.bases.length;
+        q('#base-count').textContent = 'Выбрано: ' + selected.size;
+      }
+      function hintFor(source) {
+        if (source.type === 'tj') return 'Укажите каталог ТЖ нужных процессов. Для файловой базы это клиентские или терминальные процессы; общие узлы серверных баз можно связать с несколькими ИБ.';
+        if (source.type === 'jr') return 'Только нативный каталог 1Cv8Log или согласованный снимок. Нужны связанные файлы поддерживаемого профиля; XML-выгрузка не поддерживается.';
+        if (source.type === 'source') return 'Каталог исходников или Git-репозиторий без встроенных учётных данных. Архивы, CF и CFE не принимаются. Соответствие рабочей версии уточняется отдельно.';
+        if (source.type === 'sql') return 'Только для серверных ИБ. Общий сервер задаётся один раз; укажите экземпляр и нужные БД в описании адреса. Здесь нет подключения и выполнения запросов.';
+        return 'Узел Windows/Linux и адрес доступных материалов. Сборщик здесь не устанавливается и не запускается; агент поможет согласовать получение метрик.';
+      }
+      function renderSources(openId) {
+        const box = q('#source-list'); const previousOpen = new Set([...box.querySelectorAll('details[open]')].map(node => node.dataset.sourceId)); box.replaceChildren();
+        const bases = selectedBases(); const serverCount = eligibleBases('sql').length;
+        q('#source-context').textContent = (state.name.trim() || 'Окружение без названия') + ' · ' + bases.map(base => base.name).join(', ') + (serverCount ? '. Общие ресурсы связываются с нужными базами ниже.' : bases.every(base => base.mode === 'file') ? '. Для файловых баз SQL неприменим.' : '. Для неизвестного типа SQL пока недоступен; тип можно уточнить с агентом.');
+        const sqlOption = q('#new-source-type option[value="sql"]'); sqlOption.disabled = !serverCount; sqlOption.hidden = !serverCount;
+        if (!serverCount && q('#new-source-type').value === 'sql') q('#new-source-type').value = 'tj';
+        activeSources().forEach(source => {
+          const card = element('details',undefined,'box'); card.dataset.sourceId = source.id; card.dataset.sourceType = source.type; card.open = source.id === openId || previousOpen.has(source.id);
+          const summary = element('summary',typeNames[source.type]); card.append(summary);
+          const fields = element('div',undefined,'stack');
+          const bindings = element('fieldset'); bindings.append(element('legend','Относится к базам'));
+          const choices = element('div',undefined,'bindings');
+          eligibleBases(source.type).forEach(base => {
+            const label = element('label',undefined,'check'); const check = document.createElement('input'); check.type = 'checkbox'; check.checked = source.base_ids.includes(base.id); check.dataset.sourceBase = base.id;
+            check.addEventListener('change', () => { markChanged(); source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id); });
+            label.append(check,element('span',base.name)); choices.append(label);
+          });
+          bindings.append(choices); fields.append(bindings);
+          const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр / БД' : source.type === 'os' ? 'Путь к материалам метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
+          const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
+          const hostField = field(source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
+          fields.append(pathField,hostField,element('p',hintFor(source),'note'),element('p','Ожидает адаптера · доступ и содержимое не проверены.','note'));
+          const remove = element('button','Убрать источник','link'); remove.type = 'button';
+          remove.addEventListener('click', () => { markChanged(); state.sources = state.sources.filter(item => item.id !== source.id); renderSources(); }); fields.append(remove); card.append(fields); box.append(card);
+        });
+        q('#empty-sources').hidden = !!activeSources().length;
+      }
+      function payload() {
+        return {schema_version:1,name:state.name.trim() || 'Окружение',bases:selectedBases().map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection})),sources:activeSources().map(source => ({id:source.id,type:source.type,path:source.path.trim(),host:source.host.trim(),base_ids:[...source.base_ids]}))};
+      }
+      function validateSources() {
+        const missing = activeSources().find(source => !source.base_ids.length);
+        if (missing) { renderSources(missing.id); throw new Error('Выберите базу для источника «' + typeNames[missing.type] + '».'); }
+      }
+      function renderReview() {
+        const data = saved || payload(); const box = q('#saved-list'); box.replaceChildren();
+        const add = (title,text) => { const row = element('div'); row.append(element('dt',title),element('dd',text)); box.append(row); };
+        add('Окружение',data.name); add('Базы',data.bases.map(base => base.name + ' · ' + modeNames[base.mode]).join('; '));
+        data.sources.forEach(source => add(typeNames[source.type],source.base_ids.map(baseName).join(', ') + ' · ' + [source.path,source.host].filter(Boolean).join(' · ') + ' · не проверено'));
+        if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
+        if (saved) add('Ревизия профиля',String(saved.revision));
+        q('#review-title').textContent = saved ? 'Настройки сохранены' : 'Сохранить настройки';
+        q('#review-sub').textContent = saved ? 'Вернитесь в текущий чат. Агент может прочитать сохранённый профиль и продолжить.' : 'Проверьте состав профиля. Исходные данные останутся по указанным адресам.';
+        q('#save-status').textContent = saved ? 'Сохранена только конфигурация. Подключения, анализ и сбор не запускались; чтение профиля агентом ещё не подтверждено.' : 'Сохранение не подтверждает доступность источников и не запускает расследование.';
+        q('#save-profile').hidden = !!saved; q('#close-helper').hidden = !saved;
+      }
+      function navigate(next) {
+        if (next !== 'bases' && !selected.size) { step = 'bases'; renderStep(); throw new Error('Добавьте и выберите хотя бы одну базу. Если тип неизвестен, оставьте «Пока не знаю».'); }
+        if (next === 'review') { validateSources(); renderReview(); }
+        if (next === 'sources') renderSources();
+        step = next; renderStep(); message('');
+      }
+      function renderStep() {
+        root.querySelectorAll('[data-view]').forEach(node => { node.hidden = node.dataset.view !== step; });
+        root.querySelectorAll('[data-step]').forEach(button => { if (button.dataset.step === step) button.setAttribute('aria-current','step'); else button.removeAttribute('aria-current'); });
+      }
+      q('#environment-name').addEventListener('input', event => { state.name = event.target.value; markChanged(); });
+      q('#manual-mode').addEventListener('change', () => { q('#manual-connection-label').textContent = q('#manual-mode').value === 'file' ? 'Каталог базы · File' : q('#manual-mode').value === 'server' ? 'Сервер 1С / имя базы' : 'Известный адрес · необязательно'; });
+      q('#add-base').addEventListener('click', () => {
+        const name = q('#manual-name').value.trim(); if (!name) { message('Укажите название базы. Подойдёт «База для расследования».',true); q('#manual-name').focus(); return; }
+        markChanged(); const base = {id:nextId('manual'),name,mode:q('#manual-mode').value,connection:q('#manual-connection').value.trim()}; state.bases.push(base); selected.add(base.id); q('#manual-name').value = ''; q('#manual-connection').value = ''; renderBases();
+      });
+      q('#read-starter').addEventListener('click', () => perform(async () => {
+        const path = q('#starter-path').value.trim(); if (!path) throw new Error('Укажите путь к своему файлу .v8i или ibases.v8i.');
+        const bases = await api('/api/starter',{path}); markChanged();
+        bases.forEach(base => { if (!state.bases.some(item => item.id === base.id)) state.bases.push({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''}); selected.add(base.id); });
+        renderBases(); message('Из указанного файла прочитано баз: ' + bases.length + '. Подключений к 1С не было.');
+      }));
+      q('#add-source').addEventListener('click', () => {
+        markChanged(); const type = q('#new-source-type').value; const eligible = eligibleBases(type); if (!eligible.length) { message('Для этого источника нет подходящих выбранных баз.',true); return; }
+        const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : []}; state.sources.push(source); renderSources(source.id);
+      });
+      root.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.step); } catch(error) { message(error.message,true); } }));
+      root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.back); } catch(error) { message(error.message,true); } }));
+      q('#to-sources').addEventListener('click', () => { try { navigate('sources'); } catch(error) { message(error.message,true); } });
+      q('#to-review').addEventListener('click', () => { try { navigate('review'); } catch(error) { message(error.message,true); } });
+      q('#save-profile').addEventListener('click', () => perform(async () => { validateSources(); saved = await api('/api/profile',payload()); renderReview(); message('Профиль сохранён. Можно продолжить в текущем чате.'); }));
+      q('#close-helper').addEventListener('click', () => { window.close(); message('Если вкладка не закрылась, закройте её вручную и вернитесь в текущий чат.'); });
+      renderBases(); renderStep();
+      perform(async () => {
+        const profile = await api('/api/profile');
+        if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids]}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
+      });
+    })();
+  </script>
+</body>
+</html>

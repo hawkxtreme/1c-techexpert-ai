@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "scenario": "SC-01",
+  "origin": "synthetic",
+  "symptom": "Фоновое задание загрузки заказов выполняется 45 минут вместо обычных пяти",
+  "reported_normal_seconds": 300,
+  "normal_basis": "user_reported_not_measured",
+  "selection": {"database": "demo-ib", "node": "server-a", "process": "rphost-1", "epoch": "boot-1", "run": "job-42"},
+  "sources": [{"path": "events.jsonl", "format": "normalized-events-v1"}]
+}

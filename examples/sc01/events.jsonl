@@ -1,0 +1,3 @@
+{"kind":"queued","timestamp":"2026-11-15T09:00:00+03:00","scope":{"database":"demo-ib","node":"server-a","process":"rphost-1","epoch":"boot-1","run":"job-42"}}
+{"kind":"started","timestamp":"2026-11-15T09:04:00+03:00","scope":{"database":"demo-ib","node":"server-a","process":"rphost-1","epoch":"boot-1","run":"job-42"}}
+{"kind":"finished","timestamp":"2026-11-15T09:45:00+03:00","scope":{"database":"demo-ib","node":"server-a","process":"rphost-1","epoch":"boot-1","run":"job-42"}}

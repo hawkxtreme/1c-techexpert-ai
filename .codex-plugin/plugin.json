@@ -1,0 +1,10 @@
+{
+  "name": "1c-techexpert-ai",
+  "version": "0.1.0",
+  "description": "Локальное расследование SC-01 с ИИ текущего harness: нормализованные события, проверяемые свидетельства и помощники подготовки данных 1С.",
+  "author": {
+    "name": "1C TechExpert AI contributors"
+  },
+  "repository": "https://github.com/hawkxtreme/1c-techexpert-ai",
+  "skills": "./skills/"
+}

@@ -20,3 +20,5 @@ __pycache__/
 .DS_Store
 /1c-techexpert-ai-*.zip
 /.local/
+.pytest_cache/
+*.pyc
