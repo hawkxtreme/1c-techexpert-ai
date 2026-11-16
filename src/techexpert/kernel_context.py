@@ -18,6 +18,7 @@ def current():return _ACTIVE
 def stop(context=None):
     context=_ACTIVE if context is None else context
     if not context:return None
+    if context.get('cancel_file') and fs.safe(context['cancel_file']).exists():return 'cancelled'
     if time.monotonic()>=context['deadline']:return 'timeout'
     if fs.inspect_process(context['parent'])['state'] in ('not_running','different_lifetime'):return 'timeout'
     return None

@@ -1,6 +1,7 @@
 """Thin bounded-file transport for the finite managed controller, not an AI provider."""
 import codecs
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ from .inputs import InputError
 
 CHUNK=65536
 MAX_RESPONSE=16*1024**2
+MAX_MCP_RESPONSE=64*1024**2
 DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
     'cancel':{'run_id','executor_id'},'inspect':{'call_id'}}
@@ -80,10 +82,27 @@ def _checked(path,limit):
     return document['value']
 
 
+def _response_limit(plan):return MAX_MCP_RESPONSE if plan.get('wire_version') else MAX_RESPONSE
+
+
 def _write_response(path,value,code,plan):
-    fs.write(path,value)
-    identity=file_identity(path,MAX_RESPONSE)
+    from .responses import normalize
+    value=normalize(value)
+    payload_bytes=len(json.dumps(value,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')) if plan.get('wire_version') else None
+    if plan.get('wire_version'):
+        from .mcp_tools import result
+        from .storage import write_json
+        value=result(value,plan['wire_version'])
+        write_json(fs.safe(path),value,compact=True)
+    else:fs.write(path,value)
+    identity=file_identity(path,_response_limit(plan))
     receipt=dict(**identity,name=path.name,exit_code=code,plan_sha256=fs.digest(plan))
+    if plan.get('wire_version'):
+        payload=len(value['content'][0]['text'].encode('utf-8'))
+        receipt.update(encoding='mcp-tool-result-compact-v1',structured_payload_compact_bytes=payload,
+            tool_result_wrapper_bytes=identity['bytes']-payload,rpc_id_frame_bytes=None)
+    if plan.get('wire_version'):receipt.update(wire_version=plan['wire_version'],payload_compact_json_bytes=payload_bytes,
+        tool_wrapper_bytes=identity['bytes']-payload_bytes,rpc_framing_bytes=None)
     _write_checked(path.with_name(path.stem+'-receipt.json'),receipt)
     return receipt
 
@@ -94,7 +113,7 @@ def _response(folder,plan,name='response.json',*,verify=True):
     if (not isinstance(receipt,dict) or receipt.get('name')!=name or receipt.get('plan_sha256')!=fs.digest(plan)
         or receipt.get('exit_code') not in (0,1,2,3,130) or type(receipt.get('exit_code')) is not int):raise InputError('kernel response receipt integrity mismatch')
     if verify:
-        actual=file_identity(folder/name,MAX_RESPONSE)
+        actual=file_identity(folder/name,_response_limit(plan))
         if any(receipt.get(k)!=v for k,v in actual.items()):raise InputError('kernel response integrity mismatch')
     return receipt
 
@@ -127,25 +146,41 @@ def _admission(directory,plan):
     return value
 
 
-def invoke(state,action,arguments,*,limits=None):
+def invoke(state,action,arguments,*,limits=None,wire_version=None,request_document=None,cancel_event=None):
+    if wire_version is not None:
+        from .mcp_tools import VERSIONS
+        if wire_version not in VERSIONS:raise InputError('unsupported MCP wire version')
+    if request_document is not None:
+        from .capabilities import normalize_request
+        if action!='run':raise InputError('inline request requires the run action')
+        request_document=normalize_request(request_document)
+        if len(fs.encode(request_document))>128*1024:raise InputError('inline operation request exceeds byte limit')
+    if cancel_event is not None and cancel_event.is_set():raise InputError('cancelled before admission')
     arguments=_arguments(action,arguments);limits=_limits(limits);state=fs.safe(state);_space(state)
     owner=fs.process_identity(os.getpid())
     if owner['state']!='running' or not owner['lifetime']:raise InputError('kernel owner process identity unknown')
     call_id=uuid.uuid4().hex;directory=folder(state,call_id);fs.private(directory)
+    if request_document is not None:
+        arguments['request']=str(directory/'request.json');fs.write(directory/'request.json',request_document)
     started=time.monotonic()
     plan=dict(schema_version=1,call_id=call_id,state_dir=str(state),action=action,arguments=arguments,
         limits=limits,started_monotonic=started,parent=owner,created_at=fs.stamp())
+    if wire_version:plan['wire_version']=wire_version
     fs.write(directory/'plan.json',plan);fs.write(directory/'plan-receipt.json',dict(sha256=fs.digest(plan)))
     current=dict(schema_version=1,call_id=call_id,status='starting',owner=owner,child=None)
     fs.write(directory/'status.json',current)
-    admitted=None;last_scan=0
+    admitted=None;last_scan=0;cancel_started=None
     def on_started(pid):
         identity=fs.process_identity(pid)
         if identity['state']!='running' or not identity['lifetime']:raise InputError('kernel child process identity unknown')
         current.update(child=identity);fs.write(directory/'status.json',current)
         fs.write(directory/'start-permit.json',dict(child=identity,plan_sha256=fs.digest(plan)))
     def guard():
-        nonlocal admitted,last_scan
+        nonlocal admitted,last_scan,cancel_started
+        if cancel_event is not None and cancel_event.is_set():
+            if cancel_started is None:
+                fs.write(directory/'cancel.json',dict(reason='request_cancelled'));cancel_started=time.monotonic()
+            if time.monotonic()-cancel_started>=4:raise InputError('cancelled')
         if admitted is None and (directory/'admitted.json').exists():
             admitted=_admission(directory,plan);current['status']='running';fs.write(directory/'status.json',current)
         deadline=started+(admitted['timeout_seconds'] if admitted else limits['admission_seconds'])
@@ -162,6 +197,7 @@ def invoke(state,action,arguments,*,limits=None):
             elapsed_seconds=time.monotonic()-started,tree_finished=False,stop_reason='kernel_launcher_failure',
             guard_error=None,failure_message=str(exc)[:512],resource_usage=None)
     controller_finished=time.monotonic();reason=process.get('guard_error') or process.get('stop_reason')
+    if cancel_started is not None and (process['exit_code']!=0 or not process['tree_finished']):reason=reason or 'cancelled'
     if admitted is None and (directory/'admitted.json').exists():
         try:admitted=_admission(directory,plan)
         except (OSError,ValueError,KeyError,TypeError):reason='kernel_admission_integrity'
@@ -183,9 +219,9 @@ def invoke(state,action,arguments,*,limits=None):
         response=response,worker_observation=worker,operation_run_id=admitted.get('run_id') if admitted else None,model_tokens=None,harness_memory_bytes=None,
         transport=dict(elapsed_before_delivery_seconds=time.monotonic()-started,full_response_json_decoded=False,
             memory_peak_bytes=None,scope='bounded small metadata and chunked response transport; no separate OS quota for setup/receipt/stream I/O'),
-        stop_reason=reason,plan_sha256=fs.digest(plan))
+        stop_reason=reason,cancellation_requested=cancel_started is not None,plan_sha256=fs.digest(plan))
     if (directory/'metrics.json').exists():receipt['controller_metrics']=fs.read(directory/'metrics.json',65536)
-    call=dict(call_id=call_id,folder=str(directory),response_name=response['name'],exit_code=response['exit_code'])
+    call=dict(call_id=call_id,folder=str(directory),response_name=response['name'],exit_code=response['exit_code'],wire_version=wire_version)
     try:_write_checked(directory/'call-receipt.json',receipt)
     except (OSError,ValueError) as exc:
         partial=dict(schema_version=1,status='partial',kernel_call_id=call_id,run_id=receipt['operation_run_id'],
@@ -239,14 +275,17 @@ def inspect_call(state,call_id):
 
 def emit(call,output):
     if 'inline_response' in call:
-        data=fs.encode(call['inline_response'])
-        if len(data)>16384:raise InputError('emergency kernel response exceeds fixed transport limit')
+        if call.get('wire_version'):
+            from .mcp_tools import result
+            data=json.dumps(result(call['inline_response'],call['wire_version']),ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')
+        else:data=fs.encode(call['inline_response'])
+        if len(data)>65536:raise InputError('emergency kernel response exceeds fixed transport limit')
         output.write(data.decode('utf-8'));output.flush();return
     directory=fs.safe(call['folder']);plan=fs.read(directory/'plan.json',65536)
     receipt=_response(directory,plan,call['response_name'],verify=False)
     decoder=codecs.getincrementaldecoder('utf-8')()
     with fs.safe(directory/receipt['name']).open('rb') as stream:
-        identity=_stream_identity(stream,MAX_RESPONSE)
+        identity=_stream_identity(stream,_response_limit(plan))
         if any(receipt.get(k)!=v for k,v in identity.items()):raise InputError('kernel response integrity mismatch')
         before=os.fstat(stream.fileno());stream.seek(0)
         while block:=stream.read(CHUNK):output.write(decoder.decode(block))

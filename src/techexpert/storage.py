@@ -28,13 +28,14 @@ def default_state_dir():
     return Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / '1c-techexpert-ai'
 
 
-def write_json(path, value, *, replacer=None):
+def write_json(path, value, *, replacer=None, compact=False):
     path = Path(path)
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
         with temporary.open('x', encoding='utf-8', newline='\n') as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
-            stream.write('\n')
+            json.dump(value, stream, ensure_ascii=False, indent=None if compact else 2,
+                      separators=(',',':') if compact else None, allow_nan=False)
+            if not compact:stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
         (os.replace if replacer is None else replacer)(temporary,path)

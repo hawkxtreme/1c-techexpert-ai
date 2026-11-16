@@ -26,6 +26,7 @@ def main(folder,memory_bytes):
     if fs.digest(plan)!=fs.read(directory/'plan-receipt.json',8192).get('sha256') or plan.get('call_id')!=directory.name:raise InputError('kernel call plan integrity mismatch')
     if os.name!='nt' and os.getsid(0)!=os.getpid():raise InputError('controller session is not owned')
     active=dict(call_id=plan['call_id'],parent=plan['parent'],limits=plan['limits'],deadline=plan['started_monotonic']+plan['limits']['admission_seconds'])
+    active['cancel_file']=str(directory/'cancel.json')
     context.install(active)
     def watchdog():
         while True:
@@ -52,7 +53,7 @@ def main(folder,memory_bytes):
         active['deadline']=plan['started_monotonic']+timeout
         fs.write(directory/'admitted.json',dict(plan_sha256=fs.digest(plan),run_id=run_id,timeout_seconds=timeout))
         admitted_at=time.monotonic()
-        if context.stop():raise TimeoutError('kernel_timeout')
+        if context.stop():raise TimeoutError(context.stop())
         state=Path(plan['state_dir'])
         if action=='run':value=operations.run(state,request)
         elif action=='cancel':value=operations.cancel(state,args['run_id'],executor_id=args['executor_id'])
@@ -61,13 +62,15 @@ def main(folder,memory_bytes):
         code={'succeeded':0,'partial':1,'invalid_input':2,'failed':3,'cancelled':130,'interrupted':1}.get(value['status'],1)
     except MemoryError:
         value=dict(status='failed',stop_reason='kernel_memory_limit',run_id=run_id,data=None);code=3
-    except TimeoutError:
-        value=dict(status='failed',stop_reason='kernel_timeout',run_id=run_id,data=None);code=3
+    except TimeoutError as exc:
+        cancelled=str(exc)=='cancelled'
+        value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
         value=dict(status='error',message=str(exc)[:512],data=None);code=2
     dispatch_finished=time.monotonic()
     try:
-        value=context.attach(value)
+        from .responses import normalize
+        value=context.attach(normalize(value,operation=request['operation'] if request else None,run_id=run_id))
         if len(fs.encode(value))>response_limit:value=context.attach(dict(status='failed',stop_reason='output_limit',data=None));code=3
         kernel._write_response(directory/'response.json',value,code,plan)
     except MemoryError as exc:

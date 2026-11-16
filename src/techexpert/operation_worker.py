@@ -26,7 +26,8 @@ def main(folder):
         resource.setrlimit(resource.RLIMIT_AS,(memory,memory))
     def stop():
         if state.safe(folder/'cancel.json').exists():return 'cancelled'
-        if plan.get('kernel') and kernel_context.stop(plan['kernel']):return 'timeout'
+        boundary_stop=kernel_context.stop(plan['kernel']) if plan.get('kernel') else None
+        if boundary_stop:return boundary_stop
         if time.monotonic()>=deadline:return 'timeout'
         return None
     def watchdog():

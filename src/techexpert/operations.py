@@ -239,6 +239,7 @@ def run(state,request):
         if boundary:
             plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])
             plan['kernel']=dict(call_id=boundary['call_id'],deadline=boundary['deadline'],parent=boundary['parent'])
+            if boundary.get('cancel_file'):plan['kernel']['cancel_file']=boundary['cancel_file']
         fs.write(folder/'plan.json',plan)
         current=dict(schema_version=1,run_id=run_id,status='preparing',owner=fs.process_identity(os.getpid()),child=None,
             executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=request['budget']['timeout_seconds'],stop_verified=False)
@@ -247,7 +248,8 @@ def run(state,request):
         stopping=None;last_check=0;last_heartbeat=started
         def stop_reason():
             if (folder/'cancel.json').exists():return 'cancelled'
-            if kernel_context.stop():return 'timeout'
+            boundary_stop=kernel_context.stop()
+            if boundary_stop:return boundary_stop
             if time.monotonic()>=plan['deadline_monotonic']:return 'timeout'
         def guard():
             nonlocal stopping,last_check,last_heartbeat

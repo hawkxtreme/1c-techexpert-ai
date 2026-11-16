@@ -20,6 +20,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='1C TechExpert AI: local evidence tools for your AI harness')
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)
+    commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
     catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
     operation_run=commands.add_parser('operation-run');operation_run.add_argument('request',type=Path)
     for name in ('operation-status','operation-result','operation-reconcile','operation-cancel'):
@@ -151,6 +152,9 @@ def main(argv=None):
     incident_record=commands.add_parser('incident-record-submission');incident_record.add_argument('draft_id');incident_record.add_argument('response',type=Path)
     incident_record.add_argument('--repository',required=True);incident_record.add_argument('--expected-sha256',required=True);incident_record.add_argument('--expected-action-sha256',required=True)
     args = parser.parse_args(argv)
+    if args.command=='mcp-stdio':
+        from .mcp_server import serve
+        return serve(args.state_dir)
     try:
         if args.command=='capabilities':
             from .capabilities import catalogue

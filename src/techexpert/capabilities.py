@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 from .inputs import InputError
+from .responses import schema as response_schema
 
 MIB=1024**2
 MAX_RESULT=16*MIB
@@ -30,13 +31,9 @@ def route(arguments,required,source,impact,fields,*,timeout=60):
     arrays={'sources','records','matches','input_reports','limitations'}
     data_schema=dict(type='object',required=fields,properties={key:dict(type='string' if key in strings else 'array' if key in arrays else
         ['integer','null'] if key=='next_offset' else 'integer' if key=='matched_count' else 'boolean' if key=='truncated' else 'object') for key in fields},additionalProperties=True)
-    envelope=dict(type='object',required=['schema_version','run_id','operation','status','data','snapshots','evidence','limitations','truncated'],
-        properties=dict(schema_version=dict(type='integer',const=1),run_id=string(64,pattern='[a-f0-9]{64}'),operation=string(64),
-            status=dict(type='string',enum=['preparing','starting','running','stopping','succeeded','partial','invalid_input','failed','cancelled','interrupted']),
-            data=dict(anyOf=[deepcopy(data_schema),dict(type='null')]),snapshots=dict(type='array'),evidence=dict(type='array'),limitations=dict(type='array'),truncated=dict(type='boolean')))
     return dict(input_schema=obj(arguments,required),required_sources=source,rights=['read explicitly selected inputs','write private operation evidence'],
         scope='SC01 supported file profiles and explicitly selected local state',timeout_seconds=timeout,max_result_bytes=MAX_RESULT,
-        impact=impact,data_schema=data_schema,output_schema=envelope)
+        impact=impact,data_schema=data_schema,output_schema=response_schema(data_schema))
 
 ROUTES={
  'case.analyze':route(dict(manifest=FILE),['manifest'],['selected manifest and declared stable files'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
@@ -100,7 +97,8 @@ def catalogue(operation=None):
             transport_resources='bounded small metadata/chunked bytes; no separate OS quota for setup/receipt/stream I/O',
             direct_internal_engine='worker bounds only; managed CLI controller boundary is not implicit for Python internals',
             disk_enforcement='monitored; bounded polling overshoot possible',model_harness_resources='not controlled or independently measured'),
-        not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts','CodeMode','MCP'])
+        managed_transports=['CLI','MCP stdio'],mcp_protocol_versions=['2026-07-28','2025-11-25'],
+        not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts','CodeMode'])
 
 def normalize_request(value):
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')

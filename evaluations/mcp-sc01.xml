@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<evaluation>
+  <qa_pair>
+    <question>Для подготовленных случаев {BEFORE} и {AFTER} сопоставь отчёты и сведения сравнения {COMPARISON}. Известно ли время очереди каждого задания независимо от времени исполнения? Ответь двумя значениями секунд либо unknown, через |.</question>
+    <answer>unknown|unknown</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Прочитай случаи {BEFORE}, {AFTER} и сравнение {COMPARISON}. Укажи измеренные секунды исполнения до и после, затем консервативную нижнюю границу до и верхнюю после с учётом секундной точности. Четыре числа через |.</question>
+    <answer>14|3|13|4</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Проверь случаи {BEFORE}, {AFTER} и сведения правильности результата в {COMPARISON}. Для каждого случая верни статус проверки результата, ожидаемое количество, фактическое количество, число несовпадений. Восемь значений через |, сначала до.</question>
+    <answer>matches_expected|200|200|0|matches_expected|200|200|0</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>В случае {BEFORE} сравни покрытие сохранённого ТЖ с выборкой events linked_run=true и отчётом привязки. Сколько записей разобрано во всём файле, сколько независимо связано с запуском и сколько осталось вне него? Три числа через |.</question>
+    <answer>1007|1005|2</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Для {BEFORE} найди первую запись выборки events linked_run=true и прочитай её evidence. Верни evidence_id и SHA256 исходного снимка, подтверждающий связь этих двух ответов, через |.</question>
+    <answer>s1:2|83450f9c02fbf5cb3105e778d3d8a16a51deed00ea8eab27eddc177dd79ade40</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Прочитай случаи {BEFORE}, {AFTER} и сравнение {COMPARISON}. Проверь сопоставимость входной нагрузки по SHA256 входа обоих запусков. Верни статус сопоставимости и общий SHA256 через |.</question>
+    <answer>comparable|7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Сопоставь {BEFORE}, {AFTER} и сравнение {COMPARISON}. Достаточно ли числа независимых запусков для проверки улучшения по правилам продукта? Верни статус всего сравнения, статус скорости, число запусков до, после и требуемое число пар через |.</question>
+    <answer>not_verified|inconclusive|1|1|5</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>По случаям {BEFORE}, {AFTER} и сравнению {COMPARISON} сверяй отдельно наблюдения внешних обращений. Верни количество обращений до/после, уникальных SKU до/после, повторных обращений до/после. Шесть чисел через |.</question>
+    <answer>200|10|10|10|190|0</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>В {BEFORE} и {AFTER} проверь основания метрик внешних обращений и сопоставь их с длительностью задания в {COMPARISON}. Каково общее буквальное значение metric_basis, запрещающее приравнивать эти интервалы к длительности задания или ожиданию? Верни только это значение.</question>
+    <answer>sum_of_request_intervals; not_job_duration_or_wait; no_cross_clock_join</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Прочитай случаи {BEFORE}, {AFTER} и сравнение {COMPARISON}. Устанавливает ли инструмент причину независимо от ИИ текущего harness? Верни cause_state и requires_ai_interpretation из каждого случая, сначала до, через |. Boolean строчными буквами.</question>
+    <answer>insufficient_data|true|insufficient_data|true</answer>
+  </qa_pair>
+</evaluation>
