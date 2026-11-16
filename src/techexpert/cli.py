@@ -25,6 +25,7 @@ def main(argv=None):
     for name in ('operation-status','operation-result','operation-reconcile','operation-cancel'):
         operation=commands.add_parser(name);operation.add_argument('run_id')
         if name=='operation-cancel':operation.add_argument('--executor-id',required=True)
+    kernel_call=commands.add_parser('kernel-call');kernel_call.add_argument('call_id')
     commands.add_parser('doctor')
     readiness=commands.add_parser('readiness')
     readiness.add_argument('--entrypoint-sha256')
@@ -154,15 +155,17 @@ def main(argv=None):
         if args.command=='capabilities':
             from .capabilities import catalogue
             result=catalogue(args.operation)
-        elif args.command.startswith('operation-'):
-            from . import operations
+        elif args.command.startswith('operation-') or args.command=='kernel-call':
+            from . import kernel
             if args.command=='operation-run':
-                from .inputs import read_snapshot,json_value
-                result=operations.run(args.state_dir,json_value(read_snapshot(args.request,128*1024).decode('utf-8-sig'),reject_duplicates=True))
-            elif args.command=='operation-cancel':result=operations.cancel(args.state_dir,args.run_id,executor_id=args.executor_id)
-            else:result={'operation-status':operations.status,'operation-result':operations.result,'operation-reconcile':operations.reconcile}[args.command](args.state_dir,args.run_id)
-            emit(result)
-            return {'succeeded':0,'partial':1,'invalid_input':2,'failed':3,'cancelled':130,'interrupted':1}.get(result['status'],1)
+                action='run';arguments=dict(request=str(args.request))
+            elif args.command=='kernel-call':action='inspect';arguments=dict(call_id=args.call_id)
+            else:
+                action=args.command.removeprefix('operation-');arguments=dict(run_id=args.run_id)
+                if action=='cancel':arguments['executor_id']=args.executor_id
+            call=kernel.invoke(args.state_dir,action,arguments)
+            kernel.emit(call,sys.stdout)
+            return call['exit_code']
         elif args.command == 'doctor':
             result = doctor(args.state_dir)
         elif args.command == 'readiness':

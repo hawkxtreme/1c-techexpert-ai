@@ -275,11 +275,15 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
         if not kernel.SetInformationJobObject(job,9,c.byref(limits),c.sizeof(limits)):raise c.WinError(c.get_last_error())
         with (cwd/'stdout.bin').open('xb') as stdout,(cwd/'stderr.bin').open('xb') as stderr,open(os.devnull,'rb') as stdin:
             handles=(w.HANDLE*3)(*(msvcrt.get_osfhandle(f.fileno()) for f in (stdin,stdout,stderr)))
-            size=c.c_size_t();kernel.InitializeProcThreadAttributeList(None,1,0,c.byref(size))
+            size=c.c_size_t();kernel.InitializeProcThreadAttributeList(None,2,0,c.byref(size))
             attributes=c.create_string_buffer(size.value)
-            if not kernel.InitializeProcThreadAttributeList(attributes,1,0,c.byref(size)):raise c.WinError(c.get_last_error())
+            if not kernel.InitializeProcThreadAttributeList(attributes,2,0,c.byref(size)):raise c.WinError(c.get_last_error())
             try:
                 if not kernel.UpdateProcThreadAttribute(attributes,0,0x20002,handles,c.sizeof(handles),None,None):raise c.WinError(c.get_last_error())
+                jobs=(w.HANDLE*1)(job)
+                # Assign at CreateProcess itself: a parent death immediately
+                # after creation must not leave an unassigned suspended child.
+                if not kernel.UpdateProcThreadAttribute(attributes,0,0x2000D,jobs,c.sizeof(jobs),None,None):raise c.WinError(c.get_last_error())
                 startup=_StartupEx();startup.base.cb=c.sizeof(startup);startup.base.flags=0x100|1;startup.base.show=0
                 startup.base.stdin,startup.base.stdout,startup.base.stderr=handles
                 startup.attributes=c.cast(attributes,c.c_void_p)
@@ -292,7 +296,6 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
                     finally:
                         for handle in handles:os.set_handle_inheritable(handle,False)
             finally:kernel.DeleteProcThreadAttributeList(attributes)
-            if not kernel.AssignProcessToJobObject(job,process.process):raise c.WinError(c.get_last_error())
             assigned=True
             if on_started is not None:on_started(process.pid)
             if kernel.ResumeThread(process.thread)==0xffffffff:raise c.WinError(c.get_last_error())

@@ -10,7 +10,7 @@ if __package__ in (None,''):
     sys.path.insert(0,sys.argv[2]);__package__='src.techexpert'
 
 from . import operation_state as state
-from . import __version__
+from . import __version__,kernel_context
 from .capabilities import execute
 from .inputs import InputError
 from .storage import ROOT,knowledge_revision
@@ -21,9 +21,12 @@ def main(folder):
     deadline=plan['deadline_monotonic']
     if os.name!='nt':
         import resource
-        resource.setrlimit(resource.RLIMIT_AS,(1024**3,1024**3))
+        inherited=resource.getrlimit(resource.RLIMIT_AS)
+        memory=min([1024**3]+[n for n in inherited if n!=resource.RLIM_INFINITY])
+        resource.setrlimit(resource.RLIMIT_AS,(memory,memory))
     def stop():
         if state.safe(folder/'cancel.json').exists():return 'cancelled'
+        if plan.get('kernel') and kernel_context.stop(plan['kernel']):return 'timeout'
         if time.monotonic()>=deadline:return 'timeout'
         return None
     def watchdog():
@@ -57,7 +60,7 @@ def main(folder):
     if os.name!='nt':
         usage=resource.getrusage(resource.RUSAGE_SELF);children=resource.getrusage(resource.RUSAGE_CHILDREN)
         metrics.update(self_cpu_seconds=usage.ru_utime+usage.ru_stime,terminated_children_cpu_seconds=children.ru_utime+children.ru_stime,
-            peak_self_rss_bytes=usage.ru_maxrss*1024,concurrent_tree_peak_rss_bytes=None)
+            peak_self_rss_bytes=usage.ru_maxrss*1024,concurrent_tree_peak_rss_bytes=None,effective_address_space_limit_bytes=memory)
     result=dict(schema_version=1,status=outcome,data=data,targets=targets,message=message,metrics=metrics)
     if len(state.encode(result))>request['budget']['max_result_bytes']:
         result.update(status='failed',data=None,targets=[],stop_reason='output_limit',message='Operation output exceeds result byte limit; owned partial files retained privately.')

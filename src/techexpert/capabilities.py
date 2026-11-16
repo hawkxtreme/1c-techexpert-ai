@@ -94,9 +94,11 @@ def catalogue(operation=None):
     return dict(schema_version=1,operations=[dict(id=key,**deepcopy(value)) for key,value in sorted(ROUTES.items()) if operation is None or key==operation],
         arbitrary_code_execution=False,server_license_required=False,
         limits=dict(memory_bytes=1024*MIB,owned_disk_bytes=256*MIB,free_disk_floor_bytes=10*1024**3,
-            memory_enforcement=dict(windows='whole owned Job',linux='per-process address space; concurrent tree memory not capped or measured'),
-            timeout_scope='owned worker and up to3s stop grace; control-layer admission/replay/verification/commit has no separate hard process limit yet',
-            controller_resources='not included in the worker memory bound or peak measurement',
+            memory_enforcement=dict(windows='managed CLI controller and nested local worker Jobs',linux='inherited per-process address space; concurrent tree memory not capped or measured'),
+            timeout_scope='managed CLI controller admission/replay/verification/commit and owned workers; deadline from invocation start, bounded cleanup afterward',
+            controller_resources='separate kernel-call receipt; Windows controller Job includes nested workers; Linux self/reaped-child counters retain their distinct scope',
+            transport_resources='bounded small metadata/chunked bytes; no separate OS quota for setup/receipt/stream I/O',
+            direct_internal_engine='worker bounds only; managed CLI controller boundary is not implicit for Python internals',
             disk_enforcement='monitored; bounded polling overshoot possible',model_harness_resources='not controlled or independently measured'),
         not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts','CodeMode','MCP'])
 

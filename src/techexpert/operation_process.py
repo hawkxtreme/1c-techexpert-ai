@@ -21,7 +21,8 @@ def run(folder,*,guard,on_started,timeout):
         process=subprocess.Popen(argv,cwd=ROOT,stdin=subprocess.DEVNULL,stdout=output,stderr=diagnostics,start_new_session=True)
         try:
             on_started(process.pid)
-            while process.poll() is None:
+            # Keep the leader unreaped until its owned group has been stopped.
+            while os.waitid(os.P_PID,process.pid,os.WEXITED|os.WNOHANG|os.WNOWAIT) is None:
                 if time.monotonic()-started>=timeout:reason='timeout';break
                 try:guard()
                 except (OSError,ValueError) as exc:reason='guard_failed';error=str(exc)[:512];break

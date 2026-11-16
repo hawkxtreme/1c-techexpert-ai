@@ -6,7 +6,7 @@ import shutil
 import time
 
 from . import __version__
-from . import capabilities,operation_state as fs,operation_process
+from . import capabilities,operation_state as fs,operation_process,kernel_context
 from .inputs import InputError
 from .storage import ROOT
 
@@ -89,6 +89,7 @@ def _worker(folder):
     return value
 
 def _fit_view(view,budget,*,strict=False):
+    view=kernel_context.attach(view)
     if len(fs.encode(view))<=budget:return view
     if strict:raise InputError('output_limit')
     review=view.get('current_knowledge_review',{})
@@ -106,7 +107,7 @@ def _fit_view(view,budget,*,strict=False):
         current_knowledge_review=dict(status=review_status,review_required=review_status!='unchanged',
             technical_truth_judged=False,truncated=True,scope='bounded presentation only; inspect applicable knowledge before reuse'),
         limitations=['Full current presentation exceeds max_result_bytes. Stored result is unchanged; no processing was repeated. Data and review details are omitted.'])
-    for key in ('owner','child','cancel_too_late','current_product_version','recovery_previous_reason'):
+    for key in ('owner','child','cancel_too_late','current_product_version','recovery_previous_reason','kernel_call_id','kernel_limits'):
         if key in view:small[key]=view[key]
     if len(fs.encode(small))>budget:raise InputError('output_limit')
     return small
@@ -146,7 +147,7 @@ def _finish(state,folder,plan,current,worker,*,replayed=False):
             'Tool execution and source checks are not AI diagnosis or historical completeness.',
             'Executor ID is caller-reported; this is a local run registry, not an authorization service.',
             'Model/harness resources are unknown. Disk budgets are monitored, not an atomic filesystem quota.',
-            'Worker limits exclude admission, replay and final control-layer verification/commit; those phases have no separate hard process budget yet.',
+            ('Managed CLI controller admission/replay/finalization is bounded and measured separately in kernel-call receipts; thin transport remains outside that process quota.' if kernel_context.current() else 'Direct internal engine: worker limits exclude admission, replay and final control-layer verification/commit.'),
             'Remote SSH/WinRM process stop is unknown after an interrupted connection; the remote probe has its own duration bound.',
             'Source-check and knowledge reads retain their bounded output, not an independent full source snapshot.'])
     prepared_path=folder/'prepared-output.json'
@@ -234,6 +235,10 @@ def run(state,request):
     with fs.writer(folder):
         started=time.monotonic();plan=dict(schema_version=1,request=request,state_dir=str(state),context=context,versions=versions,
             deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp())
+        boundary=kernel_context.current()
+        if boundary:
+            plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])
+            plan['kernel']=dict(call_id=boundary['call_id'],deadline=boundary['deadline'],parent=boundary['parent'])
         fs.write(folder/'plan.json',plan)
         current=dict(schema_version=1,run_id=run_id,status='preparing',owner=fs.process_identity(os.getpid()),child=None,
             executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=request['budget']['timeout_seconds'],stop_verified=False)
@@ -242,6 +247,7 @@ def run(state,request):
         stopping=None;last_check=0;last_heartbeat=started
         def stop_reason():
             if (folder/'cancel.json').exists():return 'cancelled'
+            if kernel_context.stop():return 'timeout'
             if time.monotonic()>=plan['deadline_monotonic']:return 'timeout'
         def guard():
             nonlocal stopping,last_check,last_heartbeat

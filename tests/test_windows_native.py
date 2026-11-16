@@ -60,6 +60,34 @@ class WindowsNativeTests(unittest.TestCase):
             self.assertEqual(result['stop_reason'],'descendants_after_parent_exit');self.assertTrue(result['tree_finished'])
             before=(root/'heartbeat').read_bytes();time.sleep(.15);self.assertEqual((root/'heartbeat').read_bytes(),before)
 
+    def test_owner_crash_immediately_after_create_has_no_unassigned_suspended_orphan(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);nested=root/'nested';nested.mkdir();helper=root/'crash-after-create.py'
+            repo=Path(__file__).resolve().parents[1]
+            code='''import os,sys
+from pathlib import Path
+sys.path.insert(0,REPO)
+from src.techexpert import windows_native as native
+real=native._kernel()
+def created(*args):
+    result=real.CreateProcessW(*args)
+    if result:
+        Path("create-returned").write_bytes(b"owned test fault")
+        os._exit(73)
+    return result
+class Proxy:
+    def __getattr__(self,name):return created if name=="CreateProcessW" else getattr(real,name)
+native._kernel=lambda:Proxy()
+native.run([sys.executable,"-c","import time;time.sleep(30)"],cwd=Path("nested"),guard=lambda:None,timeout=35)
+'''.replace('REPO',repr(str(repo)))
+            helper.write_text(code,encoding='utf-8')
+            # The outer owned Job contains the fault injector and provides safe
+            # cleanup even against the old unassigned-child bug; no found PID kill.
+            result=self.api.run([sys.executable,str(helper)],cwd=root,guard=lambda:None,timeout=5)
+            self.assertTrue((root/'create-returned').exists());self.assertEqual(result['exit_code'],73)
+            self.assertTrue(result['tree_finished'])
+            self.assertIsNone(result['stop_reason'],'inner owner crash left a suspended child for the outer Job to clean up')
+
     def test_guard_failure_stops_the_job(self):
         with tempfile.TemporaryDirectory() as temp:
             def stop():raise ValueError('owned output budget exceeded')

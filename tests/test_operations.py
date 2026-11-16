@@ -414,13 +414,16 @@ class ManagedOperationTests(unittest.TestCase):
         deadline=time.monotonic()+7
         while time.monotonic()<deadline:
             observed=self.state_api.inspect_process(live['child'])
-            if observed['state'] in ('not_running','different_lifetime'):break
+            owner=self.state_api.inspect_process(live['owner'])
+            if all(p['state'] in ('not_running','different_lifetime') for p in (observed,owner)):break
             time.sleep(.05)
         self.assertNotEqual(self.state_api.inspect_process(live['child'])['state'],'running')
+        self.assertNotEqual(self.state_api.inspect_process(live['owner'])['state'],'running')
         with patch('src.techexpert.operation_process.run',side_effect=AssertionError('manager death caused a repeated collection')):
             recovered=self.api.reconcile(self.state,live['run_id'])
             replay=self.run_request(request)
-        self.assertIn(recovered['status'],['succeeded','interrupted'])
+        self.assertIn(recovered['status'],['succeeded','partial','interrupted'])
+        if recovered['status']=='partial':self.assertEqual(recovered['data']['result']['collection_status'],'timeout')
         self.assertEqual(replay['run_id'],live['run_id'])
 
 
