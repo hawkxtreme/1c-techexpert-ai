@@ -106,12 +106,12 @@ def _fit_view(view,budget,*,strict=False):
         current_knowledge_review=dict(status=review_status,review_required=review_status!='unchanged',
             technical_truth_judged=False,truncated=True,scope='bounded presentation only; inspect applicable knowledge before reuse'),
         limitations=['Full current presentation exceeds max_result_bytes. Stored result is unchanged; no processing was repeated. Data and review details are omitted.'])
-    for key in ('owner','child','cancel_too_late','current_product_version'):
+    for key in ('owner','child','cancel_too_late','current_product_version','recovery_previous_reason'):
         if key in view:small[key]=view[key]
     if len(fs.encode(small))>budget:raise InputError('output_limit')
     return small
 
-def _present(state,plan,value,*,replayed,strict=False):
+def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
     from .knowledge_review import review_legacy_report,review_use
     data=value['data'] or {};request=plan['request']
     if request['operation']=='artifact.show' and data.get('kind')=='knowledge_use':
@@ -122,6 +122,11 @@ def _present(state,plan,value,*,replayed,strict=False):
         knowledge_review=review_legacy_report(basis)
     view=dict(value,integrity_verified=True,replayed=replayed,current_product_version=__version__,current_knowledge_review=knowledge_review,
         cancellation_requested=value.get('cancellation_requested',False) or fs.safe(fs.folder(state,value['run_id'])/'cancel.json').exists())
+    if recovery_reason is None:
+        recovery_reason=fs.read(fs.folder(state,value['run_id'])/'status.json',64*1024).get('recovery_previous_reason')
+    if recovery_reason:
+        if not isinstance(recovery_reason,str) or len(recovery_reason)>512:raise InputError('invalid recovery diagnostic')
+        view['recovery_previous_reason']=recovery_reason
     return _fit_view(view,request['budget']['max_result_bytes'],strict=strict)
 
 def _finish(state,folder,plan,current,worker,*,replayed=False):
@@ -144,18 +149,42 @@ def _finish(state,folder,plan,current,worker,*,replayed=False):
             'Worker limits exclude admission, replay and final control-layer verification/commit; those phases have no separate hard process budget yet.',
             'Remote SSH/WinRM process stop is unknown after an interrupted connection; the remote probe has its own duration bound.',
             'Source-check and knowledge reads retain their bounded output, not an independent full source snapshot.'])
-    if replayed and current.get('stop_reason'):value['recovery_previous_reason']=current['stop_reason']
-    # Include every presentation field and the final LF before publishing any product.
-    presented=_present(state,plan,value,replayed=replayed,strict=True)
+    prepared_path=folder/'prepared-output.json'
+    if prepared_path.exists():
+        prepared=fs.read(prepared_path)
+        if not isinstance(prepared,dict):raise InputError('prepared output integrity mismatch')
+        sealed=prepared.get('value')
+        if (prepared.get('schema_version')!=1 or not isinstance(sealed,dict) or type(sealed.get('cancellation_requested')) is not bool
+            or prepared.get('sha256')!=fs.digest(sealed) or prepared.get('plan_sha256')!=fs.digest(plan)
+            or prepared.get('worker_sha256')!=fs.digest(worker)
+            or type(prepared.get('full_reply_bytes')) is not int
+            or not 0<prepared['full_reply_bytes']<=request['budget']['max_result_bytes']
+            or fs.digest(dict(value,cancellation_requested=sealed['cancellation_requested']))!=fs.digest(sealed)):
+            raise InputError('prepared output integrity mismatch')
+        value=sealed
+        presented=None
+    else:
+        # Seal the exact first payload only after the entire original view fits.
+        # Recovery diagnostics must never grow/rewrite that validated payload.
+        presented=_present(state,plan,value,replayed=False,strict=True,recovery_reason='')
+        fs.write(prepared_path,dict(schema_version=1,value=value,sha256=fs.digest(value),plan_sha256=fs.digest(plan),
+            worker_sha256=fs.digest(worker),full_reply_bytes=len(fs.encode(presented))))
+    recovery_reason=current.get('recovery_previous_reason') or (current.get('stop_reason') if replayed else None)
+    if presented is None or replayed:
+        presented=_present(state,plan,value,replayed=replayed,recovery_reason=recovery_reason)
+    output=folder/'output.json'
+    if output.exists() and fs.digest(fs.read(output))!=fs.digest(value):raise InputError('incomplete output disagrees with prepared output; refusing replacement')
     _promote(state,folder,worker)
     if _snapshots(state,request['operation'],request['arguments'],data)!=snapshots:raise InputError('promoted snapshot changed before result commit')
-    fs.write(folder/'output.json',value);fs.write(folder/'output-receipt.json',dict(sha256=fs.digest(value)))
+    if not output.exists():fs.write(output,value)
+    fs.write(folder/'output-receipt.json',dict(sha256=fs.digest(value)))
     current.update(status=value['status'],finished_at=fs.stamp(),heartbeat_at=fs.stamp(),stop_verified=True,stop_reason=stop_reason)
+    if recovery_reason:current['recovery_previous_reason']=recovery_reason
     fs.record(folder,current,'result_verified');return presented
 
 def result(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
-    if not (folder/'output.json').exists():return status(state,run_id)
+    if not (folder/'output.json').exists() or not (folder/'output-receipt.json').exists():return status(state,run_id)
     value=fs.read(folder/'output.json');receipt=fs.read(folder/'output-receipt.json',8192)
     if value.get('run_id')!=run_id or fs.digest(value)!=receipt.get('sha256'):raise InputError('operation output integrity mismatch')
     for snapshot in value['snapshots']:
@@ -250,6 +279,9 @@ def run(state,request):
             current['process']=process;current['stop_verified']=process['tree_finished']
             if not process['tree_finished']:raise InputError('owned process tree stop is unknown')
             current['stop_reason']=current.get('stop_reason') or process.get('guard_error') or process.get('stop_reason')
+            # Recovery must retain the controller's observed process metrics as
+            # well as the worker payload before any promotion can begin.
+            fs.record(folder,current,'worker_stopped')
             if process['exit_code']==0 and (folder/'worker-receipt.json').exists():return _finish(state,folder,plan,current,_worker(folder))
             reason=current['stop_reason'] or stop_reason() or 'worker_failed_before_sealed_result'
             current.update(status='cancelled' if reason=='cancelled' else 'failed',stop_reason=reason,finished_at=fs.stamp())

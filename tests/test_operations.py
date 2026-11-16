@@ -306,6 +306,8 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(failed['status'],'partial');self.assertEqual(failed['execution_status'],'failed')
         self.assertEqual(failed['result_availability'],'incomplete_commit')
         self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+        self.assertEqual(self.api.result(self.state,failed['run_id'])['result_availability'],'incomplete_commit')
+        self.assertEqual(self.run_request(request)['result_availability'],'incomplete_commit')
         # The owning CLI has finished; its persisted lifetime must be verified
         # before a new writer repairs only the failed final commit.
         with patch('src.techexpert.operation_state.inspect_process',return_value=dict(state='not_running')):
@@ -315,6 +317,47 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertIsNone(repaired['stop_reason'])
         journal=(self.state/'operations'/failed['run_id']/'journal.jsonl').read_text(encoding='utf-8')
         self.assertIn('simulated final receipt disk failure',journal)
+        self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+
+    def test_tight_final_receipt_repair_preserves_validated_output_and_bounds_new_diagnostics(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
+        first=self.run_request(request)
+        request['operation_key']='tight-repair';request['budget']=dict(max_result_bytes=len(self.state_api.encode(first))+256)
+        real_write=self.state_api.write
+        def disk_failure(path,value):
+            if Path(path).name=='output-receipt.json':raise OSError('final receipt '+('x'*480))
+            return real_write(path,value)
+        with patch('src.techexpert.operation_state.write',side_effect=disk_failure):failed=self.run_request(request)
+        self.assertEqual(failed['result_availability'],'incomplete_commit')
+        folder=self.state/'operations'/failed['run_id'];original=(folder/'output.json').read_bytes()
+        with patch('src.techexpert.operation_state.inspect_process',return_value=dict(state='not_running')):
+            with patch('src.techexpert.operation_process.run',side_effect=AssertionError('tight repair repeated the worker')):
+                repaired=self.api.reconcile(self.state,failed['run_id'])
+        self.assertLessEqual(len(self.state_api.encode(repaired)),request['budget']['max_result_bytes'])
+        self.assertEqual(repaired['execution_status'],'succeeded');self.assertTrue(repaired['data_omitted'])
+        self.assertEqual((folder/'output.json').read_bytes(),original)
+        self.assertTrue((folder/'output-receipt.json').exists())
+        self.assertEqual(len(list((self.state/'cases').iterdir())),2)
+
+    def test_corrupt_prepared_output_refuses_recovery_without_publishing_or_repeating(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
+        p=self.launch(request,crash_before_promotion=True);out,err=p.communicate(timeout=10)
+        self.assertEqual(p.returncode,73,(out,err))
+        run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest()
+        path=self.state/'operations'/run_id/'prepared-output.json';prepared=self.state_api.read(path)
+        prepared['value']['data']['durations_seconds']['execution']=1
+        self.state_api.write(path,prepared)
+        with patch('src.techexpert.operation_process.run',side_effect=AssertionError('corrupt preparation launched worker')):
+            with self.assertRaisesRegex(ValueError,'prepared|integrity'):self.api.reconcile(self.state,run_id)
+        self.assertFalse((self.state/'cases').exists())
+
+    def test_reconcile_does_not_bypass_the_first_presentation_budget_gate(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
+        first=self.run_request(request);saved=self.state_api.read(self.state/'operations'/first['run_id']/'output.json')
+        request['operation_key']='failed-gate';request['budget']=dict(max_result_bytes=(len(self.state_api.encode(saved))+len(self.state_api.encode(first)))//2)
+        failed=self.run_request(request);self.assertEqual(failed['stop_reason'],'output_limit')
+        with patch('src.techexpert.operation_state.inspect_process',return_value=dict(state='not_running')):
+            with self.assertRaisesRegex(ValueError,'output_limit'):self.api.reconcile(self.state,failed['run_id'])
         self.assertEqual(len(list((self.state/'cases').iterdir())),1)
 
     def test_unknown_process_identity_prevents_reconciliation(self):
