@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=2
+SANITIZER_VERSION=3
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -49,6 +49,8 @@ def _safe_file(name):
     return name
 
 def _alias_name(salt,category,value):return category+'_'+hmac.new(salt,(category+'\0'+value).encode(),hashlib.sha256).hexdigest()[:12].upper()
+
+def _public_evidence_id(privacy,value):return 'E-'+privacy.alias('ID',value)[3:]
 
 def _privacy_document(path):
     if path.is_symlink() or getattr(path.lstat(),'st_file_attributes',0)&0x400:raise InputError('linked pseudonym table is not accepted')
@@ -132,6 +134,7 @@ def _known(doc,state_dir):
     for source in profile.get('sources',[]):
         add('NODE',source.get('host'));add('PATH',source.get('path'));add('USER',source.get('settings',{}).get('user'))
         for value in source.get('settings',{}).get('databases',{}).values():add('DB',value)
+    for evidence in doc['evidence']:values[evidence['id']]='EVIDENCE'
     fields=dict.fromkeys(('host','hostname','node','observed_hostname','requested_node_label','computer','computer_name'),'NODE')
     fields.update(dict.fromkeys(('database','database_name','datname','base_name'),'DB'))
     fields.update(dict.fromkeys(('user','username','usename','login'),'USER'))
@@ -153,9 +156,15 @@ def _known(doc,state_dir):
     return values
 
 def _json_secrets(text,privacy):
-    if not text.lstrip().startswith(('{','[')):return text
+    candidate=text.lstrip()
+    if candidate.startswith('['):
+        # Plain labels such as [Кейс] are not JSON arrays. A recognized JSON
+        # value prefix must still fail closed on duplicate/truncated input.
+        tail=candidate[1:].lstrip()
+        if tail and tail[0] not in '[{"]0123456789-' and not re.match(r'(?:true|false|null)\b',tail):return text
+    elif not candidate.startswith('{'):return text
     try:value=json_value(text,reject_duplicates=True)
-    except (ValueError,RecursionError):return text
+    except (ValueError,RecursionError) as exc:raise InputError('JSON excerpt cannot be safely decoded; provide complete bounded JSON or separately prepared text') from exc
     stack=[(value,0)];visited=0;changed=False
     while stack:
         item,depth=stack.pop();visited+=1
@@ -191,7 +200,7 @@ def _sanitize(text,privacy,known,public_urls):
     text=SECRET.sub(removed('secret','[SECRET_REMOVED]'),text)
     if known:
         pattern=re.compile(r'(?<!\w)(?:'+'|'.join(re.escape(value) for value in sorted(known,key=len,reverse=True))+r')(?!\w)')
-        text=pattern.sub(lambda m:privacy.alias(known[m[0]],m[0]),text)
+        text=pattern.sub(lambda m:_public_evidence_id(privacy,m[0]) if known[m[0]]=='EVIDENCE' else privacy.alias(known[m[0]],m[0]),text)
     text=EMAIL.sub(lambda m:privacy.alias('EMAIL',m[0]),text)
     text=GUID.sub(lambda m:privacy.alias('ID',m[0].lower()),text)
     def ip(match):
@@ -207,7 +216,7 @@ def _sanitize(text,privacy,known,public_urls):
     for key,value in protected.items():text=text.replace(key,value)
     return text
 
-def _source_bytes(state_dir,doc,evidence_id,known):
+def _source_bytes(state_dir,doc,evidence_id):
     evidence=next((e for e in doc['evidence'] if e['id']==evidence_id),None)
     if evidence is None:raise InputError('unknown evidence selected for draft')
     attachment=next(a for a in doc['attachments'] if a['id']==evidence['attachment'])
@@ -217,12 +226,7 @@ def _source_bytes(state_dir,doc,evidence_id,known):
         if kind=='onec_source':
             raise InputError('encoded source snapshots require a separate prepared text excerpt; raw source bundles are not exported')
         if kind=='native-jr':
-            if ':r' not in evidence['record']:raise InputError('whole JR dictionaries/parts require separate prepared text; select a jr-record instead')
-            from .native_jr import read_record
-            result=read_record(state_dir,attachment['target_id'],evidence['record'])
-            for key,category in (('user','USER'),('computer','NODE')):
-                value=result['record'].get(key)
-                if isinstance(value,str) and 2<=len(value)<=4096 and not SECRET.search(value):known.setdefault(value,category)
+            raise InputError('native JR dictionaries, parts and serialized records require separate prepared text; use parsed observations in the proposal')
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])
     else:
         result=dict(text=json.dumps(dict(kind='calculation',report_digest=attachment['report_sha256']),ensure_ascii=False),truncated=False)
@@ -374,13 +378,13 @@ def prepare(state_dir,investigation_id,*,revision=None,include_versions=False,ex
         if len(index)>=1000:raise InputError('incident index limit reached; retain existing drafts')
         excerpts={};provenance={}
         with _Privacy(state_dir,investigation_id) as privacy:
-            originals={eid:_source_bytes(state_dir,doc,eid,known) for eid in selected}
+            originals={eid:_source_bytes(state_dir,doc,eid) for eid in selected}
             title=('[Кейс] '+_sanitize(doc['task'],privacy,known,allowed_urls).replace('\n',' '))[:120]
             body=_sanitize(_content(doc,excluded),privacy,known,allowed_urls).strip()+'\n'
             for eid in selected:
                 raw,truncated,proof=originals[eid]
                 cleaned=_sanitize(raw,privacy,known,allowed_urls).encode('utf-8')
-                public_eid='E-'+privacy.alias('ID',eid)[3:]
+                public_eid=_public_evidence_id(privacy,eid)
                 excerpts['evidence/'+public_eid+'.txt']=cleaned
                 provenance[public_eid]=dict(original_evidence_id=eid,original=proof,truncated_before_cleanup=truncated,sanitized_sha256=_hash(cleaned))
             body=_with_excerpts(body,excerpts)
@@ -413,7 +417,6 @@ def edit(state_dir,draft_id,*,title,body,expected_sha256,exclude_evidence_ids=No
         if not isinstance(excluded,list) or any(e not in ids for e in excluded):raise InputError('unknown excluded incident evidence')
         with _Privacy(state_dir,source['investigation_id']) as privacy:
             known=_known(doc,state_dir);urls=_public_urls(source['options']['public_urls'])
-            for eid in source['options']['evidence_ids']:_source_bytes(state_dir,doc,eid,known)
             if not isinstance(body,str):raise InputError('incident body requires text')
             _,_,old_tail=view['body'].partition(EXCERPT_HEADING)
             supplied_body,_,supplied_tail=body.partition(EXCERPT_HEADING)

@@ -273,6 +273,17 @@ class IncidentDraftTests(unittest.TestCase):
             another=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-PrivateOrders'],include_versions=True)
             self.assertEqual(file['path'],next(f for f in another['files'] if f['path'].startswith('evidence/'))['path'])
 
+    def test_local_evidence_identifiers_in_free_text_use_the_same_public_alias(self):
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state);local_id='E-CommerceSecret'
+            inv=revise(state,inv['investigation_id'],dict(evidence=inv['evidence']+[dict(id=local_id,attachment='A-1',record='s1')],
+                open_questions=['Нужно проверить '+local_id]),expected_revision=2)
+            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=[local_id])
+            self.assertFalse(local_id in json.dumps(view),'local evidence identifier leaked into the preview')
+            public_id=Path(next(f['path'] for f in view['files'] if f['path'].startswith('evidence/'))).stem
+            self.assertGreaterEqual(view['body'].count(public_id),2)
+
     def test_encoded_json_secret_keys_and_nonstring_values_are_removed_before_text_cleanup(self):
         from src.techexpert.artifacts import save_artifact
         from src.techexpert.investigations import revise
@@ -323,12 +334,22 @@ class IncidentDraftTests(unittest.TestCase):
             state=Path(temp);inv=self.jr_investigation(state)
             with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
 
-    def test_selected_jr_record_uses_resolved_user_and_computer_for_cleanup(self):
-        from src.techexpert.investigations import revise
+    def test_native_jr_record_requires_prepared_text_instead_of_exporting_serialized_values(self):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp);inv=self.jr_investigation(state)
-            inv=revise(state,inv['investigation_id'],dict(open_questions=['OperatorPetrov on PERSONAL-COMPUTER-01']),expected_revision=3)
-            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-3'])
-            for value in ('OperatorPetrov','PERSONAL-COMPUTER-01'):self.assertNotIn(value,json.dumps(view))
+            with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-3'])
+
+    def test_duplicate_or_truncated_json_never_falls_back_to_uncleaned_text(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        samples=[b'{"\\u0070assword":"SECRET1","\\u0070assword":"SECRET2"}',
+                 b'{"\\u0070assword":"SECRET1","padding":"'+b'x'*9000+b'"}']
+        for data in samples:
+            with self.subTest(bytes=len(data)),tempfile.TemporaryDirectory() as temp:
+                state=Path(temp);inv=self.investigation(state)
+                artifact=save_artifact(state,'test',{},[('observation.json',data)],{})
+                inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+                    evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
+                with self.assertRaisesRegex(ValueError,'JSON|prepared'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
 
 if __name__=='__main__':unittest.main()
