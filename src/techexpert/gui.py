@@ -158,7 +158,10 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._reply(200, html.encode('utf-8'), 'text/html; charset=utf-8', nonce)
             elif self.path == '/api/profile':
                 with self.server.profile_lock:
-                    result = profiles.load_profile(self.server.state_dir)
+                    if self.server.investigation_id:
+                        from .investigations import load
+                        result=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
+                    else:result = profiles.load_profile(self.server.state_dir)
                 self._json(200, result)
             elif self.path == '/api/doctor':
                 self._json(200, profiles.doctor(self.server.state_dir))

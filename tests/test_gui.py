@@ -10,6 +10,27 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_selected_investigation_loads_its_pinned_profile_instead_of_global_current(self):
+        from src.techexpert.investigations import create
+        from src.techexpert.profiles import save_profile
+        a=save_profile(self.state_dir,dict(schema_version=1,name='A',bases=[dict(id='a',name='IB A',mode='file',connection='D:/A')],sources=[]))
+        doc=create(self.state_dir,dict(task='Case A',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=doc['investigation_id']
+        save_profile(self.state_dir,dict(schema_version=1,name='B',bases=[dict(id='b',name='IB B',mode='file',connection='D:/B')],sources=[]))
+        status,_,body=self.request('GET','/api/profile');self.assertEqual(status,200)
+        self.assertEqual(json.loads(body)['name'],'A')
+        self.assertEqual(json.loads(body)['revision'],a['revision'])
+        self.server.investigation_id=None
+        self.assertEqual(json.loads(self.request('GET','/api/profile')[2])['name'],'B')
+
+    def test_unconfigured_investigation_does_not_inherit_a_later_unrelated_profile(self):
+        from src.techexpert.investigations import create
+        from src.techexpert.profiles import save_profile
+        doc=create(self.state_dir,dict(task='Unconfigured case',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=doc['investigation_id']
+        save_profile(self.state_dir,dict(schema_version=1,name='Other',bases=[dict(id='other',name='Other',mode='file',connection='D:/Other')],sources=[]))
+        self.assertIsNone(json.loads(self.request('GET','/api/profile')[2]))
+
     def test_source_help_requires_auth_and_includes_offline_preparation(self):
         self.assertEqual(self.request('GET','/api/source-help',token=False)[0],401)
         status,_,body=self.request('GET','/api/source-help');self.assertEqual(status,200)

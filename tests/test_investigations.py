@@ -57,6 +57,22 @@ class InvestigationTests(unittest.TestCase):
             raw=state/'cases'/case['case_id']/'sources/s1.bin';raw.write_bytes(b'changed')
             with self.assertRaises(ValueError):self.api.load(state,iid)
 
+    def test_measurement_checks_uncited_inputs_on_which_the_calculation_depends(self):
+        from src.techexpert.storage import ROOT,investigate
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp)/'state';inputs=Path(temp)/'input';inputs.mkdir()
+            original=json.loads((ROOT/'examples/sc01/case.json').read_text(encoding='utf-8'))
+            lines=(ROOT/'examples/sc01/events.jsonl').read_bytes().splitlines(keepends=True)
+            (inputs/'first.jsonl').write_bytes(b''.join(lines[:2]));(inputs/'last.jsonl').write_bytes(b''.join(lines[2:]))
+            original['sources']=[dict(path=str(inputs/name),format='normalized-events-v1') for name in ('first.jsonl','last.jsonl')]
+            manifest=inputs/'case.json';manifest.write_text(json.dumps(original),encoding='utf-8')
+            case=investigate(manifest,state);created=self.create(state);iid=created['investigation_id']
+            self.api.revise(state,iid,dict(attachments=[dict(id='A-1',kind='case',target_id=case['case_id'])],
+                evidence=[dict(id='E-1',attachment='A-1',record='s1:2')],
+                facts=[dict(id='F-1',text='Execution spans two inputs',evidence=['E-1'],measurement=dict(attachment='A-1',pointer='/durations_seconds/execution'))]),expected_revision=1)
+            (state/'cases'/case['case_id']/'sources/s2.bin').write_bytes(b'corrupted uncited boundary')
+            with self.assertRaisesRegex(ValueError,'integrity'):self.api.load(state,iid)
+
     def test_cause_execution_and_change_verification_have_independent_states(self):
         from src.techexpert.artifacts import save_artifact
         with tempfile.TemporaryDirectory() as temp:

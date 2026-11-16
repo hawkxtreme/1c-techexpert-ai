@@ -20,7 +20,7 @@ from .artifacts import load_artifact,artifact_evidence,encoded
 from .incident_templates import catalogue as templates,plan as template_plan
 from .inputs import InputError,json_value,read_snapshot
 from .profiles import load_profile,validate_profile
-from .storage import ROOT,load_case,load_comparison,read_evidence,knowledge_revision,write_json
+from .storage import ROOT,verified_case,load_comparison,read_evidence,knowledge_revision,write_json
 
 MAX_DOCUMENT=2*1024*1024
 EDITABLE={'episode','attachments','evidence','facts','hypotheses','contradictions','open_questions','tool_runs',
@@ -57,7 +57,7 @@ def revision_folder(state_dir,investigation_id,revision):
     return Path(state_dir)/'investigations'/investigation_id/'revisions'/str(revision).zfill(6)
 
 def _target(state_dir,item):
-    functions={'case':load_case,'artifact':load_artifact,'comparison':load_comparison}
+    functions={'case':verified_case,'artifact':load_artifact,'comparison':load_comparison}
     if item.get('kind') not in functions:raise InputError('unsupported investigation attachment kind')
     return functions[item['kind']](state_dir,item.get('target_id'))
 
