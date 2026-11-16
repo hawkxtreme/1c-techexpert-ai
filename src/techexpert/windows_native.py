@@ -266,7 +266,7 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
     if not job:raise c.WinError(c.get_last_error())
     limits=_Limits();limits.basic.flags=0x2000
     if memory_bytes is not None:limits.basic.flags|=0x200;limits.job_memory=memory_bytes
-    process=_Process();assigned=False;reason=None;guard_error=None;started=time.monotonic();tree_finished=False;exit_code=None
+    process=_Process();assigned=False;reason=None;guard_error=None;started=time.monotonic();tree_finished=False;exit_code=None;cleanup_deadline=None
     def active():
         accounting=_Accounting()
         if not kernel.QueryInformationJobObject(job,1,c.byref(accounting),c.sizeof(accounting),None):raise c.WinError(c.get_last_error())
@@ -316,8 +316,8 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
                     if wait!=258:raise c.WinError(c.get_last_error())
             except KeyboardInterrupt:reason='cancelled'
             if reason:kernel.TerminateJobObject(job,1)
-            finish=time.monotonic()+5
-            while active() and time.monotonic()<finish:time.sleep(.02)
+            cleanup_deadline=time.monotonic()+5
+            while active() and (remaining:=cleanup_deadline-time.monotonic())>0:time.sleep(min(.02,remaining))
             tree_finished=active()==0
             code=w.DWORD()
             if kernel.GetExitCodeProcess(process.process,c.byref(code)):exit_code=code.value
@@ -331,9 +331,11 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
                 peak_job_memory_bytes=memory.peak_job if memory_known else None,scope='owned Windows Job processes')
     finally:
         if process.process:
+            if cleanup_deadline is None:cleanup_deadline=time.monotonic()+5
             if assigned:kernel.TerminateJobObject(job,1)
             else:kernel.TerminateProcess(process.process,1)  # Still suspended: no child can have started.
-            kernel.WaitForSingleObject(process.process,5000)
+            remaining_ms=max(0,min(5000,int((cleanup_deadline-time.monotonic())*1000)))
+            kernel.WaitForSingleObject(process.process,remaining_ms)
             kernel.CloseHandle(process.process)
         if process.thread:kernel.CloseHandle(process.thread)
         kernel.CloseHandle(job)

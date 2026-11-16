@@ -219,5 +219,70 @@ kernel_controller.main(sys.argv[1],int(sys.argv[2]))
         self.assertEqual(call['exit_code'],3);self.assertEqual(value['stop_reason'],'kernel_launcher_failure')
         self.assertFalse(value['stop_verified'])
 
+    def test_actual_final_receipt_write_failure_retains_the_response_and_returns_partial(self):
+        path,request=self.request();original_write=self.api._write_checked
+        def fail_receipt(path,value):
+            if Path(path).name=='call-receipt.json':raise OSError('controlled final receipt failure')
+            return original_write(path,value)
+        with patch('src.techexpert.kernel._write_checked',side_effect=fail_receipt):
+            call=self.api.invoke(self.state,'run',dict(request=str(path)))
+        value=self.response(call)
+        self.assertEqual(call['exit_code'],1);self.assertEqual(value['status'],'partial')
+        self.assertEqual(value['result_availability'],'incomplete_invocation_receipt')
+        original=Path(call['folder'])/'response.json';before=original.read_bytes()
+        self.assertEqual(json.loads(before)['status'],'succeeded')
+        self.assertEqual(self.api.inspect_call(self.state,call['call_id'])['status'],'partial')
+        self.assertEqual(original.read_bytes(),before)
+        self.assertEqual(len(list((self.state/'kernel-calls').iterdir())),1)
+
+    def test_final_receipt_and_failure_frame_write_denial_still_return_a_bounded_partial(self):
+        path,request=self.request();original_write=self.api._write_checked
+        def fail_receipts(path,value):
+            if Path(path).name in ('call-receipt.json','receipt-error-response-receipt.json'):raise OSError('controlled receipt writes denied')
+            return original_write(path,value)
+        with patch('src.techexpert.kernel._write_checked',side_effect=fail_receipts):
+            call=self.api.invoke(self.state,'run',dict(request=str(path)))
+        value=self.response(call)
+        self.assertEqual(call['exit_code'],1);self.assertEqual(value['status'],'partial')
+        self.assertLess(len(json.dumps(value).encode()),16384)
+        self.assertEqual(json.loads((Path(call['folder'])/'response.json').read_text(encoding='utf-8'))['status'],'succeeded')
+
+    def test_dead_owner_after_a_real_final_receipt_fault_is_partial_and_not_running(self):
+        path,request=self.request()
+        code='''import json,sys
+from pathlib import Path
+from src.techexpert import kernel
+original=kernel._write_checked
+def fault(path,value):
+    if Path(path).name=='call-receipt.json':raise OSError('controlled actual final receipt fault')
+    return original(path,value)
+kernel._write_checked=fault
+try:
+    call=kernel.invoke(Path(sys.argv[1]),'run',dict(request=sys.argv[2]))
+    kernel.emit(call,sys.stdout)
+    sys.exit(call['exit_code'])
+except OSError:
+    print(json.dumps(dict(kernel_call_id=next((Path(sys.argv[1])/'kernel-calls').iterdir()).name)))
+'''
+        run=subprocess.run([sys.executable,'-X','utf8','-c',code,str(self.state),str(path)],cwd=ROOT,capture_output=True,timeout=15)
+        value=json.loads(run.stdout);call=self.api.inspect_call(self.state,value['kernel_call_id'])
+        self.assertEqual(call['status'],'partial');self.assertEqual(call['result_availability'],'incomplete_invocation_receipt')
+        self.assertIn(call['observed_owner']['state'],('not_running','different_lifetime'))
+        self.assertIn(call['observed_child']['state'],('not_running','different_lifetime'))
+        self.assertEqual(run.returncode,1,run.stderr)
+
+    def test_advisory_status_write_failure_does_not_hide_a_checked_finished_response(self):
+        path,request=self.request()
+        from src.techexpert import operation_state
+        original=operation_state.write
+        def fault(path,value):
+            if Path(path).name=='status.json' and value.get('status')=='finished':raise OSError('controlled advisory status failure')
+            return original(path,value)
+        with patch('src.techexpert.operation_state.write',side_effect=fault):
+            call=self.api.invoke(self.state,'run',dict(request=str(path)))
+        self.assertEqual(call['exit_code'],0);self.assertEqual(self.response(call)['status'],'succeeded')
+        self.assertTrue(call['diagnostics'])
+        self.assertEqual(self.api.inspect_call(self.state,call['call_id'])['status'],'finished')
+
 
 if __name__=='__main__':unittest.main()

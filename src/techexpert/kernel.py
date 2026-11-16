@@ -89,7 +89,7 @@ def _write_response(path,value,code,plan):
 
 
 def _response(folder,plan,name='response.json',*,verify=True):
-    if name not in ('response.json','error-response.json'):raise InputError('invalid kernel response member')
+    if name not in ('response.json','error-response.json','receipt-error-response.json'):raise InputError('invalid kernel response member')
     receipt=_checked(folder/(Path(name).stem+'-receipt.json'),16384)
     if (not isinstance(receipt,dict) or receipt.get('name')!=name or receipt.get('plan_sha256')!=fs.digest(plan)
         or receipt.get('exit_code') not in (0,1,2,3,130) or type(receipt.get('exit_code')) is not int):raise InputError('kernel response receipt integrity mismatch')
@@ -185,8 +185,34 @@ def invoke(state,action,arguments,*,limits=None):
             memory_peak_bytes=None,scope='bounded small metadata and chunked response transport; no separate OS quota for setup/receipt/stream I/O'),
         stop_reason=reason,plan_sha256=fs.digest(plan))
     if (directory/'metrics.json').exists():receipt['controller_metrics']=fs.read(directory/'metrics.json',65536)
-    _write_checked(directory/'call-receipt.json',receipt);current.update(status='finished');fs.write(directory/'status.json',current)
-    return dict(call_id=call_id,folder=str(directory),response_name=response['name'],exit_code=response['exit_code'])
+    call=dict(call_id=call_id,folder=str(directory),response_name=response['name'],exit_code=response['exit_code'])
+    try:_write_checked(directory/'call-receipt.json',receipt)
+    except (OSError,ValueError) as exc:
+        partial=dict(schema_version=1,status='partial',kernel_call_id=call_id,run_id=receipt['operation_run_id'],
+            result_availability='incomplete_invocation_receipt',stop_reason='kernel_receipt_commit_failed',data=None,
+            kind='kernel_invocation',data_omitted=True,snapshots=[],evidence=[],truncated=True,
+            controller_response=response,controller_response_was_verified=True,
+            message=str(exc)[:512],limitations=['Original controller response and operation files are retained. Invocation metrics were not committed; no operation was repeated.'])
+        call.update(exit_code=1,diagnostics=['Final invocation receipt was not committed.'])
+        try:
+            failure=_write_response(directory/'receipt-error-response.json',partial,1,plan)
+            call['response_name']=failure['name']
+        except (OSError,ValueError):
+            # A write-denied/full volume must not require another write merely
+            # to report the failure. This fixed small frame is transport data.
+            call.update(response_name=None,inline_response=partial)
+        current.update(status='partial',result_availability='incomplete_invocation_receipt')
+        try:fs.write(directory/'status.json',current)
+        except (OSError,ValueError):pass  # The partial reply and live observations remain explicit.
+        return call
+    current.update(status='finished')
+    try:fs.write(directory/'status.json',current)
+    except (OSError,ValueError) as exc:
+        warning=dict(message=str(exc)[:512],scope='advisory status cache only; checked final invocation receipt is complete')
+        call['diagnostics']=[warning['message']]
+        try:_write_checked(directory/'status-write-diagnostic.json',warning)
+        except (OSError,ValueError):pass  # Caller still receives the actual bounded diagnostic.
+    return call
 
 
 def inspect_call(state,call_id):
@@ -196,16 +222,26 @@ def inspect_call(state,call_id):
         receipt=_checked(directory/'call-receipt.json',128*1024)
         if receipt.get('plan_sha256')!=fs.digest(plan) or receipt.get('call_id')!=call_id:raise InputError('kernel call receipt integrity mismatch')
         _response(directory,plan,receipt['response']['name'])
+        if (directory/'status-write-diagnostic.json').exists():receipt=dict(receipt,status_cache_diagnostic=_checked(directory/'status-write-diagnostic.json',16384))
         return receipt
     current=fs.read(directory/'status.json',65536)
-    if current['status']=='finished':current.update(status='partial',result_availability='incomplete_invocation_receipt')
-    return dict(current,observed_owner=fs.inspect_process(current['owner']),
-        observed_child=fs.inspect_process(current['child']) if current.get('child') else dict(state='unknown'),
+    owner=fs.inspect_process(current['owner']);child=fs.inspect_process(current['child']) if current.get('child') else dict(state='unknown')
+    available=(directory/'response.json').exists() and (directory/'response-receipt.json').exists()
+    response=_response(directory,plan) if available else None
+    if current['status'] in ('finished','partial') or available and child['state'] in ('not_running','different_lifetime'):
+        current=dict(current,recorded_status=current['status'],status='partial',result_availability='incomplete_invocation_receipt',controller_response=response)
+    elif all(p['state'] in ('not_running','different_lifetime') for p in (owner,child)):
+        current=dict(current,recorded_status=current['status'],status='interrupted',result_availability='controller_response_unavailable')
+    return dict(current,observed_owner=owner,observed_child=child,
         limits=plan['limits'],model_tokens=None,harness_memory_bytes=None,
         limitations=['Unfinished invocation; no automatic restart or stale-heartbeat takeover.'])
 
 
 def emit(call,output):
+    if 'inline_response' in call:
+        data=fs.encode(call['inline_response'])
+        if len(data)>16384:raise InputError('emergency kernel response exceeds fixed transport limit')
+        output.write(data.decode('utf-8'));output.flush();return
     directory=fs.safe(call['folder']);plan=fs.read(directory/'plan.json',65536)
     receipt=_response(directory,plan,call['response_name'],verify=False)
     decoder=codecs.getincrementaldecoder('utf-8')()

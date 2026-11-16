@@ -154,7 +154,7 @@
     "skills/techexpert/references/investigation-state.md": "fd5b9fd7adb2f360020388978427e73981045611cdfc8e0bb42db88d1b183983",
     "skills/techexpert/references/knowledge-lifecycle.md": "627e4961216fef70114b5cf93fad77ce988fb1eff3ebf99bcc8bc0e6b6bfaf1d",
     "skills/techexpert/references/local-cli.md": "c45606d74416d9492ff378f563e11f37610bde71aaecc49656e39714e81a17ad",
-    "skills/techexpert/references/operations.md": "a3591714a0ad0b6268182b7d9ea1d5b4780486b48690e2875261da134b983bfd",
+    "skills/techexpert/references/operations.md": "4399509129c671f8df8ea1e91adf5d5441d46874ec642479aa51db673b686845",
     "skills/techexpert/references/source-coverage.md": "d63ad4d3ae6802db5ddf3a98f03f36c347e1dfb10d7453e0cdeba138e01fbbe3",
     "skills/techexpert/references/source-export.md": "fc3709d885c4b6ca19309b30c94e3081de5863b62f9ba71eda52904f3682e7cf",
     "skills/verify-improvement/SKILL.md": "36b56f8d1f5a0aaf735f5784e907c52c8bde9e1e9bda82dff0931b2cee712493",
@@ -167,7 +167,7 @@
     "src/techexpert/assets/source-help.json": "dfd14ad8940093ffee8d86e6de2d33aacab808f10fbc4746061f6b3185d5367e",
     "src/techexpert/capabilities.py": "8f8871d256a37c725294e367b9c07a045c4df42a42874fce3a21c6857a8cd808",
     "src/techexpert/catalog_probe.py": "4173089c9af039e2252db82867930144275d0b2c9eea2dab9bb300386b3869c8",
-    "src/techexpert/cli.py": "cedca13fdd4e58dee0b592831407567a032e614988f0270524aa24898d314393",
+    "src/techexpert/cli.py": "a9a68cc675de6a30fcd987df0c16aedfff0464220b3f0178590a55ebf8ae3945",
     "src/techexpert/comparison.py": "ece9f1c4851718fbbf0f6db8a6c739c567bd3cbb437407905707d4b70a0809b5",
     "src/techexpert/gui.py": "40c0b3f3c19694bdd16c52dac1052776e39dc7226cb68d1de0926bed142c62fa",
     "src/techexpert/incident_drafts.py": "378fd0d9649c095d71c40cac1a3275f0f8707a630133ffefa84bf45081391b1d",
@@ -175,7 +175,7 @@
     "src/techexpert/inputs.py": "ea254cc0d00b31a88318a3b828b94e63e0eab418786a0592c92e3987e17a1b32",
     "src/techexpert/investigations.py": "f1ef8445f5d370130c9589f6a5f438cd07d953e4c5535b7725d2039071c83b4b",
     "src/techexpert/job_correlation.py": "b2c9665bb0c79a1630ff82b80941968458d39b8058b01b42d7e128f92063af41",
-    "src/techexpert/kernel.py": "0c156734efa09686a63e6e614c0e2085c9d7a0df0359b8f87c3247aba87f0741",
+    "src/techexpert/kernel.py": "4dbcd4d566dae2a29adb2198eea3b5d5b8d1c6b8221588fa25ad8281dece0d20",
     "src/techexpert/kernel_context.py": "6b15ac964af374ebdb2f41b6c8ee827ded28adcda793ed3e6812c060528d0f67",
     "src/techexpert/kernel_controller.py": "e5655beed5ecdd1b937076c000f9473afa5f0064ec3031b10d9e9220063e7663",
     "src/techexpert/kernel_process.py": "224179d7ca93e0398829e91db1929b7f733b7caf54c85501b1c83ebe10849328",
@@ -201,7 +201,7 @@
     "src/techexpert/source_export.py": "ed56e9989d4a1fe3bfddbd0baae897e527d323cf7dff1f27089df6e5792e043e",
     "src/techexpert/source_help.py": "37ae22889efa28a2202a05b37d10a5efc0a7a2c923089bd2ebbe8a0394e524ff",
     "src/techexpert/storage.py": "945ce652e38533d79ab5afd33ab6ac0d84d3b1102e67f4b80a6de4f0800f1808",
-    "src/techexpert/windows_native.py": "ee518734da5465954a6facca30c3953602c84e942aaadd7581a12ccf96d5d994",
+    "src/techexpert/windows_native.py": "b2583b1465afe83fc8baf4774cdef8937e7b9ac9331d7ca3a8fe3fc860927da5",
     "techexpert.py": "cb1f75eaf64f3aec240a781cf3dff83c824cd22ac270c94ce775f145c58f075d"
   }
 }

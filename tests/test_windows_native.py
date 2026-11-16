@@ -6,6 +6,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 
 @unittest.skipUnless(os.name=='nt','Windows native runtime profile only')
@@ -93,6 +94,31 @@ native.run([sys.executable,"-c","import time;time.sleep(30)"],cwd=Path("nested")
             def stop():raise ValueError('owned output budget exceeded')
             result=self.api.run([sys.executable,'-c','import time;time.sleep(20)'],cwd=Path(temp),guard=stop,timeout=5)
             self.assertEqual(result['stop_reason'],'guard_failed');self.assertTrue(result['tree_finished'])
+
+    def test_uncertain_job_stop_shares_one_cleanup_deadline_with_the_final_handle_wait(self):
+        import ctypes
+        real=self.api._kernel();clock=[0.0]
+        class ObservedKernel:
+            def __getattr__(self,name):return getattr(real,name)
+            def QueryInformationJobObject(self,job,kind,value,size,returned):
+                ok=real.QueryInformationJobObject(job,kind,value,size,returned)
+                if ok and kind==1:ctypes.cast(value,ctypes.POINTER(self_api._Accounting)).contents.active=1
+                return ok
+            def WaitForSingleObject(self,handle,milliseconds):
+                # Reap the actual owned child normally; only observation/time
+                # stays uncertain. This is not a real hung-driver benchmark.
+                actual=real.WaitForSingleObject(handle,5000)
+                clock[0]+=milliseconds/1000
+                return actual
+        self_api=self.api
+        with tempfile.TemporaryDirectory() as temp:
+            def stop():raise ValueError('controlled stop')
+            def pause(seconds):clock[0]+=seconds
+            with patch.object(self.api,'_kernel',return_value=ObservedKernel()):
+                with patch.object(self.api.time,'monotonic',side_effect=lambda:clock[0]),patch.object(self.api.time,'sleep',side_effect=pause):
+                    result=self.api.run([sys.executable,'-c','import time;time.sleep(20)'],cwd=Path(temp),guard=stop,timeout=5)
+        self.assertFalse(result['tree_finished'])
+        self.assertLessEqual(result['elapsed_seconds'],5.05,'cleanup started a second five-second wait')
 
     def test_copy_limits_and_windows_version_metadata(self):
         with tempfile.TemporaryDirectory() as temp:

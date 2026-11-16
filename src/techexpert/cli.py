@@ -165,6 +165,7 @@ def main(argv=None):
                 if action=='cancel':arguments['executor_id']=args.executor_id
             call=kernel.invoke(args.state_dir,action,arguments)
             kernel.emit(call,sys.stdout)
+            if call.get('diagnostics'):print(json.dumps(dict(kernel_call_id=call['call_id'],diagnostics=call['diagnostics']),ensure_ascii=False),file=sys.stderr)
             return call['exit_code']
         elif args.command == 'doctor':
             result = doctor(args.state_dir)
