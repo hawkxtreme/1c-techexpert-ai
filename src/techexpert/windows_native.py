@@ -213,15 +213,59 @@ def copy_locked(source,target,*,max_bytes,deadline,space_floor):
         if handle is not None:kernel.CloseHandle(handle)
 
 
-def run(argv,*,cwd,guard,timeout):
+def open_shared_read(path):
+    """Read one old-or-new metadata file without blocking atomic replacement."""
+    import msvcrt
+    kernel=_kernel();handle=kernel.CreateFileW(str(path),0x80000000,7,None,3,0x00200080,None);fd=None
+    if handle==c.c_void_p(-1).value:raise c.WinError(c.get_last_error())
+    try:
+        info=_FileInfo()
+        if not kernel.GetFileInformationByHandle(handle,c.byref(info)):raise c.WinError(c.get_last_error())
+        if info.attributes&(0x10|0x400):raise InputError('shared metadata reader requires a regular non-reparse file')
+        fd=msvcrt.open_osfhandle(int(handle),os.O_RDONLY|os.O_BINARY);handle=None
+        stream=os.fdopen(fd,'rb');fd=None;return stream
+    finally:
+        if fd is not None:os.close(fd)
+        if handle is not None:kernel.CloseHandle(handle)
+
+
+def replace_shared_metadata(source,target):
+    """Same-directory metadata rename with consenting delete-shared old readers."""
+    source=Path(source).absolute();target=Path(target).absolute()
+    if source.parent!=target.parent or '..' in source.parts or '..' in target.parts:raise InputError('metadata replacement requires sibling local files')
+    for path in (source,target):
+        try:info=path.lstat()
+        except FileNotFoundError:continue
+        if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('linked metadata replacement rejected')
+    kernel=_kernel()
+    kernel.SetFileInformationByHandle.argtypes=[w.HANDLE,c.c_int,c.c_void_p,w.DWORD]
+    kernel.SetFileInformationByHandle.restype=w.BOOL
+    class Rename(c.Structure):_fields_=[('flags',w.DWORD),('root',w.HANDLE),('length',w.DWORD),('name',w.WCHAR*1)]
+    handle=kernel.CreateFileW(str(source),0x10080,7,None,3,0x00200080,None)
+    if handle==c.c_void_p(-1).value:raise c.WinError(c.get_last_error())
+    try:
+        info=_FileInfo()
+        if not kernel.GetFileInformationByHandle(handle,c.byref(info)):raise c.WinError(c.get_last_error())
+        if info.attributes&(0x10|0x400):raise InputError('metadata replacement requires a regular non-reparse file')
+        name=str(target).encode('utf-16-le');buffer=c.create_string_buffer(Rename.name.offset+len(name)+2)
+        rename=c.cast(buffer,c.POINTER(Rename)).contents;rename.flags=3;rename.root=None;rename.length=len(name)
+        c.memmove(c.addressof(buffer)+Rename.name.offset,name,len(name))
+        # FileRenameInfoEx: REPLACE_IF_EXISTS | POSIX_SEMANTICS. No ignore-ACL/read-only flags.
+        if not kernel.SetFileInformationByHandle(handle,22,buffer,len(buffer)):raise c.WinError(c.get_last_error())
+    finally:kernel.CloseHandle(handle)
+
+
+def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
     """Launch suspended, bind to an owned job, then resume. Keep no descendants."""
     kernel=_kernel()
     import msvcrt
     if not isinstance(argv,list) or not argv or any(not isinstance(x,str) or '\0' in x for x in argv):raise InputError('native argv must be explicit strings')
-    if not isinstance(timeout,(int,float)) or not 0<timeout<=600:raise InputError('invalid native timeout')
+    if type(timeout) not in (int,float) or not 0<timeout<=3600:raise InputError('invalid native timeout')
+    if memory_bytes is not None and (type(memory_bytes) is not int or not 64*1024**2<=memory_bytes<=2*1024**3):raise InputError('invalid job memory bound')
     cwd=Path(cwd);job=kernel.CreateJobObjectW(None,None)
     if not job:raise c.WinError(c.get_last_error())
     limits=_Limits();limits.basic.flags=0x2000
+    if memory_bytes is not None:limits.basic.flags|=0x200;limits.job_memory=memory_bytes
     process=_Process();assigned=False;reason=None;guard_error=None;started=time.monotonic();tree_finished=False;exit_code=None
     def active():
         accounting=_Accounting()
@@ -250,6 +294,7 @@ def run(argv,*,cwd,guard,timeout):
             finally:kernel.DeleteProcThreadAttributeList(attributes)
             if not kernel.AssignProcessToJobObject(job,process.process):raise c.WinError(c.get_last_error())
             assigned=True
+            if on_started is not None:on_started(process.pid)
             if kernel.ResumeThread(process.thread)==0xffffffff:raise c.WinError(c.get_last_error())
             kernel.CloseHandle(process.thread);process.thread=None
             try:
@@ -275,6 +320,12 @@ def run(argv,*,cwd,guard,timeout):
             if kernel.GetExitCodeProcess(process.process,c.byref(code)):exit_code=code.value
             else:reason=reason or 'exit_code_unknown'
             if not tree_finished:reason=reason or 'owned_tree_state_unknown'
+            accounting=_Accounting();memory=_Limits()
+            cpu_known=kernel.QueryInformationJobObject(job,1,c.byref(accounting),c.sizeof(accounting),None)
+            memory_known=kernel.QueryInformationJobObject(job,9,c.byref(memory),c.sizeof(memory),None)
+            resource_usage=dict(user_cpu_seconds=accounting.user/10000000 if cpu_known else None,
+                kernel_cpu_seconds=accounting.kernel/10000000 if cpu_known else None,
+                peak_job_memory_bytes=memory.peak_job if memory_known else None,scope='owned Windows Job processes')
     finally:
         if process.process:
             if assigned:kernel.TerminateJobObject(job,1)
@@ -284,4 +335,4 @@ def run(argv,*,cwd,guard,timeout):
         if process.thread:kernel.CloseHandle(process.thread)
         kernel.CloseHandle(job)
     return dict(status='stopped' if reason else 'completed',exit_code=exit_code,elapsed_seconds=round(time.monotonic()-started,3),
-        pid=process.pid,tree_finished=tree_finished,stop_reason=reason,guard_error=guard_error)
+        pid=process.pid,tree_finished=tree_finished,stop_reason=reason,guard_error=guard_error,resource_usage=resource_usage)

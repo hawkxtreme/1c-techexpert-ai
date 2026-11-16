@@ -15,7 +15,7 @@ def build(output):
              ROOT / 'scripts/sc01_blind.py', ROOT / 'scripts/generate_bundle_manifest.py', ROOT / 'evaluations/sc01-codex-skill.md',
              ROOT / 'evaluations/local-adapters-0.5.0.md',ROOT / 'evaluations/investigations-0.7.0.md',
              ROOT / 'evaluations/incident-drafts-0.8.0.md',ROOT / 'evaluations/source-export-0.9.0.md',ROOT / 'evaluations/first-run-0.10.0.md',
-             ROOT / 'evaluations/source-coverage-0.11.0.md', ROOT / 'evaluations/knowledge-lifecycle-0.12.0.md']
+             ROOT / 'evaluations/source-coverage-0.11.0.md', ROOT / 'evaluations/knowledge-lifecycle-0.12.0.md', ROOT / 'evaluations/operations-0.13.0.md']
     files.extend(ROOT/'infrastructure/lab'/name for name in ('README.md','Dockerfile.onec','Dockerfile.postgres',
                  'onec-entrypoint.sh','postgres-entrypoint.sh','compose.yaml','pgpro-key.asc'))
     # Only these reviewed, nonprivate capture excerpts are shipped as test data.

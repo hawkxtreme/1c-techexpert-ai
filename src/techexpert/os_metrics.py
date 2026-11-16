@@ -86,12 +86,12 @@ def import_os(state_dir,path):
                          [(str(Path(path).resolve()),data)],result)
 
 
-def collect_os(state_dir,request):
+def collect_os(state_dir,request,*,should_stop=None):
     request=validate_request(request)
     transport=request['transport']
     if transport=='local':
         document=collect(request['duration_seconds'],request['interval_seconds'],node=request['node'],
-                         role=request['role'],max_bytes=request['max_bytes'])
+                         role=request['role'],max_bytes=request['max_bytes'],should_stop=should_stop)
         data=json.dumps(document,ensure_ascii=False,allow_nan=False).encode('utf-8')
     else:
         timeout=request['duration_seconds']+30

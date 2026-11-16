@@ -28,9 +28,13 @@ class SnapshotReadError(InputError):
         self.code=code
 
 
-def read_snapshot(path, max_bytes=MAX_FILE_BYTES):
+def read_snapshot(path, max_bytes=MAX_FILE_BYTES, *, share_delete=False):
     path = Path(path)
-    with path.open('rb') as stream:
+    if share_delete and os.name=='nt':
+        from .windows_native import open_shared_read
+        opened=open_shared_read(path)
+    else:opened=path.open('rb')
+    with opened as stream:
         before = os.fstat(stream.fileno())
         if before.st_size > max_bytes:
             raise SnapshotReadError('input exceeds byte limit','byte_limit')

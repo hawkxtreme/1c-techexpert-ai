@@ -28,7 +28,7 @@ def default_state_dir():
     return Path(os.environ.get('XDG_STATE_HOME', Path.home() / '.local/state')) / '1c-techexpert-ai'
 
 
-def write_json(path, value):
+def write_json(path, value, *, replacer=None):
     path = Path(path)
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
@@ -37,7 +37,7 @@ def write_json(path, value):
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        (os.replace if replacer is None else replacer)(temporary,path)
     finally:
         if temporary.exists():
             temporary.unlink()
@@ -298,7 +298,7 @@ def comparison_markdown(report):
     return '\n'.join(lines)
 
 
-def compare_cases(state_dir, before_ids, after_ids):
+def compare_cases(state_dir, before_ids, after_ids, *, output_state_dir=None):
     if any(not isinstance(ids,list) or not 1<=len(ids)<=20 for ids in (before_ids,after_ids)):
         raise InputError('compare requires 1..20 case ids in each group')
     before_inputs=[verified_case(state_dir,case_id,with_digest=True) for case_id in before_ids]
@@ -311,7 +311,7 @@ def compare_cases(state_dir, before_ids, after_ids):
     report['input_reports']=[dict(case_id=item['case_id'],sha256=digest) for item,digest in before_inputs+after_inputs]
     if len(json.dumps(report,ensure_ascii=False,allow_nan=False).encode('utf-8'))>MAX_REPORT_BYTES:
         raise InputError('comparison report exceeds size limit')
-    folder=comparison_folder(state_dir,report['comparison_id']);folder.mkdir(parents=True,exist_ok=False)
+    folder=comparison_folder(state_dir if output_state_dir is None else output_state_dir,report['comparison_id']);folder.mkdir(parents=True,exist_ok=False)
     write_json(folder/'report.json',report)
     (folder/'report.md').write_text(comparison_markdown(report),encoding='utf-8',newline='\n')
     write_json(folder/'receipt.json',dict(schema_version=1,
@@ -320,7 +320,7 @@ def compare_cases(state_dir, before_ids, after_ids):
     return report
 
 
-def load_comparison(state_dir, comparison_id):
+def load_comparison(state_dir, comparison_id, *, input_state_dir=None):
     folder=comparison_folder(state_dir,comparison_id)
     receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'))
     data=read_snapshot(folder/'report.json',MAX_REPORT_BYTES)
@@ -331,7 +331,7 @@ def load_comparison(state_dir, comparison_id):
     if report.get('schema_version')!=1 or report.get('comparison_id')!=comparison_id:
         raise InputError('unsupported saved comparison')
     for item in report['input_reports']:
-        _,digest=verified_case(state_dir,item['case_id'],with_digest=True)
+        _,digest=verified_case(state_dir if input_state_dir is None else input_state_dir,item['case_id'],with_digest=True)
         if digest!=item['sha256']:
             raise InputError('comparison input report integrity mismatch')
     return report

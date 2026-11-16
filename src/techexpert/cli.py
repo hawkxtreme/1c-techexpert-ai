@@ -20,6 +20,11 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='1C TechExpert AI: local evidence tools for your AI harness')
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)
+    catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
+    operation_run=commands.add_parser('operation-run');operation_run.add_argument('request',type=Path)
+    for name in ('operation-status','operation-result','operation-reconcile','operation-cancel'):
+        operation=commands.add_parser(name);operation.add_argument('run_id')
+        if name=='operation-cancel':operation.add_argument('--executor-id',required=True)
     commands.add_parser('doctor')
     readiness=commands.add_parser('readiness')
     readiness.add_argument('--entrypoint-sha256')
@@ -146,7 +151,19 @@ def main(argv=None):
     incident_record.add_argument('--repository',required=True);incident_record.add_argument('--expected-sha256',required=True);incident_record.add_argument('--expected-action-sha256',required=True)
     args = parser.parse_args(argv)
     try:
-        if args.command == 'doctor':
+        if args.command=='capabilities':
+            from .capabilities import catalogue
+            result=catalogue(args.operation)
+        elif args.command.startswith('operation-'):
+            from . import operations
+            if args.command=='operation-run':
+                from .inputs import read_snapshot,json_value
+                result=operations.run(args.state_dir,json_value(read_snapshot(args.request,128*1024).decode('utf-8-sig'),reject_duplicates=True))
+            elif args.command=='operation-cancel':result=operations.cancel(args.state_dir,args.run_id,executor_id=args.executor_id)
+            else:result={'operation-status':operations.status,'operation-result':operations.result,'operation-reconcile':operations.reconcile}[args.command](args.state_dir,args.run_id)
+            emit(result)
+            return {'succeeded':0,'partial':1,'invalid_input':2,'failed':3,'cancelled':130,'interrupted':1}.get(result['status'],1)
+        elif args.command == 'doctor':
             result = doctor(args.state_dir)
         elif args.command == 'readiness':
             from .readiness import check

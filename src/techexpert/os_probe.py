@@ -170,7 +170,7 @@ class WindowsPdh:
     def close(self):self.dll.PdhCloseQuery(self.query)
 
 
-def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_bytes=8*1024*1024):
+def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_bytes=8*1024*1024,should_stop=None):
     settings=plan(duration_seconds,interval_seconds,max_bytes)
     if role not in ('onec','sql','storage','client','terminal','web','other'):raise ValueError('unsupported node role')
     if node is not None and (not isinstance(node,str) or not 1<=len(node)<=256 or any(ord(c)<32 for c in node)):raise ValueError('invalid node label')
@@ -185,6 +185,8 @@ def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_
     started=time.monotonic();previous=None;used=0;index=0
     try:
         while True:
+            stop=should_stop() if should_stop is not None else None
+            if stop:report['status']=stop;break
             elapsed=time.monotonic()-started
             if index and elapsed>duration_seconds+interval_seconds*.5:break
             if windows:
@@ -200,7 +202,11 @@ def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_
             report['samples'].append(row);used+=size;index+=1
             if elapsed>=duration_seconds:break
             next_sample=index*interval_seconds
-            time.sleep(max(0,min(duration_seconds,next_sample)-(time.monotonic()-started)))
+            remaining=max(0,min(duration_seconds,next_sample)-(time.monotonic()-started))
+            if should_stop is None:time.sleep(remaining)
+            else:
+                finish=time.monotonic()+remaining
+                while time.monotonic()<finish and not should_stop():time.sleep(min(.1,max(0,finish-time.monotonic())))
         if report['status']=='running':report['status']='completed'
     except KeyboardInterrupt:report['status']='cancelled'
     finally:
