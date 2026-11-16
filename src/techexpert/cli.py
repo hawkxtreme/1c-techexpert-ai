@@ -51,7 +51,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':
-            result = doctor()
+            result = doctor(args.state_dir)
         elif args.command == 'profile':
             result = load_profile(args.state_dir) or dict(status='not_configured', next_step='init')
         elif args.command in ('demo','analyze'):

@@ -1,4 +1,4 @@
-# Локальный CLI 0.4.0
+# Локальный CLI 0.4.1
 
 Команды выполняются из проверенного корня пакета. `python` ниже означает рабочий интерпретатор Python в среде пользователя; при необходимости используй его полный путь. Корневой `techexpert.py` и его локальные модули должны поставляться вместе со skills.
 
@@ -124,7 +124,7 @@ Runtime — UTF-8 JSON, до 1 МиБ на файл, `schema: 1`, `origin: "cont
 
 `analyze` добавляет в сохранённый случай `order_load`:
 
-- `status`: `observed`, `partial` или `not_verified`; `scope: controlled_windows_file_8.3.27.1989`. `mode: baseline|cached` описывает вариант и не определяет успешность.
+- `status`: `observed`, `partial` или `not_verified`; `scope: controlled_windows_file_8.3.27.1989`. `mode` — метка варианта из входных данных, которая не определяет успешность и не объясняет причину.
 - `workload_signature`: `input_sha256`, `catalog_revision`, `catalog_sha256`, `row_count`, `service_delay_ms`, `database_seed_sha256`, `observed_computer_name`, `service_module_sha256`, платформа, путь ИБ и свидетельства. Имя компьютера согласуется между runtime-снимками; это наблюдаемая метка, не доказанный физический node ID.
 - `result_validation`: `matches_expected|mismatch|not_verified`, количества, ожидаемый и фактический хэши бизнес-строк, расхождения и свидетельства. Проверяются `order_id`, `sku`, `qty`, `price`, `amount`, `catalog_revision` по CSV, каталогу и независимо прочитанным контроллером результатам ИБ. Равное число документов само по себе недостаточно.
 - `external_calls`: `verified|not_verified`, количество, уникальные SKU, повторные обращения, отдельно суммы клиентских и серверных интервалов. Запросы связываются по request ID, UUID и nonce, не по близости времени. Эти суммы не являются временем задания, его ожиданием или общим интервалом по разным часам.

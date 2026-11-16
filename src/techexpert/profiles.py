@@ -16,7 +16,7 @@ from .inputs import InputError, read_snapshot, json_value
 from .storage import write_json, default_state_dir
 
 
-def doctor():
+def doctor(state_dir=None):
     installations = []
     if os.name == 'nt':
         for root in (Path(os.environ.get('ProgramFiles', 'C:/Program Files')) / '1cv8',
@@ -26,7 +26,8 @@ def doctor():
                     installations.append(dict(path=str(binary), directory_version=binary.parent.parent.name,
                                               license='not_checked', compatibility='not_verified'))
     return dict(product_version=__version__, python=sys.version.split()[0], python_executable=sys.executable,
-                os=platform.platform(), ai_harness_required=True, state_dir=str(default_state_dir()),
+                os=platform.platform(), ai_harness_required=True,
+                state_dir=str(default_state_dir() if state_dir is None else Path(state_dir).resolve()),
                 onec_installations=installations,
                 commands={x: shutil.which(x) for x in ('git', 'rac', 'ras', 'ssh', 'psql', 'sqlcmd')},
                 capabilities=dict(sc01_normalized_evidence='ready', synthetic_demo='ready',

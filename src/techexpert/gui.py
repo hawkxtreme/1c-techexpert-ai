@@ -148,7 +148,7 @@ class InitHandler(BaseHTTPRequestHandler):
                     result = profiles.load_profile(self.server.state_dir)
                 self._json(200, result)
             elif self.path == '/api/doctor':
-                self._json(200, profiles.doctor())
+                self._json(200, profiles.doctor(self.server.state_dir))
             else:
                 self._error(404, 'Неизвестное действие помощника.')
         except ValueError as error:

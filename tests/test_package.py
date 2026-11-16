@@ -22,6 +22,8 @@ class PackageTests(unittest.TestCase):
                 names = archive.namelist()
                 self.assertIn('.codex-plugin/plugin.json', names)
                 self.assertIn('skills/techexpert/SKILL.md', names)
+                self.assertIn('evaluations/sc01-codex-skill.md', names)
+                self.assertIn('scripts/sc01_blind.py', names)
                 self.assertFalse(any('.local/' in name or '__pycache__/' in name or name.startswith('.git/') for name in names))
                 archive.extractall(folder / 'unpacked')
             run = subprocess.run([sys.executable, str(folder / 'unpacked/techexpert.py'), '--state-dir', str(folder / 'state'), 'demo'],
@@ -30,6 +32,9 @@ class PackageTests(unittest.TestCase):
             report = json.loads(run.stdout)
             self.assertEqual(report['durations_seconds']['execution'], 2460)
             self.assertTrue((folder / 'unpacked/src/techexpert/assets/init.html').is_file())
+            help_result=subprocess.run([sys.executable,str(folder/'unpacked/scripts/sc01_blind.py'),'--help'],
+                cwd=folder,capture_output=True,encoding='utf-8',timeout=20)
+            self.assertEqual(help_result.returncode,0,help_result.stdout+help_result.stderr)
             # Native input remains outside the installed package, as in a real deployment.
             log=folder/'external-tj.txt'
             log.write_bytes((ROOT/'tests/fixtures/native-tj/plain-iso.txt').read_bytes())

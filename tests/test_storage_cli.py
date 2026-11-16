@@ -86,6 +86,14 @@ class CLITests(unittest.TestCase):
         self.assertTrue(data['ai_harness_required'])
         self.assertEqual(data['capabilities']['native_jr'], 'not_implemented')
 
+    def test_doctor_reports_selected_state_without_creating_it(self):
+        with tempfile.TemporaryDirectory() as temp:
+            selected=Path(temp)/'chosen-state'
+            result=self.run_cli('--state-dir',str(selected),'doctor')
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(Path(json.loads(result.stdout)['state_dir']),selected.resolve())
+            self.assertFalse(selected.exists())
+
     def test_saved_gui_profile_returns_to_same_agent(self):
         from src.techexpert.profiles import save_profile
         from test_profiles import profile

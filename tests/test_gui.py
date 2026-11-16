@@ -87,6 +87,12 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertEqual(headers['Referrer-Policy'], 'no-referrer')
         self.assertIn('no-store', headers['Cache-Control'])
 
+    def test_doctor_reports_this_helpers_state_directory(self):
+        status,_,body=self.request('GET','/api/doctor')
+        self.assertEqual(status,200)
+        self.assertEqual(Path(json.loads(body)['state_dir']),self.state_dir.resolve())
+        self.assertFalse(self.state_dir.exists())
+
     def test_missing_or_wrong_token_cannot_read_profile(self):
         for headers in ({}, {'Authorization': 'Bearer incorrect'}):
             with self.subTest(headers=headers):
