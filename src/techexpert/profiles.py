@@ -141,8 +141,9 @@ def validate_source_settings(kind,value,base_ids):
     result={}
     for key,item in value.items():
         if key=='databases':
-            if not isinstance(item,dict) or set(item)-set(base_ids) or any(not isinstance(v,str) or len(v)>128 or any(ord(c)<32 for c in v) for v in item.values()):
-                raise InputError('SQL database map must refer only to linked bases')
+            if (not isinstance(item,dict) or set(item)-set(base_ids)
+                or any(not isinstance(v,str) or not re.fullmatch(r'[\w][\w.-]{0,127}',v) for v in item.values())):
+                raise InputError('SQL database map requires plain database names for linked bases')
             result[key]=dict(item)
         elif key in ('duration_seconds','interval_seconds','max_bytes','port','use_ssl'):
             result[key]=item
@@ -159,6 +160,8 @@ def validate_source_settings(kind,value,base_ids):
         result.setdefault('engine','postgresql');result.setdefault('port',5432 if result['engine']=='postgresql' else 1433)
         if result['engine'] not in ('postgresql','sqlserver') or type(result['port']) is not int or not 1<=result['port']<=65535:
             raise InputError('invalid SQL engine or port')
+        if result.get('database') and not re.fullmatch(r'[\w][\w.-]{0,127}',result['database']):
+            raise InputError('SQL database must be a plain name')
     if kind=='source' and (result.get('kind','catalog') not in ('catalog','git') or result.get('match_status','unknown') not in ('unknown','confirmed','mismatch','partial')):
         raise InputError('invalid source kind or match status')
     return result
@@ -181,22 +184,24 @@ def discover_ras(endpoint,*,executable='rac',docker_container=None,cluster=None)
 
 
 def check_profile(value):
-    """Explicit bounded local checks only. No network, collectors or logcfg writes."""
+    """Validate configuration only, without touching configured paths or endpoints.
+
+    Even filesystem metadata checks can contact UNC shares, mapped drives or remote
+    targets behind local links. Actual access belongs to an explicit adapter run.
+    """
     clean=validate_profile(value);checks=[]
     for source in clean['sources']:
-        kind=source['type'];path=Path(source['path']) if source['path'] else None
+        kind=source['type']
         if kind in ('tj','jr','source'):
             remote_git=kind=='source' and source['settings'].get('kind')=='git' and re.match(r'^(https://|git@|ssh://)',source['path'])
             if remote_git:status='requires_explicit_git_snapshot';detail='Git is configured; no clone/fetch was started.'
-            elif path and path.is_dir():status='local_directory_exists';detail='Directory metadata checked; format, contents and version not yet verified.'
-            else:status='unavailable';detail='Directory is absent or inaccessible from this computer; prepare an authorized share or snapshot.'
+            else:status='requires_explicit_path_check';detail='Path configured; existence, access and contents require an explicit adapter run. No filesystem access attempted.'
         elif kind=='os':
             status='local_collector_available' if source['settings']['transport']=='local' and platform.system() in ('Windows','Linux') else 'remote_prerequisites_not_checked'
             detail='Plan only: no collection, service installation or permission change.'
         elif kind=='sql':
-            executable=source['settings'].get('executable') or ('psql' if source['settings']['engine']=='postgresql' else 'sqlcmd')
-            status='client_found_not_connected' if shutil.which(executable) or source['settings'].get('docker_container') else 'client_not_found'
-            detail='Credentials, permissions and database mapping require an explicit connection check.'
+            status='client_configured_not_checked'
+            detail='Client presence, credentials, permissions and database mapping require an explicit connection check. No executable path probed.'
         else:
             status='configured_not_connected';detail='Use explicit RAS discovery to test this endpoint.'
         checks.append(dict(source_id=source['id'],type=kind,status=status,detail=detail))

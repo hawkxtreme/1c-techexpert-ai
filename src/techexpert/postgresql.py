@@ -63,8 +63,8 @@ class PsqlClient:
         self.prefix=(['docker','exec','-i','--env','PGCONNECT_TIMEOUT=5','--env','PGAPPNAME=1c-techexpert-ai',
                       docker_container,'timeout','--kill-after=2','9','/opt/pgpro/1c-16/bin/psql']
                      if docker_container else [str(executable)])
-        self.options=['-X','--no-password','--quiet','--tuples-only','--no-align','--set=ON_ERROR_STOP=1','--dbname='+database]
-        if host:self.options+=['--host='+host,'--port='+str(port)]
+        self.options=['-X','--no-password','--quiet','--tuples-only','--no-align','--set=ON_ERROR_STOP=1','--dbname='+database,'--port='+str(port)]
+        if host:self.options+=['--host='+host]
         if user:self.options+=['--username='+user]
 
     def execute(self,operation):

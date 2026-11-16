@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -9,6 +10,25 @@ def profile():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_local_preflight_does_not_probe_network_directories(self):
+        from src.techexpert.profiles import check_profile
+        for address in (r'\\network-review.invalid\logs', '//network-review.invalid/logs'):
+            value=profile();value['sources'][0]['path']=address
+            with self.subTest(address=address):
+                with patch.object(Path,'is_dir',side_effect=AssertionError('network metadata probe')):
+                    result=check_profile(value)
+                self.assertEqual(result['sources'][0]['status'],'requires_explicit_path_check')
+                self.assertFalse(result['connected'])
+
+    def test_sql_database_map_rejects_connection_strings_before_saving(self):
+        from src.techexpert.profiles import save_profile
+        for database in ('postgresql://reader:synthetic-secret@db/ib','password=synthetic-secret','ib;Password=synthetic-secret'):
+            value=profile();value['bases'][0]['mode']='server'
+            value['sources'][0].update(type='sql',path='',settings={'databases':{'a':database}})
+            with self.subTest(database=database), tempfile.TemporaryDirectory() as temp:
+                with self.assertRaises(ValueError):save_profile(Path(temp),value)
+                self.assertFalse((Path(temp)/'profiles').exists())
+
     def test_collector_preset_is_saved_without_execution_and_edits_survive_reload(self):
         from src.techexpert.profiles import save_profile,load_profile
         value=profile();value['sources'][0].update(type='os',path='',host='')

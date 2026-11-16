@@ -11,6 +11,13 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertIsNotNone(importlib.util.find_spec('src.techexpert.postgresql'), 'PostgreSQL adapter is missing')
         self.api=importlib.import_module('src.techexpert.postgresql')
 
+    def test_selected_port_is_passed_for_default_host_and_docker_socket(self):
+        for container in (None,'test-postgresql'):
+            with self.subTest(container=container):
+                client=self.api.PsqlClient(database='ib',port=25432,docker_container=container)
+                self.assertIn('--port=25432',client.options)
+                self.assertEqual(client.scope['port'],25432)
+
     def test_catalogue_limits_and_transaction_are_fixed(self):
         for operation in ('capabilities','activity','locks','database_stats','statements'):
             query=self.api.query(operation)
