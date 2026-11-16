@@ -44,11 +44,8 @@ def write_json(path, value):
 
 
 def knowledge_revision():
-    digest = hashlib.sha256()
-    for path in sorted(p for p in (ROOT / 'knowledge').rglob('*') if p.is_file() and p.suffix in ('.md','.json')):
-        digest.update(path.relative_to(ROOT).as_posix().encode())
-        digest.update(path.read_bytes())
-    return digest.hexdigest()
+    from .knowledge import load_library
+    return load_library()['legacy_digest']
 
 
 def job_report(bundle):

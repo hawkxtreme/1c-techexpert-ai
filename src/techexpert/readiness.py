@@ -138,7 +138,8 @@ def check(state_dir,*,root=None,entrypoint_sha256=None,investigation_id=None):
             # The semantic validator/search may only open inventoried, already checked cards.
             cards=index.get('cards')
             if not isinstance(cards,list) or not cards or len(cards)>256:raise InputError('invalid installed knowledge cards')
-            if any(not isinstance(card,dict) or 'knowledge/'+str(card.get('path','')) not in inventory['components']['knowledge'] for card in cards):
+            if any(not isinstance(card,dict) or (not (card.get('path') is None and card.get('lifecycle',{}).get('state')=='withdrawn')
+                and 'knowledge/'+str(card.get('path','')) not in inventory['components']['knowledge']) for card in cards):
                 raise InputError('uninventoried knowledge card')
             library=load_library(root/'knowledge');found=search('SC-01',root=root/'knowledge')
             if not library['cards'] or not found['matches']:raise InputError('bundled knowledge search not ready')

@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=4
+SANITIZER_VERSION=5
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -225,6 +225,8 @@ def _source_bytes(state_dir,doc,evidence_id):
         kind=load_artifact(state_dir,attachment['target_id'])['kind']
         if kind=='onec_source':
             raise InputError('encoded source snapshots require a separate prepared text excerpt; raw source bundles are not exported')
+        if kind=='knowledge_use':
+            raise InputError('private knowledge-use snapshots are not public excerpts; cite the card/source URL or provide separately reviewed observation text')
         if kind=='native-jr':
             raise InputError('native JR dictionaries, parts and serialized records require separate prepared text; use parsed observations in the proposal')
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])

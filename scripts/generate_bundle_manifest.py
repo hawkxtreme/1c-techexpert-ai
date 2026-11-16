@@ -8,6 +8,7 @@ import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from src.techexpert import __version__
+from src.techexpert.knowledge import package_members
 
 TARGET='src/techexpert/assets/bundle-manifest.json'
 
@@ -17,7 +18,7 @@ def canonical(data):
 def generate():
     groups=dict(runtime=['techexpert.py','.codex-plugin/plugin.json'],instructions=['AGENTS.md'],
         catalogues=[],knowledge=[],demo=['examples/sc01/case.json','examples/sc01/events.jsonl'])
-    for relative,category in (('src/techexpert','runtime'),('skills','instructions'),('knowledge','knowledge')):
+    for relative,category in (('src/techexpert','runtime'),('skills','instructions')):
         for current,dirs,files in os.walk(ROOT/relative,followlinks=False):
             dirs[:]=sorted(name for name in dirs if name!='__pycache__')
             for name in dirs+files:
@@ -30,6 +31,7 @@ def generate():
                 group='catalogues' if member in ('src/techexpert/assets/incident-templates.json','src/techexpert/assets/source-help.json') else category
                 groups[group].append(member)
     groups['instructions'].append('.agents/skills/techexpert/SKILL.md')
+    groups['knowledge']=['knowledge/'+name for name in package_members(ROOT/'knowledge')]
     members={name:hashlib.sha256(canonical((ROOT/name).read_bytes())).hexdigest() for names in groups.values() for name in names}
     return dict(schema_version=1,product_version=__version__,normalization='utf8-lf-v1',
         components={key:sorted(value) for key,value in groups.items()},members=dict(sorted(members.items())))

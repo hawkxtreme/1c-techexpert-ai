@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def build(output):
@@ -14,7 +15,7 @@ def build(output):
              ROOT / 'scripts/sc01_blind.py', ROOT / 'scripts/generate_bundle_manifest.py', ROOT / 'evaluations/sc01-codex-skill.md',
              ROOT / 'evaluations/local-adapters-0.5.0.md',ROOT / 'evaluations/investigations-0.7.0.md',
              ROOT / 'evaluations/incident-drafts-0.8.0.md',ROOT / 'evaluations/source-export-0.9.0.md',ROOT / 'evaluations/first-run-0.10.0.md',
-             ROOT / 'evaluations/source-coverage-0.11.0.md']
+             ROOT / 'evaluations/source-coverage-0.11.0.md', ROOT / 'evaluations/knowledge-lifecycle-0.12.0.md']
     files.extend(ROOT/'infrastructure/lab'/name for name in ('README.md','Dockerfile.onec','Dockerfile.postgres',
                  'onec-entrypoint.sh','postgres-entrypoint.sh','compose.yaml','pgpro-key.asc'))
     # Only these reviewed, nonprivate capture excerpts are shipped as test data.
@@ -36,7 +37,9 @@ def build(output):
         'cached-worker-exit.json','cached-http.json','cached-capture.json'))
     files.extend(p for p in (ROOT / 'examples/sc01/order-load-probe').rglob('*')
                  if p.is_file() and p.suffix in ('.bsl','.xml','.csv'))
-    for directory in ('src/techexpert', 'skills', 'knowledge', 'examples/sc01', '.agents/skills'):
+    from src.techexpert.knowledge import package_members
+    files.extend(ROOT/'knowledge'/name for name in package_members(ROOT/'knowledge'))
+    for directory in ('src/techexpert', 'skills', 'examples/sc01', '.agents/skills'):
         files.extend(p for p in (ROOT / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix in ('.py','.md','.html','.json','.jsonl','.yaml'))
     for path in files:

@@ -60,6 +60,9 @@ def main(argv=None):
     init.add_argument('--entrypoint-sha256')
     knowledge = commands.add_parser('knowledge')
     knowledge.add_argument('query')
+    card=commands.add_parser('knowledge-card');card.add_argument('card_id');card.add_argument('--offset',type=int,default=0);card.add_argument('--limit',type=int,default=6000)
+    use=commands.add_parser('knowledge-use');use.add_argument('card_ids',nargs='+');use.add_argument('--purpose',choices=('recommendation','reference'),default='recommendation');use.add_argument('--environment',type=Path)
+    review=commands.add_parser('knowledge-review');review.add_argument('target_id');review.add_argument('--kind',choices=('artifact','investigation'),default='investigation');review.add_argument('--revision',type=int);review.add_argument('--environment',type=Path)
     apdex = commands.add_parser('apdex')
     apdex.add_argument('measurements',type=Path)
     apdex.add_argument('--target',type=float,required=True)
@@ -161,6 +164,8 @@ def main(argv=None):
             else:result=investigate(args.manifest,args.state_dir)
         elif args.command == 'show':
             result = load_case(args.state_dir, args.case_id)
+            from .knowledge_review import review_legacy_report
+            result=dict(result,knowledge_review=review_legacy_report(result))
         elif args.command in ('source-check','coverage'):
             from .source_coverage import inspect_manifest,inspect_case
             window=None
@@ -195,6 +200,9 @@ def main(argv=None):
             from .artifacts import load_artifact, artifact_evidence
             result=(artifact_evidence(args.state_dir,args.artifact_id,args.source) if args.source
                     else load_artifact(args.state_dir,args.artifact_id))
+            if not args.source and result['kind']=='knowledge_use':
+                from .knowledge_review import review_use
+                result=dict(result,knowledge_review=review_use(args.state_dir,args.artifact_id))
         elif args.command == 'rac':
             from .rac import RacClient,collect_rac
             result=collect_rac(args.state_dir,RacClient(args.endpoint,executable=args.executable,
@@ -251,6 +259,8 @@ def main(argv=None):
             else:result=load(args.state_dir,args.investigation_id,revision=args.revision)
             folder=revision_folder(args.state_dir,result['investigation_id'],result['revision']).absolute()
             result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
+            from .knowledge_review import review_investigation
+            result['knowledge_review']=review_investigation(args.state_dir,result)
         elif args.command in ('incident-draft','incident-preview','incident-edit','incident-export','incident-send-plan','incident-record-submission'):
             from . import incident_drafts as drafts
             if args.command=='incident-draft':
@@ -285,6 +295,25 @@ def main(argv=None):
         elif args.command=='source-read':
             from .source_code import read_source
             result=read_source(args.state_dir,args.artifact_id,args.path,start=args.start,limit=args.limit)
+        elif args.command=='knowledge-card':
+            from .knowledge import get_card
+            if args.offset<0 or not 1<=args.limit<=8192:raise InputError('knowledge-card requires offset>=0 and limit1..8192')
+            result=get_card(args.card_id);body=result['body'];result['body']=body[args.offset:args.offset+args.limit]
+            result.update(body_offset=args.offset,body_total_characters=len(body),body_truncated=args.offset>0 or args.offset+args.limit<len(body),
+                          content_sha256_scope='complete_card_before_display_pagination')
+        elif args.command in ('knowledge-use','knowledge-review'):
+            from .knowledge_review import pin_use,review_use,review_investigation
+            environment=None
+            if args.environment is not None:
+                from .inputs import read_snapshot,json_value
+                environment=json_value(read_snapshot(args.environment,16*1024).decode('utf-8-sig'),reject_duplicates=True)
+            if args.command=='knowledge-use':result=pin_use(args.state_dir,args.card_ids,purpose=args.purpose,environment=environment)
+            elif args.kind=='artifact':
+                if args.revision is not None:raise InputError('artifact snapshots do not have investigation revisions')
+                result=review_use(args.state_dir,args.target_id,environment=environment)
+            else:
+                from .investigations import load
+                result=review_investigation(args.state_dir,load(args.state_dir,args.target_id,revision=args.revision),environment=environment)
         else:
             from .knowledge import search
             result=search(args.query)
