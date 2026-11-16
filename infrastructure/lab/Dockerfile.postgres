@@ -1,0 +1,15 @@
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+ENV DEBIAN_FRONTEND=noninteractive LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8
+COPY pgpro-key.asc /usr/share/keyrings/postgrespro.asc
+RUN printf '446654177cc3a9e6ea1434db307616883ef99b4f78e55a23fd9825ba4bc8de10  /usr/share/keyrings/postgrespro.asc\n' | sha256sum -c - \
+    && printf '#!/bin/sh\nexit 101\n' > /usr/sbin/policy-rc.d && chmod +x /usr/sbin/policy-rc.d \
+    && apt-get update && apt-get install -y --no-install-recommends ca-certificates locales \
+    && localedef -i ru_RU -f UTF-8 ru_RU.UTF-8 \
+    && printf 'deb [signed-by=/usr/share/keyrings/postgrespro.asc] https://repo.postgres.ru/1c/1c-16/debian bookworm main\n' > /etc/apt/sources.list.d/pgpro.list \
+    && apt-get update && apt-get install -y --no-install-recommends postgrespro-1c-16-server=16.15-1.bookworm \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /lab/pgdata && chown postgres:postgres /lab/pgdata
+COPY postgres-entrypoint.sh /usr/local/bin/lab-postgres
+USER postgres
+ENV PATH=/opt/pgpro/1c-16/bin:$PATH PGDATA=/lab/pgdata
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/lab-postgres"]

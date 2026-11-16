@@ -27,7 +27,7 @@
     .steps button[aria-current="step"] { border-color: var(--red); color: var(--red); background: var(--soft); }
     label.field { display: grid; gap: 5px; min-width: 0; }
     label.field > span { font-weight: 500; }
-    input[type="text"], select { width: 100%; min-width: 0; font: inherit; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
+    input[type="text"], input[type="number"], select { width: 100%; min-width: 0; font: inherit; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); }
     input[type="checkbox"] { width: 18px; height: 18px; flex: 0 0 18px; accent-color: var(--red); margin: 2px 0 0; }
     .check { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
     .check span { min-width: 0; overflow-wrap: anywhere; }
@@ -66,13 +66,20 @@
     <nav class="steps" aria-label="Настройка окружения">
       <button type="button" data-step="bases" aria-current="step">1 · Базы окружения</button>
       <button type="button" data-step="sources">2 · Источники</button>
-      <button type="button" data-step="review">3 · Сохранить</button>
+      <button type="button" data-step="review">3 · Проверить и сохранить</button>
     </nav>
     <p id="notice" role="status" aria-live="polite" hidden></p>
     <section data-view="bases" class="stack">
       <div><h1>Базы окружения</h1><p class="sub">Добавьте нужные базы вручную или прочитайте свой список стартера 1С.</p></div>
       <label class="field"><span>Название окружения</span><input type="text" id="environment-name" maxlength="120" placeholder="Например, рабочее окружение" autocomplete="off"></label>
       <details class="box"><summary>Прочитать список стартера 1С</summary><div class="stack"><div class="inline"><label class="field"><span>Путь к .v8i или ibases.v8i на этом компьютере</span><input type="text" id="starter-path" maxlength="1500" placeholder="C:\Users\…\AppData\Roaming\1C\1CEStart\ibases.v8i" spellcheck="false" autocomplete="off"></label><button type="button" id="read-starter">Получить список баз</button></div><p class="note">Читается только указанный файл. Подключений к 1С нет. File обозначает файловую базу; Srvr/Ref — серверную. Адрес SQL из списка не определяется.</p></div></details>
+      <details class="box"><summary>Получить серверные базы из RAS</summary><div class="stack">
+        <label class="field"><span>Сервер администрирования RAS · узел:порт</span><input type="text" id="ras-endpoint" placeholder="server:1545" autocomplete="off"></label>
+        <details><summary>Расположение утилиты RAC</summary><div class="grid"><label class="field"><span>Установленная утилита rac / rac.exe</span><input type="text" id="rac-executable" value="rac" spellcheck="false"></label><label class="field"><span>Контейнер с RAC · если используется Docker</span><input type="text" id="rac-container" spellcheck="false" autocomplete="off"></label></div></details>
+        <div><button type="button" id="read-clusters">Проверить RAS и получить кластеры</button></div>
+        <div id="ras-cluster-choice" hidden class="stack"><label class="field"><span>Кластер</span><select id="ras-cluster"></select></label><div><button type="button" id="read-ras-bases">Получить базы кластера</button></div></div>
+        <p class="note">Это явная проверка подключения: читаются только списки кластеров и баз. Службы, сеансы и настройки 1С не изменяются. Адрес SQL и доступы к журналам настраиваются отдельно.</p>
+      </div></details>
       <div class="box stack"><h2>Добавить базу вручную</h2><div class="grid"><label class="field"><span>Название базы</span><input type="text" id="manual-name" maxlength="120" placeholder="Как вы называете эту базу" autocomplete="off"></label><label class="field"><span>Тип базы</span><select id="manual-mode"><option value="unknown">Пока не знаю</option><option value="file">Файловая</option><option value="server">Серверная</option></select></label></div><label class="field"><span id="manual-connection-label">Известный адрес · необязательно</span><input type="text" id="manual-connection" maxlength="1500" spellcheck="false" autocomplete="off"><small class="note">Без паролей и токенов. Общая папка UNC и web-адрес сами по себе не определяют тип базы.</small></label><div><button type="button" id="add-base">Добавить базу</button></div></div>
       <div><h2>Базы для этого профиля</h2><div id="base-list"></div><p id="empty-bases" class="note">Пока ни одной базы. Если подробности неизвестны, добавьте название и оставьте тип «Пока не знаю».</p></div>
       <footer><span class="note" id="base-count">Выбрано: 0</span><button type="button" class="primary" id="to-sources">К источникам</button></footer>
@@ -80,15 +87,16 @@
     <section data-view="sources" class="stack" hidden>
       <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
       <p class="hint" id="source-context"></p>
-      <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
+      <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="rac">Кластер 1С · RAS/RAC</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
       <div id="source-list" class="stack"></div>
       <p id="empty-sources" class="note">Источников пока нет. Можно сохранить выбранные базы и вместе с агентом подготовить необходимые данные.</p>
-      <p class="hint">Этот помощник сохраняет адреса и связи. Доступ, форматы журналов и подключённые системы не проверяются. Нативные адаптеры ещё ожидают реализации; анализ и сбор при сохранении не запускаются.</p>
+      <p class="hint">Настройте только доступные источники. Сохранение не подключает системы и не запускает сбор. На следующем шаге можно отдельно проверить локальную готовность; подключение SQL и удалённый сбор выполняются агентом по разрешённому плану.</p>
       <footer><button type="button" data-back="bases">Назад к базам</button><button type="button" class="primary" id="to-review">Проверить настройки</button></footer>
     </section>
     <section data-view="review" class="stack" hidden>
       <div><h1 id="review-title">Сохранить настройки</h1><p class="sub" id="review-sub">Проверьте состав профиля. Исходные данные останутся по указанным адресам.</p></div>
       <dl id="saved-list"></dl>
+      <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Проверяются адреса локальных каталогов и наличие инструментов. Сетевые подключения, чтение журналов и сбор не запускаются.</p><div id="preflight-results" role="status" aria-live="polite"></div></div>
       <p class="hint" id="save-status">Сохранение не подтверждает доступность источников и не запускает расследование.</p>
       <footer><button type="button" data-back="sources">Вернуться к источникам</button><button type="button" class="primary" id="save-profile">Сохранить и вернуться к агенту</button><button type="button" class="primary" id="close-helper" hidden>Закрыть помощник</button></footer>
     </section>
@@ -99,7 +107,7 @@
       const root = document.getElementById('source-app');
       const q = selector => root.querySelector(selector);
       const token = new URLSearchParams(location.hash.slice(1)).get('token') || '';
-      const typeNames = {tj:'Технологический журнал', jr:'Нативный журнал регистрации', source:'Исходники 1С', sql:'SQL Server / PostgreSQL', os:'Метрики узлов Windows / Linux'};
+      const typeNames = {tj:'Технологический журнал', jr:'Нативный журнал регистрации', source:'Исходники 1С', sql:'SQL Server / PostgreSQL', rac:'Кластер 1С · RAS/RAC', os:'Метрики узлов Windows / Linux'};
       const modeNames = {file:'файловая', server:'серверная', unknown:'тип пока неизвестен'};
       let state = {schema_version:1, name:'', bases:[], sources:[]};
       let selected = new Set();
@@ -110,8 +118,10 @@
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
       const baseName = id => state.bases.find(base => base.id === id)?.name || id;
       const selectedBases = () => state.bases.filter(base => selected.has(base.id));
-      const eligibleBases = type => selectedBases().filter(base => type !== 'sql' || base.mode === 'server');
-      const activeSources = () => state.sources.filter(source => source.type !== 'sql' || eligibleBases('sql').length);
+      const serverOnly = type => ['sql','rac'].includes(type);
+      const eligibleBases = type => selectedBases().filter(base => !serverOnly(type) || base.mode === 'server');
+      const activeSources = () => state.sources.filter(source => !serverOnly(source.type) || eligibleBases(source.type).length);
+      const defaults = type => type === 'os' ? {transport:'local',duration_seconds:300,interval_seconds:1,role:'onec'} : type === 'sql' ? {engine:'postgresql',port:5432,databases:{}} : type === 'source' ? {kind:'catalog',match_status:'unknown'} : {};
 
       function message(text, error=false) {
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
@@ -141,6 +151,14 @@
         const input = document.createElement('input'); input.type = 'text'; input.value = value || ''; input.maxLength = 1500; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = placeholder;
         input.addEventListener('input', () => { markChanged(); onInput(input.value); }); label.append(input); return label;
       }
+      function choice(labelText,items,value,onChange) {
+        const label=element('label',undefined,'field'); label.append(element('span',labelText)); const select=document.createElement('select');
+        items.forEach(([key,text])=>{ const option=element('option',text); option.value=key; select.append(option); }); select.value=value;
+        select.addEventListener('change',()=>{ markChanged(); onChange(select.value); }); label.append(select); return label;
+      }
+      function numberField(labelText,value,onInput,min,max) {
+        const label=field(labelText,String(value),text=>onInput(Number(text)));const input=label.querySelector('input');input.type='number';input.min=min;input.max=max;input.step='1';return label;
+      }
       function pruneBindings() {
         state.sources.forEach(source => { const ids = new Set(eligibleBases(source.type).map(base => base.id)); source.base_ids = source.base_ids.filter(id => ids.has(id)); });
       }
@@ -165,15 +183,17 @@
         if (source.type === 'jr') return 'Только нативный каталог 1Cv8Log или согласованный снимок. Нужны связанные файлы поддерживаемого профиля; XML-выгрузка не поддерживается.';
         if (source.type === 'source') return 'Каталог исходников или Git-репозиторий без встроенных учётных данных. Архивы, CF и CFE не принимаются. Соответствие рабочей версии уточняется отдельно.';
         if (source.type === 'sql') return 'Только для серверных ИБ. Общий сервер задаётся один раз; укажите экземпляр и нужные БД в описании адреса. Здесь нет подключения и выполнения запросов.';
-        return 'Узел Windows/Linux и адрес доступных материалов. Сборщик здесь не устанавливается и не запускается; агент поможет согласовать получение метрик.';
+        if (source.type === 'rac') return 'Текущие списки кластера, процессов и сеансов. Снимок не восстанавливает состояние прошлого инцидента. Для файловой базы этот источник не требуется.';
+        return 'По умолчанию один сбор длится 300 секунд с шагом 1 секунда. Значения можно изменить. SSH и WinRM должны быть настроены заранее; на узле требуется Python 3.10+. Службы и сбор при сохранении не запускаются.';
       }
       function renderSources(openId) {
         const box = q('#source-list'); const previousOpen = new Set([...box.querySelectorAll('details[open]')].map(node => node.dataset.sourceId)); box.replaceChildren();
         const bases = selectedBases(); const serverCount = eligibleBases('sql').length;
         q('#source-context').textContent = (state.name.trim() || 'Окружение без названия') + ' · ' + bases.map(base => base.name).join(', ') + (serverCount ? '. Общие ресурсы связываются с нужными базами ниже.' : bases.every(base => base.mode === 'file') ? '. Для файловых баз SQL неприменим.' : '. Для неизвестного типа SQL пока недоступен; тип можно уточнить с агентом.');
-        const sqlOption = q('#new-source-type option[value="sql"]'); sqlOption.disabled = !serverCount; sqlOption.hidden = !serverCount;
-        if (!serverCount && q('#new-source-type').value === 'sql') q('#new-source-type').value = 'tj';
+        ['sql','rac'].forEach(type=>{ const option=q('#new-source-type option[value="'+type+'"]'); option.disabled=!serverCount;option.hidden=!serverCount; });
+        if (!serverCount && serverOnly(q('#new-source-type').value)) q('#new-source-type').value = 'tj';
         activeSources().forEach(source => {
+          source.settings=Object.assign(defaults(source.type),source.settings || {}); const settings=source.settings;
           const card = element('details',undefined,'box'); card.dataset.sourceId = source.id; card.dataset.sourceType = source.type; card.open = source.id === openId || previousOpen.has(source.id);
           const summary = element('summary',typeNames[source.type]); card.append(summary);
           const fields = element('div',undefined,'stack');
@@ -181,37 +201,59 @@
           const choices = element('div',undefined,'bindings');
           eligibleBases(source.type).forEach(base => {
             const label = element('label',undefined,'check'); const check = document.createElement('input'); check.type = 'checkbox'; check.checked = source.base_ids.includes(base.id); check.dataset.sourceBase = base.id;
-            check.addEventListener('change', () => { markChanged(); source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id); });
+            check.addEventListener('change', () => { markChanged(); source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id); if(source.type==='sql')renderSources(source.id); });
             label.append(check,element('span',base.name)); choices.append(label);
           });
           bindings.append(choices); fields.append(bindings);
-          const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр / БД' : source.type === 'os' ? 'Путь к материалам метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
+          const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр · БД указываются ниже' : source.type === 'rac' ? 'Адрес RAS · узел:порт' : source.type === 'os' ? 'Файл готовых метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
           const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
           const hostField = field(source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
-          fields.append(pathField,hostField,element('p',hintFor(source),'note'),element('p','Ожидает адаптера · доступ и содержимое не проверены.','note'));
+          fields.append(pathField,hostField);
+          if(source.type==='os') {
+            fields.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{settings.transport=value;settings.port=value==='ssh'?22:5985;delete settings.python;renderSources(source.id);}));
+            const timing=element('div',undefined,'grid');
+            const duration=numberField('Длительность одного запуска · секунды',settings.duration_seconds,value=>{settings.duration_seconds=value;},1,1800);duration.querySelector('input').dataset.setting='duration_seconds';
+            const interval=numberField('Шаг измерения · секунды',settings.interval_seconds,value=>{settings.interval_seconds=value;},1,60);interval.querySelector('input').dataset.setting='interval_seconds';
+            timing.append(duration,interval);fields.append(timing,choice('Роль узла',[['onec','Сервер 1С'],['sql','СУБД'],['storage','Файловое хранение'],['client','Клиент'],['terminal','Терминальный сервер'],['web','Веб-сервер'],['other','Другая']],settings.role,value=>{settings.role=value;}));
+            if(settings.transport!=='local')fields.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>{settings.port=value;},1,65535));
+          } else if(source.type==='sql') {
+            fields.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{settings.engine=value;settings.port=value==='postgresql'?5432:1433;renderSources(source.id);}),numberField('Порт СУБД',settings.port,value=>{settings.port=value;},1,65535));
+            settings.databases=settings.databases || {};
+            selectedBases().filter(base=>source.base_ids.includes(base.id)).forEach(base=>fields.append(field('Имя SQL-базы для «'+base.name+'»',settings.databases[base.id] || settings.database || '',value=>{settings.databases[base.id]=value;})));
+            fields.append(field('Пользователь СУБД · если задан отдельно',settings.user,value=>{settings.user=value;}),field('Ссылка на существующий способ доступа · без пароля',settings.credential_ref,value=>{settings.credential_ref=value;},'Например, настроенный pgpass / служба libpq'));
+          } else if(source.type==='source') {
+            fields.append(choice('Вид исходников',[['catalog','Локальный каталог'],['git','Git-репозиторий']],settings.kind,value=>{settings.kind=value;renderSources(source.id);}));
+            if(settings.kind==='git')fields.append(field('Ветка / commit · если известны',settings.ref,value=>{settings.ref=value;}));
+          } else if(source.type==='tj' || source.type==='jr') {
+            fields.append(field('Версия платформы источника · если известна',settings.platform_version,value=>{settings.platform_version=value;},'8.3.27.1989'),field('Смещение времени журнала от UTC · если подтверждено',settings.utc_offset,value=>{settings.utc_offset=value;},'Например, +03:00'));
+          }
+          fields.append(element('p',hintFor(source),'note'),element('p','Настроен адрес · подключение, формат и полнота данных не подтверждены.','note'));
           const remove = element('button','Убрать источник','link'); remove.type = 'button';
           remove.addEventListener('click', () => { markChanged(); state.sources = state.sources.filter(item => item.id !== source.id); renderSources(); }); fields.append(remove); card.append(fields); box.append(card);
         });
         q('#empty-sources').hidden = !!activeSources().length;
       }
       function payload() {
-        return {schema_version:1,name:state.name.trim() || 'Окружение',bases:selectedBases().map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection})),sources:activeSources().map(source => ({id:source.id,type:source.type,path:source.path.trim(),host:source.host.trim(),base_ids:[...source.base_ids]}))};
+        return {schema_version:1,name:state.name.trim() || 'Окружение',bases:selectedBases().map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection})),sources:activeSources().map(source => {const settings={...source.settings};if(settings.databases)settings.databases=Object.fromEntries(Object.entries(settings.databases).filter(([id])=>source.base_ids.includes(id)));return {id:source.id,type:source.type,path:source.path.trim(),host:source.host.trim(),base_ids:[...source.base_ids],settings};})};
       }
       function validateSources() {
         const missing = activeSources().find(source => !source.base_ids.length);
         if (missing) { renderSources(missing.id); throw new Error('Выберите базу для источника «' + typeNames[missing.type] + '».'); }
+        activeSources().filter(source=>source.type==='os').forEach(source=>{const s=source.settings;if(!Number.isFinite(s.duration_seconds)||!Number.isFinite(s.interval_seconds)||s.interval_seconds<1||s.interval_seconds>60||s.duration_seconds<s.interval_seconds||s.duration_seconds>1800)throw new Error('Для сборщика задайте длительность от одного шага до 1800 секунд и шаг от 1 до 60 секунд.');});
       }
       function renderReview() {
         const data = saved || payload(); const box = q('#saved-list'); box.replaceChildren();
         const add = (title,text) => { const row = element('div'); row.append(element('dt',title),element('dd',text)); box.append(row); };
         add('Окружение',data.name); add('Базы',data.bases.map(base => base.name + ' · ' + modeNames[base.mode]).join('; '));
-        data.sources.forEach(source => add(typeNames[source.type],source.base_ids.map(baseName).join(', ') + ' · ' + [source.path,source.host].filter(Boolean).join(' · ') + ' · не проверено'));
+        data.sources.forEach(source => add(typeNames[source.type],[source.base_ids.map(baseName).join(', '),...([source.path,source.host].filter(Boolean)),source.type==='os' && source.settings.transport==='local' ? 'На этом компьютере' : '', 'Доступ и данные не подтверждены'].filter(Boolean).join(' · ')));
+        data.sources.filter(source=>source.type==='os').forEach(source=>add('План сборщика',source.settings.duration_seconds+' с · шаг '+source.settings.interval_seconds+' с · '+({local:'На этом компьютере',ssh:'SSH',winrm:'WinRM'}[source.settings.transport])+' · один запуск, ещё не начат'));
         if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
         if (saved) add('Ревизия профиля',String(saved.revision));
         q('#review-title').textContent = saved ? 'Настройки сохранены' : 'Сохранить настройки';
         q('#review-sub').textContent = saved ? 'Вернитесь в текущий чат. Агент может прочитать сохранённый профиль и продолжить.' : 'Проверьте состав профиля. Исходные данные останутся по указанным адресам.';
         q('#save-status').textContent = saved ? 'Сохранена только конфигурация. Подключения, анализ и сбор не запускались; чтение профиля агентом ещё не подтверждено.' : 'Сохранение не подтверждает доступность источников и не запускает расследование.';
         q('#save-profile').hidden = !!saved; q('#close-helper').hidden = !saved;
+        q('#preflight-box').hidden=!!saved;
       }
       function navigate(next) {
         if (next !== 'bases' && !selected.size) { step = 'bases'; renderStep(); throw new Error('Добавьте и выберите хотя бы одну базу. Если тип неизвестен, оставьте «Пока не знаю».'); }
@@ -235,9 +277,13 @@
         bases.forEach(base => { if (!state.bases.some(item => item.id === base.id)) state.bases.push({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''}); selected.add(base.id); });
         renderBases(); message('Из указанного файла прочитано баз: ' + bases.length + '. Подключений к 1С не было.');
       }));
+      const rasRequest=()=>({endpoint:q('#ras-endpoint').value.trim(),executable:q('#rac-executable').value.trim() || 'rac',docker_container:q('#rac-container').value.trim()});
+      q('#read-clusters').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',rasRequest());const select=q('#ras-cluster');select.replaceChildren();response.clusters.forEach(row=>{const option=element('option',(row.name || row.host || 'Кластер')+' · '+row.cluster);option.value=row.cluster;select.append(option);});q('#ras-cluster-choice').hidden=!response.clusters.length;message('Получено кластеров: '+response.clusters.length+'. Настройки не изменены.');}));
+      q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();response.bases.forEach(base=>{if(!state.bases.some(item=>item.id===base.id))state.bases.push(base);selected.add(base.id);});renderBases();message('Из RAS прочитано серверных баз: '+response.bases.length+'. SQL и журналы подключаются отдельно.');}));
+      q('#check-profile').addEventListener('click',()=>perform(async()=>{validateSources();const result=await api('/api/check',payload());const box=q('#preflight-results');box.replaceChildren();const labels={local_directory_exists:'Каталог существует; формат не проверен',unavailable:'Каталог недоступен с этого компьютера',local_collector_available:'Локальный сборщик доступен; не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_found_not_connected:'Клиент СУБД найден; подключения не было',client_not_found:'Нужен клиент СУБД или настроенный контейнер',configured_not_connected:'Адрес сохранён; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));}));
       q('#add-source').addEventListener('click', () => {
         markChanged(); const type = q('#new-source-type').value; const eligible = eligibleBases(type); if (!eligible.length) { message('Для этого источника нет подходящих выбранных баз.',true); return; }
-        const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : []}; state.sources.push(source); renderSources(source.id);
+        const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : [],settings:defaults(type)}; state.sources.push(source); renderSources(source.id);
       });
       root.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.step); } catch(error) { message(error.message,true); } }));
       root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.back); } catch(error) { message(error.message,true); } }));
@@ -248,7 +294,7 @@
       renderBases(); renderStep();
       perform(async () => {
         const profile = await api('/api/profile');
-        if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids]}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
+        if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids],settings:{...defaults(source.type),...source.settings}}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
       });
     })();
   </script>

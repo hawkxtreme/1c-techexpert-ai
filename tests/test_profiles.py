@@ -9,6 +9,28 @@ def profile():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_collector_preset_is_saved_without_execution_and_edits_survive_reload(self):
+        from src.techexpert.profiles import save_profile,load_profile
+        value=profile();value['sources'][0].update(type='os',path='',host='')
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            first=save_profile(root,value)
+            settings=first['sources'][0]['settings']
+            self.assertEqual((settings['duration_seconds'],settings['interval_seconds']),(300,1))
+            first['sources'][0]['settings']['duration_seconds']=120
+            save_profile(root,first)
+            self.assertEqual(load_profile(root)['sources'][0]['settings']['duration_seconds'],120)
+            self.assertFalse((root/'artifacts').exists())
+
+    def test_ras_is_server_only_and_private_settings_do_not_store_passwords(self):
+        from src.techexpert.profiles import validate_profile
+        value=profile();value['sources'][0].update(type='rac',path='localhost:2545')
+        with self.assertRaises(ValueError):validate_profile(value)
+        value['bases'][0]['mode']='server'
+        self.assertEqual(validate_profile(value)['sources'][0]['type'],'rac')
+        value['sources'][0]['settings']={'password':'secret'}
+        with self.assertRaises(ValueError):validate_profile(value)
+
     def test_revision_and_independent_paths(self):
         from src.techexpert.profiles import save_profile, load_profile
         with tempfile.TemporaryDirectory() as temp:

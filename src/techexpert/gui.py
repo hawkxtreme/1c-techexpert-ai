@@ -159,14 +159,20 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
         if data is None or not self._guard(write=True, api=True):
             return
         try:
-            if self.path == '/api/starter':
+            if self.path=='/api/ras':
+                if set(data)-{'endpoint','executable','docker_container','cluster'}:raise ValueError('Unsupported RAS parameter')
+                result=profiles.discover_ras(data.get('endpoint'),executable=data.get('executable','rac'),
+                                            docker_container=data.get('docker_container') or None,cluster=data.get('cluster') or None)
+            elif self.path=='/api/check':
+                result=profiles.check_profile(data)
+            elif self.path == '/api/starter':
                 path = data.get('path')
                 if not isinstance(path, str) or not path.strip():
                     raise ValueError('Укажите путь к файлу .v8i или ibases.v8i.')

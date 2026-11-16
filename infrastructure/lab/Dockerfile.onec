@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1
+# The licensed installer is supplied as a local additional build context.
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+ENV DEBIAN_FRONTEND=noninteractive LANG=ru_RU.UTF-8 LC_ALL=ru_RU.UTF-8
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates locales fontconfig fonts-dejavu-core libgsf-1-114 libglib2.0-0 libgssapi-krb5-2 libodbc2 procps iproute2 \
+    && localedef -i ru_RU -f UTF-8 ru_RU.UTF-8 && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,from=distro,source=setup-full-8.3.27.1989-x86_64.run,target=/tmp/setup.run \
+    /tmp/setup.run --mode unattended --unattendedmodeui none --installer-language en \
+    --enable-components server,server_admin,ru --disable-components client_full,client_thin,client_thin_fib,v8_install_deps,desktop_icons,ws,liberica_jre \
+    && ln -s /opt/1cv8/x86_64/8.3.27.1989 /opt/1cv8/current \
+    && test -x /opt/1cv8/current/ragent && test -x /opt/1cv8/current/rac
+RUN groupadd --gid 10001 onec && useradd --uid 10001 --gid onec --create-home onec \
+    && mkdir -p /lab/data /lab/logs && chown -R onec:onec /lab
+COPY onec-entrypoint.sh /usr/local/bin/lab-onec
+USER 10001:10001
+ENV PATH=/opt/1cv8/current:$PATH HOME=/home/onec
+WORKDIR /lab
+ENTRYPOINT ["/bin/sh", "/usr/local/bin/lab-onec"]

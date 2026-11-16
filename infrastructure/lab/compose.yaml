@@ -1,0 +1,50 @@
+name: techexpert-lab
+services:
+  pg:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    restart: "no"
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    ports: ["127.0.0.1:25432:5432"]
+    volumes: ["pgdata:/lab/pgdata"]
+    secrets: [pgpass]
+    healthcheck:
+      test: ["CMD", "/opt/pgpro/1c-16/bin/pg_isready", "-U", "postgres", "-d", "postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+  onec:
+    build:
+      context: .
+      dockerfile: Dockerfile.onec
+      additional_contexts:
+        distro: ${ONEC_DISTR_DIR:?Set the directory with the official extracted .run installer}
+    hostname: localhost
+    restart: "no"
+    mem_limit: 4g
+    cpus: 4
+    pids_limit: 1024
+    ports:
+      - "127.0.0.1:2540:2540"
+      - "127.0.0.1:2541:2541"
+      - "127.0.0.1:2545:2545"
+      - "127.0.0.1:2560-2591:2560-2591"
+    volumes: ["onec-data:/lab/data", "onec-logs:/lab/logs"]
+    depends_on:
+      pg:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/opt/1cv8/current/rac", "cluster", "list", "localhost:2545"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+secrets:
+  pgpass:
+    file: ${TECH_PG_PASSWORD_FILE:?Set an existing private file with a strong lab database password}
+volumes:
+  pgdata:
+  onec-data:
+  onec-logs:

@@ -10,6 +10,18 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_new_checks_require_auth_and_local_preflight_has_no_side_effects(self):
+        status,_,_=self.request('POST','/api/check',self.profile,token=False)
+        self.assertEqual(status,401)
+        status,_,body=self.request('POST','/api/check',self.profile)
+        self.assertEqual(status,200)
+        result=json.loads(body)
+        self.assertFalse(result['connected'])
+        self.assertFalse(result['collection_started'])
+        self.assertFalse(self.state_dir.exists())
+        status,_,_=self.request('POST','/api/ras',{'endpoint':'localhost:1545','executable':'cmd.exe'})
+        self.assertEqual(status,400)
+
     def test_manual_base_selector_contains_file_server_unknown(self):
         class SelectParser(HTMLParser):
             active = False

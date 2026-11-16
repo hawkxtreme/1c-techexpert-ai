@@ -7,3 +7,9 @@ examples/sc01/order-load-probe/orders.csv -text
 tests/fixtures/order-load/** -text whitespace=cr-at-eol
 # The controlled experiment records the exact service implementation hash.
 src/techexpert/catalog_probe.py -text
+
+# Linux entrypoints and pinned public-key bytes must survive Windows checkouts.
+infrastructure/lab/*.sh text eol=lf
+infrastructure/lab/Dockerfile.* text eol=lf
+infrastructure/lab/pgpro-key.asc -text
+src/techexpert/os_probe.py text eol=lf

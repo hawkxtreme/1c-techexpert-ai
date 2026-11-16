@@ -1,0 +1,644 @@
+{
+  "schema_version": 1,
+  "revision": "2026.11.16.1",
+  "sources": [
+    {
+      "id": "1c-file",
+      "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_file_mode_8_3_27/",
+      "publisher": "1C",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "1c-server",
+      "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_client_server_mode_8_3_27/",
+      "publisher": "1C",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "windows-pdh",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhaddenglishcounterw",
+      "publisher": "Microsoft",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "windows-sampling",
+      "url": "https://learn.microsoft.com/en-us/windows/win32/perfctrs/collecting-performance-data",
+      "publisher": "Microsoft",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "linux-io",
+      "url": "https://docs.kernel.org/admin-guide/iostats.html",
+      "publisher": "Linux kernel contributors",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "pg-stats",
+      "url": "https://www.postgresql.org/docs/17/monitoring-stats.html",
+      "publisher": "PostgreSQL Global Development Group",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "apdex",
+      "url": "https://www.apdex.org/wp-content/uploads/2020/09/Apdex_Technical_Specification.pdf",
+      "publisher": "Apdex Alliance",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "its-436",
+      "url": "https://its.1c.ru/db/v8std/content/436/hdoc",
+      "publisher": "1C",
+      "access": "licensed_reference",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "its-652",
+      "url": "https://its.1c.ru/db/v8std/content/652/hdoc",
+      "publisher": "1C",
+      "access": "licensed_reference",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "testpilot",
+      "url": "https://github.com/ROCTUP/1c-testpilot",
+      "publisher": "ROCTUP",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "docker-nat",
+      "url": "https://github.com/1C-Company/docker_fresh/issues/7",
+      "publisher": "1C-Company/docker_fresh maintainers",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    }
+  ],
+  "cards": [
+    {
+      "id": "SC01-ORDER-LOAD",
+      "title": "Повторные обращения при загрузке заказов",
+      "path": "cases/SC01-order-load.md",
+      "status": "validated_in_lab",
+      "related": [
+        "KB-1C-QUERY-BATCH",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "1c-file",
+        "1c-server"
+      ],
+      "type": "case",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "signs": [
+        "фоновое задание",
+        "загрузка заказов",
+        "SC-01"
+      ],
+      "steps": [
+        "Установить границы запуска",
+        "Проверить независимые свидетельства",
+        "Сравнить правильный результат"
+      ],
+      "evidence_basis": "Existing repository fixtures, executed controlled cases and documented limits; see linked passports"
+    },
+    {
+      "id": "SC01-TIME",
+      "title": "Границы времени SC-01",
+      "path": "cases/SC01-time-boundaries.md",
+      "status": "reviewed",
+      "related": [
+        "SC01-LIFECYCLE",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "1c-file",
+        "1c-server"
+      ],
+      "type": "case",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "signs": [
+        "фоновое задание",
+        "загрузка заказов",
+        "SC-01"
+      ],
+      "steps": [
+        "Установить границы запуска",
+        "Проверить независимые свидетельства",
+        "Сравнить правильный результат"
+      ],
+      "evidence_basis": "Existing repository fixtures, executed controlled cases and documented limits; see linked passports"
+    },
+    {
+      "id": "SC01-NATIVE-TJ",
+      "title": "Границы нативного ТЖ SC-01",
+      "path": "cases/SC01-native-tj-boundaries.md",
+      "status": "validated_in_lab",
+      "related": [
+        "SC01-LIFECYCLE",
+        "KB-RAS-IDENTITY"
+      ],
+      "sources": [
+        "1c-file",
+        "1c-server"
+      ],
+      "type": "case",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "signs": [
+        "фоновое задание",
+        "загрузка заказов",
+        "SC-01"
+      ],
+      "steps": [
+        "Установить границы запуска",
+        "Проверить независимые свидетельства",
+        "Сравнить правильный результат"
+      ],
+      "evidence_basis": "Existing repository fixtures, executed controlled cases and documented limits; see linked passports"
+    },
+    {
+      "id": "SC01-LIFECYCLE",
+      "title": "Начало и завершение фонового задания",
+      "path": "cases/SC01-job-lifecycle.md",
+      "status": "validated_in_lab",
+      "related": [
+        "SC01-TIME",
+        "SC01-ORDER-LOAD"
+      ],
+      "sources": [
+        "1c-file",
+        "1c-server"
+      ],
+      "type": "case",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "signs": [
+        "фоновое задание",
+        "загрузка заказов",
+        "SC-01"
+      ],
+      "steps": [
+        "Установить границы запуска",
+        "Проверить независимые свидетельства",
+        "Сравнить правильный результат"
+      ],
+      "evidence_basis": "Existing repository fixtures, executed controlled cases and documented limits; see linked passports"
+    },
+    {
+      "id": "PLAYBOOK-SLOW-JOB",
+      "title": "Порядок расследования медленного фонового задания",
+      "path": "playbooks/slow-background-job.md",
+      "status": "reviewed",
+      "related": [
+        "SC01-TIME",
+        "SC01-ORDER-LOAD"
+      ],
+      "sources": [
+        "1c-file",
+        "1c-server"
+      ],
+      "type": "case",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "signs": [
+        "фоновое задание",
+        "загрузка заказов",
+        "SC-01"
+      ],
+      "steps": [
+        "Установить границы запуска",
+        "Проверить независимые свидетельства",
+        "Сравнить правильный результат"
+      ],
+      "evidence_basis": "Existing repository fixtures, executed controlled cases and documented limits; see linked passports"
+    },
+    {
+      "id": "KB-OS-DISK",
+      "title": "Очередь дисков: проверять вместе с задержкой и нагрузкой",
+      "path": "methods/os-disk.md",
+      "status": "validated_in_lab",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Windows 11 PDH and Linux 6.6 WSL2/proc observed; no universal device or bottleneck threshold",
+      "signs": [
+        "очередь дисков",
+        "задержка ввода вывода",
+        "IOPS",
+        "disk latency"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Executed local tests or controlled observations, limited exactly as stated in the card",
+      "related": [
+        "KB-OS-SCOPE",
+        "KB-PG-HISTORY"
+      ],
+      "sources": [
+        "linux-io",
+        "windows-pdh",
+        "windows-sampling"
+      ]
+    },
+    {
+      "id": "KB-OS-SCOPE",
+      "title": "Метрики контейнера и физического компьютера имеют разную область",
+      "path": "methods/os-scope.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "Docker",
+        "WSL",
+        "виртуальный диск",
+        "scope"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-OS-DISK",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "linux-io"
+      ]
+    },
+    {
+      "id": "KB-PG-VISIBILITY",
+      "title": "PostgreSQL: доступ к статистике и видимость запросов",
+      "path": "methods/postgresql-visibility.md",
+      "status": "validated_in_lab",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "PostgreSQL 16.15 observed in lab; other releases/permissions require validation",
+      "signs": [
+        "PostgreSQL",
+        "права",
+        "pg_stat_activity",
+        "NULL",
+        "блокировки"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Executed local tests or controlled observations, limited exactly as stated in the card",
+      "related": [
+        "KB-PG-HISTORY",
+        "KB-RAS-IDENTITY"
+      ],
+      "sources": [
+        "pg-stats"
+      ]
+    },
+    {
+      "id": "KB-PG-HISTORY",
+      "title": "PostgreSQL: текущий снимок и накопительная статистика",
+      "path": "methods/postgresql-history.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "PostgreSQL 16.15 observed in lab; other releases/permissions require validation",
+      "signs": [
+        "pg_stat_statements",
+        "stats_reset",
+        "история",
+        "прошлый инцидент",
+        "накопительная статистика"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-PG-VISIBILITY",
+        "KB-APDEX",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "pg-stats"
+      ]
+    },
+    {
+      "id": "KB-APDEX",
+      "title": "APDEX: порог, ошибки и полнота измерений",
+      "path": "methods/apdex.md",
+      "status": "validated_in_lab",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Normalized apdex-measurements-v1 only; no native BSP compatibility claim",
+      "signs": [
+        "APDEX",
+        "порог",
+        "приемлемое время",
+        "длительность операции"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Executed local tests or controlled observations, limited exactly as stated in the card",
+      "related": [
+        "KB-EVIDENCE-CAUSE",
+        "KB-PG-HISTORY"
+      ],
+      "sources": [
+        "apdex"
+      ]
+    },
+    {
+      "id": "KB-1C-QUERY-BATCH",
+      "title": "Повторные однотипные запросы: как проверить эффект пакетирования",
+      "path": "methods/query-batching.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "запрос в цикле",
+        "однотипные запросы",
+        "пакетирование",
+        "N+1"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-1C-INDEX",
+        "SC01-ORDER-LOAD",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "its-436"
+      ]
+    },
+    {
+      "id": "KB-1C-INDEX",
+      "title": "Условия запроса и индекс: проверять план и цену изменения",
+      "path": "methods/query-index.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "индекс",
+        "сканирование",
+        "условия запроса",
+        "selectivity"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-1C-QUERY-BATCH",
+        "KB-PG-VISIBILITY",
+        "KB-CLIENT-REFRESH"
+      ],
+      "sources": [
+        "its-652"
+      ]
+    },
+    {
+      "id": "KB-CLIENT-REFRESH",
+      "title": "Документ записан быстро, а интерфейс ещё занят",
+      "path": "methods/client-refresh.md",
+      "status": "draft",
+      "type": "hypothesis",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "динамический список",
+        "открытые окна",
+        "после проведения",
+        "клиент тормозит"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "User-reported hypothesis; no reproduced client case",
+      "related": [
+        "KB-1C-INDEX",
+        "KB-APDEX"
+      ],
+      "sources": [
+        "testpilot"
+      ]
+    },
+    {
+      "id": "KB-JR-READINESS",
+      "title": "Нативный журнал регистрации: состав и полнота снимка",
+      "path": "methods/jr-readiness.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "ЖР",
+        "журнал регистрации",
+        "1Cv8Log",
+        "lgf",
+        "lgp"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-RAS-IDENTITY",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "1c-file"
+      ]
+    },
+    {
+      "id": "KB-RAS-IDENTITY",
+      "title": "RAC: связывать ИБ, узлы и процессы в пределах снимка",
+      "path": "methods/ras-identity.md",
+      "status": "validated_in_lab",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "RAS",
+        "RAC",
+        "кластер",
+        "session",
+        "process",
+        "серверная база"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Executed local tests or controlled observations, limited exactly as stated in the card",
+      "related": [
+        "KB-PG-VISIBILITY",
+        "KB-JR-READINESS",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "1c-server"
+      ]
+    },
+    {
+      "id": "KB-LICENSE-ENV",
+      "title": "Готовность сервера: процесс запущен, приложение может быть недоступно",
+      "path": "methods/server-readiness.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "лицензия",
+        "Docker",
+        "NAT",
+        "готовность сервера",
+        "платформа"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "KB-RAS-IDENTITY",
+        "KB-OS-SCOPE"
+      ],
+      "sources": [
+        "1c-server",
+        "docker-nat"
+      ]
+    },
+    {
+      "id": "KB-EVIDENCE-CAUSE",
+      "title": "Факт, гипотеза и подтверждённая причина в расследовании",
+      "path": "methods/evidence-cause.md",
+      "status": "reviewed",
+      "type": "method",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-16",
+      "revision": 1,
+      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "signs": [
+        "причина",
+        "гипотеза",
+        "недостаточно данных",
+        "проверка исправления"
+      ],
+      "steps": [
+        "Проверить применимость",
+        "Собрать указанные свидетельства",
+        "Проверить альтернативы и результат"
+      ],
+      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "related": [
+        "SC01-ORDER-LOAD",
+        "KB-OS-DISK",
+        "KB-APDEX",
+        "KB-PG-HISTORY"
+      ],
+      "sources": [
+        "pg-stats",
+        "apdex"
+      ]
+    }
+  ]
+}

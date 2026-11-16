@@ -35,7 +35,11 @@ def doctor(state_dir=None):
                                   job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='not_implemented',
                                   order_load='controlled_windows_file_8.3.27.1989_only',
                                   fix_comparison='sc01_order_load_five_pairs_only',
-                                  sql='not_implemented', remote_os_collection='not_implemented', testpilot='not_implemented'))
+                                  sql='postgresql_fixed_read_only_catalogue; sql_server_not_implemented',
+                                  local_os_collection='windows_pdh_linux_proc; counters_require_actual_check',
+                                  remote_os_collection='ssh_winrm_launchers; existing_access_and_remote_python_required',
+                                  apdex='normalized_measurements_only',source_snapshot='bounded_xml_bsl_catalog_or_local_git_commit',
+                                  knowledge='bundled_offline_linked_cards',testpilot='not_implemented'))
 
 
 def read_starter(path):
@@ -102,24 +106,101 @@ def validate_profile(value):
         clean_bases.append(dict(id=bid,name=field(base,'name',120),mode=mode,connection=field(base,'connection',empty=True)))
     source_ids = set()
     for source in sources:
-        if not isinstance(source, dict) or set(source)-{'id','type','path','host','base_ids','status'}:
+        if not isinstance(source, dict) or set(source)-{'id','type','path','host','base_ids','status','settings'}:
             raise InputError('invalid source properties')
-        sid, kind, path = field(source,'id',80), source.get('type'), field(source,'path')
+        sid, kind = field(source,'id',80), source.get('type')
+        path=field(source,'path',empty=kind in ('os','rac','sql'))
         linked = source.get('base_ids')
-        if sid in source_ids or kind not in ('tj','jr','source','sql','os'):
+        if sid in source_ids or kind not in ('tj','jr','source','sql','os','rac'):
             raise InputError('duplicate source id or unknown type')
         if not isinstance(linked,list) or not linked or any(not isinstance(x,str) or x not in ids for x in linked) or len(set(linked))!=len(linked):
             raise InputError('source must link existing bases')
-        if kind == 'sql' and any(base['mode']!='server' for base in clean_bases if base['id'] in linked):
-            raise InputError('SQL applies only to confirmed server databases')
+        if kind in ('sql','rac') and any(base['mode']!='server' for base in clean_bases if base['id'] in linked):
+            raise InputError('SQL and RAC apply only to confirmed server databases')
         suffix = Path(path).suffix.lower()
         if kind=='jr' and suffix=='.xml':
             raise InputError('JR requires a native directory or consistent snapshot, not XML')
         if kind=='source' and suffix in ('.zip','.7z','.rar','.tar','.gz','.cf','.cfe'):
             raise InputError('1C sources require a directory or Git repository')
-        clean_sources.append(dict(id=sid,type=kind,path=path,host=field(source,'host',256,empty=True),base_ids=linked,status='not_checked'))
+        settings=validate_source_settings(kind,source.get('settings',{}),linked)
+        clean_sources.append(dict(id=sid,type=kind,path=path,host=field(source,'host',256,empty=True),base_ids=linked,
+                                  status='not_checked',settings=settings))
         source_ids.add(sid)
     return dict(schema_version=1,name=name,bases=clean_bases,sources=clean_sources,capability_status='configured_not_connected')
+
+
+def validate_source_settings(kind,value,base_ids):
+    fields={
+        'os':{'transport','duration_seconds','interval_seconds','max_bytes','role','port','python','use_ssl','identity_file','known_hosts_file'},
+        'sql':{'engine','port','database','databases','user','credential_ref','executable','docker_container'},
+        'rac':{'executable','docker_container','credential_ref'},
+        'tj':{'platform_version','utc_offset','placement','timestamp_format'},
+        'jr':{'platform_version','utc_offset'},
+        'source':{'kind','ref','match_status'}}
+    if not isinstance(value,dict) or set(value)-fields[kind]:raise InputError('unsupported '+kind+' settings')
+    result={}
+    for key,item in value.items():
+        if key=='databases':
+            if not isinstance(item,dict) or set(item)-set(base_ids) or any(not isinstance(v,str) or len(v)>128 or any(ord(c)<32 for c in v) for v in item.values()):
+                raise InputError('SQL database map must refer only to linked bases')
+            result[key]=dict(item)
+        elif key in ('duration_seconds','interval_seconds','max_bytes','port','use_ssl'):
+            result[key]=item
+        else:
+            if (not isinstance(item,str) or len(item)>2048 or any(ord(c)<32 for c in item)
+                or re.search(r'(?i)(?:pwd|password|token|secret|authorization)\s*[=:]',item) or re.search(r'://[^/]*@',item)):
+                raise InputError('invalid or secret-bearing source setting')
+            result[key]=item
+    if kind=='os':
+        from .os_metrics import validate_request
+        request=validate_request(dict(**result,host='configured-node' if result.get('transport','local')!='local' else ''))
+        result={k:v for k,v in request.items() if k not in ('host','node')}
+    if kind=='sql':
+        result.setdefault('engine','postgresql');result.setdefault('port',5432 if result['engine']=='postgresql' else 1433)
+        if result['engine'] not in ('postgresql','sqlserver') or type(result['port']) is not int or not 1<=result['port']<=65535:
+            raise InputError('invalid SQL engine or port')
+    if kind=='source' and (result.get('kind','catalog') not in ('catalog','git') or result.get('match_status','unknown') not in ('unknown','confirmed','mismatch','partial')):
+        raise InputError('invalid source kind or match status')
+    return result
+
+
+def discover_ras(endpoint,*,executable='rac',docker_container=None,cluster=None):
+    from .rac import RacClient,parse_rows
+    if Path(executable).name.lower() not in ('rac','rac.exe'):raise InputError('choose the installed rac executable')
+    client=RacClient(endpoint,executable=executable,docker_container=docker_container)
+    if cluster is None:
+        return dict(clusters=parse_rows(client.execute('clusters')),bases=[],temporal_scope='current_snapshot_only')
+    rows=parse_rows(client.execute('infobases',cluster=cluster))
+    bases=[]
+    for row in rows:
+        if not row.get('name') or not row.get('infobase'):raise InputError('incomplete RAC infobase row')
+        identity=hashlib.sha256((endpoint+'\0'+cluster+'\0'+row['infobase']).encode()).hexdigest()[:24]
+        bases.append(dict(id=identity,name=row['name'],mode='server',connection='RAS='+endpoint+';Cluster='+cluster+';IB='+row['infobase']))
+    return dict(cluster=cluster,endpoint=endpoint,bases=bases,temporal_scope='current_snapshot_only',
+                limitations=['SQL address and historical job ownership are not established by summary list.'])
+
+
+def check_profile(value):
+    """Explicit bounded local checks only. No network, collectors or logcfg writes."""
+    clean=validate_profile(value);checks=[]
+    for source in clean['sources']:
+        kind=source['type'];path=Path(source['path']) if source['path'] else None
+        if kind in ('tj','jr','source'):
+            remote_git=kind=='source' and source['settings'].get('kind')=='git' and re.match(r'^(https://|git@|ssh://)',source['path'])
+            if remote_git:status='requires_explicit_git_snapshot';detail='Git is configured; no clone/fetch was started.'
+            elif path and path.is_dir():status='local_directory_exists';detail='Directory metadata checked; format, contents and version not yet verified.'
+            else:status='unavailable';detail='Directory is absent or inaccessible from this computer; prepare an authorized share or snapshot.'
+        elif kind=='os':
+            status='local_collector_available' if source['settings']['transport']=='local' and platform.system() in ('Windows','Linux') else 'remote_prerequisites_not_checked'
+            detail='Plan only: no collection, service installation or permission change.'
+        elif kind=='sql':
+            executable=source['settings'].get('executable') or ('psql' if source['settings']['engine']=='postgresql' else 'sqlcmd')
+            status='client_found_not_connected' if shutil.which(executable) or source['settings'].get('docker_container') else 'client_not_found'
+            detail='Credentials, permissions and database mapping require an explicit connection check.'
+        else:
+            status='configured_not_connected';detail='Use explicit RAS discovery to test this endpoint.'
+        checks.append(dict(source_id=source['id'],type=kind,status=status,detail=detail))
+    return dict(status='local_preflight_only',sources=checks,connected=False,collection_started=False,logcfg_changed=False)
 
 
 def save_profile(state_dir, profile):
