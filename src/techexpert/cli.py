@@ -31,6 +31,12 @@ def main(argv=None):
     analyze.add_argument('manifest', type=Path)
     show = commands.add_parser('show')
     show.add_argument('case_id')
+    for operation in ('source-check','coverage'):
+        command=commands.add_parser(operation)
+        command.add_argument('manifest' if operation=='source-check' else 'case_id',type=Path if operation=='source-check' else str)
+        command.add_argument('--start');command.add_argument('--end')
+        command.add_argument('--require-event',action='append',default=[])
+        command.add_argument('--require-field',action='append',default=[])
     compare=commands.add_parser('compare')
     compare.add_argument('--before',nargs='+',required=True)
     compare.add_argument('--after',nargs='+',required=True)
@@ -155,6 +161,14 @@ def main(argv=None):
             else:result=investigate(args.manifest,args.state_dir)
         elif args.command == 'show':
             result = load_case(args.state_dir, args.case_id)
+        elif args.command in ('source-check','coverage'):
+            from .source_coverage import inspect_manifest,inspect_case
+            window=None
+            if args.start is not None or args.end is not None:
+                if args.start is None or args.end is None:raise InputError('both --start and --end are required')
+                window=dict(start=args.start,end=args.end)
+            options=dict(window=window,required_events=args.require_event,required_fields=args.require_field)
+            result=inspect_manifest(args.manifest,**options) if args.command=='source-check' else inspect_case(args.state_dir,args.case_id,**options)
         elif args.command == 'compare':
             result = compare_cases(args.state_dir,args.before,args.after)
         elif args.command == 'comparison':

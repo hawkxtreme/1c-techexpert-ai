@@ -103,6 +103,9 @@ def investigate(manifest_path, state_dir):
     bundle = load_manifest(manifest_path)
     has_correlation = bundle['manifest'].get('correlation_profile') == '1c-file-job-markers-v1'
     result = job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])
+    from .source_coverage import summarize_bundle
+    result['source_coverage']=summarize_bundle(bundle)
+    result['source_acquisition']=bundle['source_attempts']
     if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
         result['order_load']=analyze_order_load(bundle,result)
     native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']

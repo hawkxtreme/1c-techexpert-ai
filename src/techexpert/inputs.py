@@ -22,18 +22,24 @@ class InputError(ValueError):
     pass
 
 
+class SnapshotReadError(InputError):
+    def __init__(self,message,code):
+        super().__init__(message)
+        self.code=code
+
+
 def read_snapshot(path, max_bytes=MAX_FILE_BYTES):
     path = Path(path)
     with path.open('rb') as stream:
         before = os.fstat(stream.fileno())
         if before.st_size > max_bytes:
-            raise InputError('input exceeds byte limit')
+            raise SnapshotReadError('input exceeds byte limit','byte_limit')
         data = stream.read(max_bytes + 1)
         after = os.fstat(stream.fileno())
     if len(data) > max_bytes:
-        raise InputError('input exceeds byte limit')
+        raise SnapshotReadError('input exceeds byte limit','byte_limit')
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or len(data) != before.st_size:
-        raise InputError('input changed while reading; provide a stable snapshot')
+        raise SnapshotReadError('input changed while reading; provide a stable snapshot','changed_during_read')
     return data
 
 
@@ -60,17 +66,19 @@ def runtime_profile(spec):
     return {k:spec[k] for k in ('platform_version','role','platform_utc_offset')}
 
 
-def load_manifest(path):
+def load_manifest(path,*,tolerant_sources=False):
     path = Path(path).resolve()
     try:
         raw = read_snapshot(path, 1024 * 1024)
-        manifest = json_value(raw.decode('utf-8-sig'))
+        manifest = json_value(raw.decode('utf-8-sig'),reject_duplicates=True)
     except (OSError, UnicodeError, ValueError) as exc:
         raise InputError(f'Cannot read case manifest: {exc}') from exc
     if not isinstance(manifest, dict) or manifest.get('schema') != 1 or manifest.get('scenario') != 'SC-01':
         raise InputError('expected schema=1 and scenario=SC-01')
     if manifest.get('origin') not in ('synthetic', 'provided'):
         raise InputError('origin must explicitly be synthetic or provided')
+    from .source_coverage import validate_request,validate_collection
+    validate_request(window=manifest.get('incident_window'))
     selection = manifest.get('selection')
     correlation=manifest.get('correlation_profile')
     workload=manifest.get('workload_profile')
@@ -89,45 +97,84 @@ def load_manifest(path):
         raise InputError('sources must contain 1..32 explicit files')
     events, native_events, sources, limits, seen, total = [], [], [], [], {}, 0
     lifecycle_documents=[]
+    attempts=[];seen_ids={}
     records_seen, omitted_details = 0, 0
     for source_number, spec in enumerate(specs, 1):
-        if not isinstance(spec, dict) or spec.get('format') not in (set(AUXILIARY_FORMATS)|{'normalized-events-v1','1c-tj-text-v1','1c-job-runtime-v1'}):
+        source_id=f's{source_number}'
+        attempt=dict(id=source_id,format=spec.get('format') if isinstance(spec,dict) and isinstance(spec.get('format'),str) else None,
+            path=spec.get('path') if isinstance(spec,dict) and isinstance(spec.get('path'),str) else None,availability='not_attempted')
+        attempts.append(attempt)
+        if (not isinstance(spec,dict) or not isinstance(spec.get('format'),str)
+            or spec['format'] not in (set(AUXILIARY_FORMATS)|{'normalized-events-v1','1c-tj-text-v1','1c-job-runtime-v1'})):
+            if tolerant_sources:
+                attempt['availability']='unsupported_format'
+                continue
             raise InputError('unsupported source format; native JR is not supported')
         is_runtime=spec['format']=='1c-job-runtime-v1'
         is_auxiliary=spec['format'] in AUXILIARY_FORMATS
         if is_auxiliary and workload is None:
+            if tolerant_sources:
+                attempt['availability']='unsupported_profile'
+                continue
             raise InputError('auxiliary source requires workload_profile=sc01-order-load-v1')
         if (is_runtime and correlation is None) or (correlation is not None and spec['format']=='normalized-events-v1'):
+            if tolerant_sources:
+                attempt['availability']='unsupported_profile'
+                continue
             raise InputError('job correlation requires native TJ/runtime sources and explicit correlation_profile')
-        if not isinstance(spec.get('path'), str) or not spec['path']:
+        if not isinstance(spec.get('path'), str) or not spec['path'] or '\x00' in spec['path']:
+            if tolerant_sources:
+                attempt['availability']='invalid_source'
+                continue
             raise InputError('source path required')
         source_path = Path(spec['path'])
         if not source_path.is_absolute():
             source_path = path.parent / source_path
-        source_path = source_path.resolve()
-        profile = validate_profile(spec, source_path) if spec['format'] == '1c-tj-text-v1' else None
-        job_profile=runtime_profile(spec) if is_runtime else None
+        # Profile validation does not touch the path; inspection must not open an unsupported declaration.
+        try:
+            profile = validate_profile(spec, source_path) if spec['format'] == '1c-tj-text-v1' else None
+            job_profile=runtime_profile(spec) if is_runtime else None
+            collection=validate_collection(spec.get('collection'))
+        except ValueError:
+            if not tolerant_sources:raise
+            attempt['availability']='unsupported_profile'
+            continue
         context = spec.get('context', {})
         if (not isinstance(context, dict) or set(context) - {'node', 'process', 'epoch'} or
                 any(not isinstance(v, str) or not 1 <= len(v) <= 256 for v in context.values())):
+            if tolerant_sources:
+                attempt['availability']='unsupported_profile'
+                continue
             raise InputError('source context supports bounded node, process and epoch labels')
+        try:source_path=source_path.resolve()
+        except (OSError,ValueError) as exc:
+            attempt['availability']='access_denied' if isinstance(exc,PermissionError) else 'read_error'
+            limits.append(dict(code='source_unavailable',source=source_id,detail=str(exc)))
+            continue
         identity = os.path.normcase(str(source_path))
-        interpretation = (spec['format'], profile, job_profile, context)
+        interpretation = (spec['format'], profile, job_profile, context,collection)
         if identity in seen:
             if seen[identity] != interpretation:
+                if tolerant_sources:
+                    attempt['availability']='conflicting_profile'
+                    continue
                 raise InputError('conflicting profiles for the same source file')
+            attempt.update(availability='duplicate_source',duplicate_of=seen_ids[identity])
             continue
         seen[identity] = interpretation
-        source_id = f's{source_number}'
+        seen_ids[identity]=source_id
         try:
             data = read_snapshot(source_path, min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total))
             total += len(data)
         except (OSError, InputError) as exc:
+            attempt['availability']=('not_found' if isinstance(exc,FileNotFoundError) else 'access_denied' if isinstance(exc,PermissionError)
+                else exc.code if isinstance(exc,SnapshotReadError) else 'read_error')
             limits.append(dict(code='source_unavailable', source=source_id, detail=str(exc)))
             continue
+        attempt.update(availability='captured',path=str(source_path))
         digest = hashlib.sha256(data).hexdigest()
         source = dict(id=source_id, path=str(source_path), sha256=digest, size=len(data),
-                      format=spec['format'], data=data)
+                      format=spec['format'], data=data,collection=collection)
         sources.append(source)
         if is_runtime or is_auxiliary:
             source['evidence']=dict(id=f'{source_id}:1',source=source_id,sha256=digest,line=1,
@@ -205,4 +252,4 @@ def load_manifest(path):
         limits.append(dict(code='additional_invalid_records', count=omitted_details))
     return dict(manifest=manifest, manifest_sha256=hashlib.sha256(raw).hexdigest(),
                 manifest_data=raw, events=events, native_events=native_events, lifecycle_documents=lifecycle_documents,
-                sources=sources, limitations=limits)
+                sources=sources, source_attempts=attempts, limitations=limits)
