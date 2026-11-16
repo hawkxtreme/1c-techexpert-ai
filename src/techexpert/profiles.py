@@ -32,7 +32,7 @@ def doctor(state_dir=None):
                 commands={x: shutil.which(x) for x in ('git', 'rac', 'ras', 'ssh', 'psql', 'sqlcmd')},
                 capabilities=dict(sc01_normalized_evidence='ready', synthetic_demo='ready',
                                   source_profile='ready', native_tj='text_8.3.27.1989_only',
-                                  job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='not_implemented',
+                                  job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='sequential_lgf_lgp_8.3.27.1989_only; lgd_not_supported',
                                   order_load='controlled_windows_file_8.3.27.1989_only',
                                   fix_comparison='sc01_order_load_five_pairs_only',
                                   sql='postgresql_fixed_read_only_catalogue; sql_server_not_implemented',

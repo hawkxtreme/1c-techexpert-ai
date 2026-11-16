@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "origin": "captured_sanitized",
+  "platform_version": "8.3.27.1989",
+  "mode": "Windows file infobase",
+  "profile": "1c-jr-sequential-8.3.27.1989-v1",
+  "capture_date": "2026-11-16",
+  "changes": [
+    "Journal UUID, user UUID and computer label replaced with stable test pseudonyms.",
+    "Five complete records selected from one controlled SC-01 execution; selection does not imply complete journal coverage.",
+    "No authentication data payload, username, filesystem path or private business data included."
+  ],
+  "expected": {
+    "event_count": 5,
+    "event_names": [
+      "_$Job$_.Start",
+      "_$Transaction$_.Begin",
+      "_$Data$_.New",
+      "_$Transaction$_.Commit",
+      "_$Job$_.Finish"
+    ],
+    "issues": 0,
+    "complete_incident_coverage": null
+  },
+  "full_private_source": {
+    "dictionary_sha256": "bfbd304d7e2d2d3e9e280ec70119d77b019b6aef5a1048ee959b997c17570df2",
+    "part_sha256": "62ee69344901880aa0e97514d0010a4ff4e3a1d8cc99a535ea57e6b33b8dba9a",
+    "event_count": 13485
+  },
+  "members": {
+    "1Cv8.lgf": {
+      "bytes": 677,
+      "sha256": "595e4715fbcd4e4802f44a9070d0aca1775b65db620760f9da72b98acb92b946"
+    },
+    "20261116000000.lgp": {
+      "bytes": 627,
+      "sha256": "1e4edd922bcec47140a3af40b9114626d418e07433c403641cede6dcc9fe3d07"
+    }
+  }
+}

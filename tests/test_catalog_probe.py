@@ -28,7 +28,9 @@ class CatalogProbeTests(unittest.TestCase):
     def test_real_http_response_and_independent_receipt(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
-            probe=self.module.CatalogProbe(root,delay_ms=1,max_requests=1,ttl_seconds=3)
+            # A 1 ms lower bound is unstable on Windows event-wait timers.
+            # Use a larger delay and tolerance while checking exact measured math.
+            probe=self.module.CatalogProbe(root,delay_ms=20,max_requests=1,ttl_seconds=3)
             thread=threading.Thread(target=probe.serve);thread.start()
             try:
                 with self.request(probe) as response:
@@ -46,7 +48,8 @@ class CatalogProbeTests(unittest.TestCase):
             self.assertEqual(call['request_id'],REQUEST)
             self.assertEqual(call['nonce'],NONCE)
             self.assertTrue(call['completed'])
-            self.assertGreaterEqual(call['elapsed_us'],1000)
+            self.assertEqual(record['delay_ms'],20)
+            self.assertGreaterEqual(call['elapsed_us'],10000)
             self.assertEqual(call['elapsed_us'],(call['finished_monotonic_ns']-call['started_monotonic_ns'])//1000)
             self.assertEqual(record['host'],'127.0.0.1')
 

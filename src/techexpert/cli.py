@@ -97,6 +97,13 @@ def main(argv=None):
     source_read=commands.add_parser('source-read')
     source_read.add_argument('artifact_id');source_read.add_argument('path')
     source_read.add_argument('--start',type=int,default=1);source_read.add_argument('--limit',type=int,default=50)
+    jr=commands.add_parser('jr-import')
+    jr.add_argument('path',type=Path);jr.add_argument('--platform-version',required=True)
+    jr.add_argument('--utc-offset')
+    jr.add_argument('--consistency',choices=('unknown','stopped_writer','provided_snapshot'),default='unknown')
+    jr_events=commands.add_parser('jr-events');jr_events.add_argument('artifact_id')
+    jr_events.add_argument('--event');jr_events.add_argument('--offset',type=int,default=0);jr_events.add_argument('--limit',type=int,default=20)
+    jr_record=commands.add_parser('jr-record');jr_record.add_argument('artifact_id');jr_record.add_argument('record_id')
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':
@@ -159,6 +166,16 @@ def main(argv=None):
         elif args.command=='source-snapshot':
             from .source_code import snapshot_source
             result=snapshot_source(args.state_dir,args.path,kind=args.kind,ref=args.ref,encoding=args.encoding)
+        elif args.command=='jr-import':
+            from .native_jr import read_journal
+            result=read_journal(args.state_dir,args.path,platform_version=args.platform_version,
+                                utc_offset=args.utc_offset,consistency=args.consistency)
+        elif args.command=='jr-events':
+            from .native_jr import list_events
+            result=list_events(args.state_dir,args.artifact_id,event=args.event,offset=args.offset,limit=args.limit)
+        elif args.command=='jr-record':
+            from .native_jr import read_record
+            result=read_record(args.state_dir,args.artifact_id,args.record_id)
         elif args.command=='source-search':
             from .source_code import search_source
             result=search_source(args.state_dir,args.artifact_id,args.query,limit=args.limit)

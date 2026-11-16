@@ -18,6 +18,8 @@ def build(output):
     # Only these reviewed, nonprivate capture excerpts are shipped as test data.
     files.extend(ROOT / 'tests/fixtures/native-tj' / name
                  for name in ('passport.json', 'folders-minute.txt', 'plain-iso.txt'))
+    files.extend(ROOT / 'tests/fixtures/native-jr' / name
+                 for name in ('passport.json','1Cv8.lgf','20261116000000.lgp'))
     files.extend(ROOT / 'tests/fixtures/job-lifecycle' / name for name in (
         'README.md', 'passport.json', 'native.txt', 'completed.json', 'failed.json',
         'completed-controller.json', 'completed-worker-enter.json', 'completed-worker-exit.json',

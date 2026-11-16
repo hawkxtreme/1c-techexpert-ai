@@ -84,7 +84,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         data = json.loads(result.stdout)
         self.assertTrue(data['ai_harness_required'])
-        self.assertEqual(data['capabilities']['native_jr'], 'not_implemented')
+        self.assertEqual(data['capabilities']['native_jr'], 'sequential_lgf_lgp_8.3.27.1989_only; lgd_not_supported')
 
     def test_doctor_reports_selected_state_without_creating_it(self):
         with tempfile.TemporaryDirectory() as temp:

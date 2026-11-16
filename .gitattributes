@@ -1,5 +1,7 @@
 # Captured evidence excerpts must preserve exact bytes on every checkout.
 tests/fixtures/native-tj/*.txt -text whitespace=cr-at-eol
+tests/fixtures/native-jr/*.lgf -text whitespace=cr-at-eol
+tests/fixtures/native-jr/*.lgp -text whitespace=cr-at-eol
 tests/fixtures/job-lifecycle/** -text whitespace=cr-at-eol
 examples/sc01/lifecycle-probe/config/** -text whitespace=cr-at-eol
 examples/sc01/order-load-probe/config/** -text whitespace=cr-at-eol

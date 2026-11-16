@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "revision": "2026.11.16.1",
+  "revision": "2026.11.16.2",
   "sources": [
     {
       "id": "1c-file",
@@ -106,6 +106,16 @@
       "id": "docker-nat",
       "url": "https://github.com/1C-Company/docker_fresh/issues/7",
       "publisher": "1C-Company/docker_fresh maintainers",
+      "access": "public",
+      "checked_at": "2026-11-16",
+      "storage": "url_only",
+      "usage": "Independently authored diagnostic notes; original text, illustrations and distributions are not redistributed.",
+      "original_republication_rights": "not_assumed"
+    },
+    {
+      "id": "infostart-jr",
+      "url": "https://infostart.ru/1c/articles/182061/",
+      "publisher": "Антон Ширяев / InfoStart",
       "access": "public",
       "checked_at": "2026-11-16",
       "storage": "url_only",
@@ -515,12 +525,12 @@
       "id": "KB-JR-READINESS",
       "title": "Нативный журнал регистрации: состав и полнота снимка",
       "path": "methods/jr-readiness.md",
-      "status": "reviewed",
+      "status": "validated_in_lab",
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
-      "applicability": "Apply only after verifying environment, source version and evidence scope",
+      "revision": 2,
+      "applicability": "Sequential LGF/LGP only; Windows file 8.3.27.1989; coverage and database ownership require independent proof",
       "signs": [
         "ЖР",
         "журнал регистрации",
@@ -533,13 +543,14 @@
         "Собрать указанные свидетельства",
         "Проверить альтернативы и результат"
       ],
-      "evidence_basis": "Independently authored procedure informed by inspected primary references; not a confirmed current incident",
+      "evidence_basis": "Real controlled SC-01 journal: 13485 parsed records, 10 windows checked against independent platform state and 200-document oracle; not a current incident diagnosis",
       "related": [
         "KB-RAS-IDENTITY",
         "KB-EVIDENCE-CAUSE"
       ],
       "sources": [
-        "1c-file"
+        "1c-file",
+        "infostart-jr"
       ]
     },
     {
