@@ -16,7 +16,7 @@ def emit(value):
 
 def main(argv=None):
     if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stdout.reconfigure(encoding='utf-8',newline='\n')
     parser = argparse.ArgumentParser(description='1C TechExpert AI: local evidence tools for your AI harness')
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)

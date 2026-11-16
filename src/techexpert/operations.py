@@ -88,13 +88,50 @@ def _worker(folder):
         raise InputError('sealed worker result integrity mismatch')
     return value
 
-def _finish(state,folder,plan,current,worker):
+def _fit_view(view,budget,*,strict=False):
+    if len(fs.encode(view))<=budget:return view
+    if strict:raise InputError('output_limit')
+    review=view.get('current_knowledge_review',{})
+    review_status=review.get('status','not_checked')
+    if not isinstance(review_status,str) or len(review_status)>64:review_status='unknown'
+    snapshots=view.get('snapshots',[]);evidence=view.get('evidence',[])
+    execution_status=view.get('execution_status',view['status'])
+    small=dict(schema_version=1,run_id=view['run_id'],operation=view['operation'],
+        status='partial' if view['status'] in TERMINAL else view['status'],execution_status=execution_status,
+        data=None,data_omitted=True,truncated=True,snapshots=snapshots[:3],evidence=evidence[:3],
+        omitted_snapshots=max(0,len(snapshots)-3),omitted_evidence=max(0,len(evidence)-3),
+        full_result_retained=bool(view.get('integrity_verified')),integrity_verified=bool(view.get('integrity_verified')),
+        replayed=bool(view.get('replayed')),limits=view['limits'],stop_verified=view.get('stop_verified',False),
+        cancellation_requested=view.get('cancellation_requested',False),
+        current_knowledge_review=dict(status=review_status,review_required=review_status!='unchanged',
+            technical_truth_judged=False,truncated=True,scope='bounded presentation only; inspect applicable knowledge before reuse'),
+        limitations=['Full current presentation exceeds max_result_bytes. Stored result is unchanged; no processing was repeated. Data and review details are omitted.'])
+    for key in ('owner','child','cancel_too_late','current_product_version'):
+        if key in view:small[key]=view[key]
+    if len(fs.encode(small))>budget:raise InputError('output_limit')
+    return small
+
+def _present(state,plan,value,*,replayed,strict=False):
+    from .knowledge_review import review_legacy_report,review_use
+    data=value['data'] or {};request=plan['request']
+    if request['operation']=='artifact.show' and data.get('kind')=='knowledge_use':
+        knowledge_review=review_use(state,data['artifact_id'])
+    else:
+        basis=(data if 'knowledge_revision' in data and not request['operation'].startswith('knowledge.')
+            else dict(knowledge_revision=plan['versions'].get('knowledge')))
+        knowledge_review=review_legacy_report(basis)
+    view=dict(value,integrity_verified=True,replayed=replayed,current_product_version=__version__,current_knowledge_review=knowledge_review,
+        cancellation_requested=value.get('cancellation_requested',False) or fs.safe(fs.folder(state,value['run_id'])/'cancel.json').exists())
+    return _fit_view(view,request['budget']['max_result_bytes'],strict=strict)
+
+def _finish(state,folder,plan,current,worker,*,replayed=False):
     request=plan['request'];data=worker['data']
     snapshots=_snapshots(state,request['operation'],request['arguments'],data,output=folder/'work-state')
     def truncated(value):
         if isinstance(value,dict):return any((v is True and (k=='truncated' or k.endswith('_truncated') or k=='preview_limited')) or (k=='next_offset' and v is not None) or truncated(v) for k,v in value.items())
         return isinstance(value,list) and any(truncated(v) for v in value)
-    stop_reason=current.get('stop_reason') or worker.get('stop_reason') or ('cancelled' if worker['status']=='cancelled' else 'timeout' if worker['status']=='partial' and request['operation']=='os.collect' and data['result']['collection_status']=='timeout' else None)
+    collection_status=data.get('result',{}).get('collection_status') if isinstance(data,dict) else None
+    stop_reason=worker.get('stop_reason') or ('cancelled' if worker['status']=='cancelled' else collection_status if collection_status not in (None,'completed') else None)
     value=dict(schema_version=1,run_id=folder.name,operation=request['operation'],status=worker['status'],data=data,
         executor_id=request['executor_id'],executor_identity_basis='caller_reported',context=plan['context'],versions=plan['versions'],
         snapshots=snapshots,evidence=[dict(kind=s['kind'],id=s['id'],report_digest=s['report_digest']) for s in snapshots],
@@ -107,12 +144,14 @@ def _finish(state,folder,plan,current,worker):
             'Worker limits exclude admission, replay and final control-layer verification/commit; those phases have no separate hard process budget yet.',
             'Remote SSH/WinRM process stop is unknown after an interrupted connection; the remote probe has its own duration bound.',
             'Source-check and knowledge reads retain their bounded output, not an independent full source snapshot.'])
-    if len(fs.encode(value))>request['budget']['max_result_bytes']:raise InputError('output_limit')
+    if replayed and current.get('stop_reason'):value['recovery_previous_reason']=current['stop_reason']
+    # Include every presentation field and the final LF before publishing any product.
+    presented=_present(state,plan,value,replayed=replayed,strict=True)
     _promote(state,folder,worker)
     if _snapshots(state,request['operation'],request['arguments'],data)!=snapshots:raise InputError('promoted snapshot changed before result commit')
     fs.write(folder/'output.json',value);fs.write(folder/'output-receipt.json',dict(sha256=fs.digest(value)))
     current.update(status=value['status'],finished_at=fs.stamp(),heartbeat_at=fs.stamp(),stop_verified=True,stop_reason=stop_reason)
-    fs.record(folder,current,'result_verified');return result(state,folder.name)
+    fs.record(folder,current,'result_verified');return presented
 
 def result(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
@@ -123,32 +162,30 @@ def result(state,run_id):
         report=_verify_target(state,snapshot['kind'],snapshot['id'])
         if fs.digest(report)!=snapshot['report_digest'] or fs.digest(fs.read(Path(state)/snapshot['kind']/snapshot['id']/'receipt.json',8192))!=snapshot['receipt_digest']:
             raise InputError('operation retained snapshot identity mismatch')
-    from .knowledge_review import review_legacy_report,review_use
-    data=value['data'] or {};request=plan['request']
-    if request['operation']=='artifact.show' and data.get('kind')=='knowledge_use':
-        knowledge_review=review_use(state,data['artifact_id'])
-    else:
-        basis=(data if 'knowledge_revision' in data and not request['operation'].startswith('knowledge.')
-            else dict(knowledge_revision=plan['versions'].get('knowledge')))
-        knowledge_review=review_legacy_report(basis)
-    return dict(value,integrity_verified=True,replayed=True,current_product_version=__version__,current_knowledge_review=knowledge_review)
+    return _present(state,plan,value,replayed=True)
 
 def status(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder);current=fs.read(folder/'status.json',64*1024)
-    if current['status'] in TERMINAL and (folder/'output.json').exists():return result(state,run_id)
+    has_output=(folder/'output.json').exists();has_receipt=(folder/'output-receipt.json').exists()
+    if current['status'] in TERMINAL and has_output and has_receipt:return result(state,run_id)
     owner=fs.inspect_process(current['owner']);child=fs.inspect_process(current['child']) if current.get('child') else dict(state='not_recorded')
-    return dict(current,operation=plan['request']['operation'],cancellation_requested=(folder/'cancel.json').exists(),
+    view=dict(current,operation=plan['request']['operation'],cancellation_requested=(folder/'cancel.json').exists(),
         observed_processes=dict(owner=owner,child=child),stop_verified=current.get('stop_verified',False),data=None,
         snapshots=[],evidence=[],truncated=False,context=plan['context'],limits=plan['request']['budget'],
         limitations=['Heartbeat age alone does not establish process completion. No request is restarted by status.'])
+    if has_output!=has_receipt:
+        view.update(status='partial',execution_status=current['status'],result_availability='incomplete_commit')
+    return _fit_view(view,plan['request']['budget']['max_result_bytes'])
 
 def cancel(state,run_id,*,executor_id):
     capabilities.validate(executor_id,capabilities.string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}'))
     folder=fs.folder(state,run_id);current=status(state,run_id)
-    if current['status'] in TERMINAL:return dict(current,cancel_too_late=True)
+    if current['status'] in TERMINAL:return _fit_view(dict(current,cancel_too_late=True),current['limits']['max_result_bytes'])
     path=fs.safe(folder/'cancel.json')
     if not path.exists():fs.write(path,dict(requested_at=fs.stamp(),executor_id=executor_id,reason='user_requested'))
-    return status(state,run_id)
+    updated=status(state,run_id)
+    if updated['status'] in TERMINAL:updated=dict(updated,cancel_too_late=True)
+    return _fit_view(updated,updated['limits']['max_result_bytes'])
 
 def run(state,request):
     original=request;state=fs.safe(state);request=capabilities.normalize_request(request)
@@ -159,7 +196,7 @@ def run(state,request):
             time.sleep(.01)
         old=fs.plan(folder)
         if _semantic(old['request'])!=_semantic(request):raise InputError('operation key conflict; a changed request requires a new key')
-        return dict(result(state,run_id),replayed=True)
+        return _fit_view(dict(result(state,run_id),replayed=True),request['budget']['max_result_bytes'])
     context=_context(state,request);_space(state);versions=_versions()
     fs.private(folder.parent)
     try:folder.mkdir()
@@ -225,7 +262,9 @@ def reconcile(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
     with fs.writer(folder):
         current=fs.read(folder/'status.json',64*1024)
-        if current['status'] in TERMINAL and (current.get('stop_verified') or (folder/'output.json').exists()):return result(state,run_id)
+        if current['status'] in TERMINAL and current.get('stop_verified'):
+            if (folder/'output.json').exists() and (folder/'output-receipt.json').exists():return result(state,run_id)
+            if not (folder/'worker-receipt.json').exists():return status(state,run_id)
         if plan['versions']!=_versions():raise InputError('operation versions/rules changed; use the compatible bundle or an explicitly reviewed migration')
         for identity in (current['owner'],current.get('child')):
             if identity is None:raise InputError('child state unknown; do not restart this key')
@@ -235,6 +274,6 @@ def reconcile(state,run_id):
             raise InputError('worker group is active/unknown; leader exit does not verify tree stop')
         if (folder/'worker-receipt.json').exists():
             current.update(stop_verified=True,stop_reason=current.get('stop_reason'))
-            return _finish(state,folder,plan,current,_worker(folder))
+            return _finish(state,folder,plan,current,_worker(folder),replayed=True)
         current.update(status='interrupted',stop_verified=True,stop_reason='no_sealed_result; retain evidence and use an explicitly reviewed new key',finished_at=fs.stamp())
         fs.record(folder,current,'reconciled_interruption');return status(state,run_id)

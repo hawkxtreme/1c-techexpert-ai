@@ -136,6 +136,44 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(failed['status'],'failed')
         self.assertEqual(len(list((self.state/'cases').iterdir())),1,'failed envelope published another case')
 
+    def test_presentation_fields_are_budgeted_before_product_promotion(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
+        first=self.run_request(request)
+        saved=self.state_api.read(self.state/'operations'/first['run_id']/'output.json')
+        saved_size=len(self.state_api.encode(saved));returned_size=len(self.state_api.encode(first))
+        self.assertGreater(returned_size,saved_size)
+        request['operation_key']='presentation-budget';request['budget']=dict(max_result_bytes=(saved_size+returned_size)//2)
+        failed=self.run_request(request)
+        self.assertEqual(failed['status'],'failed');self.assertEqual(failed['stop_reason'],'output_limit')
+        self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+
+    def test_cli_wire_budget_uses_utf8_lf_including_presentation_and_final_newline(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
+        first=self.run_request(request);limit=len(self.state_api.encode(first))+1024
+        request['operation_key']='wire-budget';request['budget']=dict(max_result_bytes=limit)
+        p=self.launch(request);out,err=p.communicate(timeout=15)
+        self.assertEqual(p.returncode,0,(out,err));self.assertEqual(json.loads(out)['status'],'succeeded')
+        self.assertLessEqual(len(out),limit);self.assertNotIn(b'\r\n',out)
+
+    def test_grown_replay_knowledge_overlay_is_bounded_without_rewriting_or_rerunning(self):
+        request=self.request('knowledge.card',card_id='SC01-ORDER-LOAD',limit=20);request['budget']=dict(max_result_bytes=16384)
+        first=self.run_request(request);self.assertEqual(first['status'],'succeeded')
+        path=self.state/'operations'/first['run_id']/'output.json';before=path.read_bytes()
+        warning=dict(status='review_required',technical_truth_judged=False,detail='x'*30000)
+        with patch('src.techexpert.knowledge_review.review_legacy_report',return_value=warning):
+            with patch('src.techexpert.operation_process.run',side_effect=AssertionError('large overlay caused a rerun')):
+                view=self.run_request(request)
+                cancelled=self.api.cancel(self.state,first['run_id'],executor_id='reader')
+        self.assertLessEqual(len(self.state_api.encode(view)),16384)
+        self.assertEqual(view['status'],'partial');self.assertEqual(view['execution_status'],'succeeded')
+        self.assertTrue(view['truncated']);self.assertTrue(view['data_omitted']);self.assertIsNone(view['data'])
+        self.assertTrue(cancelled['cancel_too_late']);self.assertLessEqual(len(self.state_api.encode(cancelled)),16384)
+        self.assertEqual(path.read_bytes(),before)
+
+    def test_first_return_is_not_mislabelled_as_a_replayed_computation(self):
+        first=self.run_request(self.request());self.assertFalse(first['replayed'])
+        self.assertTrue(self.run_request(self.request())['replayed'])
+
     def test_envelope_exposes_adapter_preview_truncation(self):
         result=self.run_request(self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json')))
         self.assertTrue(result['data']['native_observations']['preview_limited'])
@@ -225,6 +263,20 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertIsNotNone(result['data']);self.assertEqual(result['data']['result']['collection_status'],'cancelled')
         self.assertNotEqual(result['data']['result']['coverage_status'],'complete')
 
+    def test_cancel_racing_with_completion_retains_request_without_rewriting_the_finished_result(self):
+        request=self.request('knowledge.card',card_id='SC01-ORDER-LOAD',limit=20)
+        first=self.run_request(request);path=self.state/'operations'/first['run_id']/'output.json';before=path.read_bytes()
+        actual_status=self.api.status;calls=0
+        def stale_then_current(state,run_id):
+            nonlocal calls
+            calls+=1
+            if calls==1:return dict(first,status='running',stop_verified=False,data=None)
+            return actual_status(state,run_id)
+        with patch('src.techexpert.operations.status',side_effect=stale_then_current):
+            cancelled=self.api.cancel(self.state,first['run_id'],executor_id='late-reader')
+        self.assertEqual(cancelled['status'],'succeeded');self.assertTrue(cancelled['cancel_too_late'])
+        self.assertTrue(cancelled['cancellation_requested']);self.assertEqual(path.read_bytes(),before)
+
     def test_timeout_stops_owned_run_and_never_restarts_the_same_key(self):
         request=self.request('os.collect',duration_seconds=5,interval_seconds=1);request['budget']=dict(timeout_seconds=1)
         result=self.run_request(request)
@@ -244,6 +296,27 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(recovered['status'],'succeeded');self.assertTrue(recovered['integrity_verified'])
         self.assertEqual(len(list((self.state/'cases').iterdir())),1)
 
+    def test_failed_final_receipt_can_be_repaired_without_repeating_the_finished_worker(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
+        real_write=self.state_api.write
+        def disk_failure(path,value):
+            if Path(path).name=='output-receipt.json':raise OSError('simulated final receipt disk failure')
+            return real_write(path,value)
+        with patch('src.techexpert.operation_state.write',side_effect=disk_failure):failed=self.run_request(request)
+        self.assertEqual(failed['status'],'partial');self.assertEqual(failed['execution_status'],'failed')
+        self.assertEqual(failed['result_availability'],'incomplete_commit')
+        self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+        # The owning CLI has finished; its persisted lifetime must be verified
+        # before a new writer repairs only the failed final commit.
+        with patch('src.techexpert.operation_state.inspect_process',return_value=dict(state='not_running')):
+            with patch('src.techexpert.operation_process.run',side_effect=AssertionError('receipt repair repeated the worker')):
+                repaired=self.api.reconcile(self.state,failed['run_id'])
+        self.assertEqual(repaired['status'],'succeeded');self.assertTrue(repaired['integrity_verified'])
+        self.assertIsNone(repaired['stop_reason'])
+        journal=(self.state/'operations'/failed['run_id']/'journal.jsonl').read_text(encoding='utf-8')
+        self.assertIn('simulated final receipt disk failure',journal)
+        self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+
     def test_unknown_process_identity_prevents_reconciliation(self):
         request=self.request('os.collect',duration_seconds=3,interval_seconds=1)
         p=self.launch(request);live=self.await_live(request,p)
@@ -256,6 +329,12 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(self.state_api.inspect_process(identity)['state'],'running')
         changed=dict(identity,lifetime='not-the-same-process')
         self.assertNotEqual(self.state_api.inspect_process(changed)['state'],'running')
+        foreign=dict(identity,platform='posix' if os.name=='nt' else 'nt')
+        self.assertEqual(self.state_api.inspect_process(foreign)['state'],'unknown')
+        if os.name!='nt':
+            foreign=dict(identity,pid_namespace='another-namespace')
+            self.assertEqual(self.state_api.inspect_process(foreign)['state'],'unknown')
+            self.assertEqual(self.state_api.inspect_group(foreign)['state'],'unknown')
 
     def test_live_budget_scan_records_disappearing_atomic_temps_without_hiding_other_errors(self):
         transient='status.json.'+'a'*32+'.tmp'

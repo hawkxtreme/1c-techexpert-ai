@@ -54,7 +54,10 @@ def plan(folder):
     return value
 
 def record(folder,value,event):
-    path=safe(folder/'journal.jsonl');row=encode(dict(at=stamp(),event=event,status=value['status'],pid=os.getpid())).decode().replace('\n','')+'\n'
+    path=safe(folder/'journal.jsonl')
+    row=encode(dict(at=stamp(),event=event,status=value['status'],pid=os.getpid(),run_id=folder.name,
+        stop_reason=value.get('stop_reason'),owned_disk=value.get('owned_disk'),
+        process_elapsed_seconds=value.get('process',{}).get('elapsed_seconds'))).decode().replace('\n','')+'\n'
     if path.exists() and path.stat().st_size+len(row.encode())>1024**2:raise InputError('operation journal exceeds limit')
     with path.open('a',encoding='utf-8',newline='\n') as stream:stream.write(row);stream.flush();os.fsync(stream.fileno())
     write(folder/'status.json',value)
@@ -100,6 +103,8 @@ def process_identity(pid):
             result['state']='running' if observed==258 else 'not_running' if observed==0 else 'unknown'
             return result
         finally:kernel.CloseHandle(handle)
+    try:result['pid_namespace']=str(Path('/proc/self/ns/pid').stat().st_ino)
+    except OSError:return result
     try:
         text=Path('/proc',str(pid),'stat').read_text(encoding='ascii');fields=text[text.rfind(')')+2:].split()
         boot=Path('/proc/sys/kernel/random/boot_id').read_text(encoding='ascii').strip()
@@ -108,8 +113,16 @@ def process_identity(pid):
     except (OSError,ValueError,IndexError,UnicodeError):pass
     return result
 
+def same_process_scope(identity):
+    if (not isinstance(identity,dict) or identity.get('hostname')!=socket.gethostname()
+        or identity.get('platform')!=os.name):return False
+    if os.name=='nt':return True
+    try:return identity.get('pid_namespace')==str(Path('/proc/self/ns/pid').stat().st_ino)
+    except OSError:return False
+
+
 def inspect_process(identity):
-    if not isinstance(identity,dict) or identity.get('hostname')!=socket.gethostname() or not identity.get('lifetime'):
+    if not same_process_scope(identity) or not identity.get('lifetime'):
         return dict(state='unknown')
     current=process_identity(identity.get('pid'))
     if current['state']=='running' and current['lifetime']!=identity['lifetime']:current['state']='different_lifetime'
@@ -117,7 +130,7 @@ def inspect_process(identity):
 
 def inspect_group(identity):
     """Observe a Linux session created for our worker; leader death is insufficient."""
-    if os.name=='nt' or not isinstance(identity,dict) or identity.get('hostname')!=socket.gethostname() or not identity.get('lifetime'):
+    if os.name=='nt' or not same_process_scope(identity) or not identity.get('lifetime'):
         return dict(state='unknown')
     pid=identity.get('pid')
     if type(pid) is not int or pid<1:return dict(state='unknown')
