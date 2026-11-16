@@ -22,10 +22,14 @@ class InitServer(ThreadingHTTPServer):
     block_on_close = False
     allow_reuse_address = False
 
-    def __init__(self, state_dir, ttl):
+    def __init__(self, state_dir, ttl, investigation_id=None):
         if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
             raise ValueError('TTL must be a positive finite number of seconds')
         self.state_dir = Path(state_dir)
+        if investigation_id is not None:
+            from .investigations import load
+            load(self.state_dir,investigation_id)
+        self.investigation_id=investigation_id
         self.deadline = time.monotonic() + ttl
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
@@ -79,6 +83,15 @@ class InitHandler(BaseHTTPRequestHandler):
 
     def _error(self, status, message):
         self._json(status, {'error': message})
+
+    @staticmethod
+    def _context(doc):
+        return dict(investigation_id=doc['investigation_id'],revision=doc['revision'],task=doc['task'],
+            template_id=doc['template']['id'],variant=doc['variant']['id'] if doc['variant'] else None,
+            time_mode=doc['time_mode'],scale=doc['scale'],
+            workflow_stage=doc.get('workflow_stage','initial_analysis'),continuation=doc.get('continuation'),
+            observation_window_seconds=(doc['observation_plan']['duration_seconds'] if doc['observation_plan'] else doc['episode'].get('requested_window_seconds')),
+            profile_revision=doc['profile_snapshot']['revision'] if doc['profile_snapshot'] else None)
 
     def _guard(self, *, write=False, api=False):
         hosts = self.headers.get_all('Host', [])
@@ -149,6 +162,15 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._json(200, result)
             elif self.path == '/api/doctor':
                 self._json(200, profiles.doctor(self.server.state_dir))
+            elif self.path == '/api/templates':
+                from .incident_templates import catalogue
+                self._json(200,catalogue())
+            elif self.path == '/api/source-help':
+                from .source_help import catalogue
+                self._json(200,catalogue())
+            elif self.path == '/api/context':
+                from .investigations import load
+                self._json(200,self._context(load(self.server.state_dir,self.server.investigation_id)) if self.server.investigation_id else None)
             else:
                 self._error(404, 'Неизвестное действие помощника.')
         except ValueError as error:
@@ -159,14 +181,20 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
         if data is None or not self._guard(write=True, api=True):
             return
         try:
-            if self.path=='/api/ras':
+            if self.path=='/api/context':
+                from .investigations import revise
+                if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
+                if set(data)-{'expected_revision','template_id','variant','time_mode','scale','profile_revision'}:raise ValueError('Недопустимое поле контекста.')
+                patch={k:v for k,v in data.items() if k!='expected_revision'}
+                result=self._context(revise(self.server.state_dir,self.server.investigation_id,patch,expected_revision=data.get('expected_revision')))
+            elif self.path=='/api/ras':
                 if set(data)-{'endpoint','executable','docker_container','cluster'}:raise ValueError('Unsupported RAS parameter')
                 result=profiles.discover_ras(data.get('endpoint'),executable=data.get('executable','rac'),
                                             docker_container=data.get('docker_container') or None,cluster=data.get('cluster') or None)
@@ -187,13 +215,13 @@ class InitHandler(BaseHTTPRequestHandler):
             self._error(400, 'Не удалось прочитать файл или сохранить профиль. Проверьте путь и права.')
 
 
-def create_server(state_dir, ttl=900):
+def create_server(state_dir, ttl=900, investigation_id=None):
     """Bind only to loopback; no browser, sources or remote services are opened."""
-    return InitServer(state_dir, ttl)
+    return InitServer(state_dir, ttl,investigation_id=investigation_id)
 
 
-def run_gui(state_dir, open_browser=False, ttl=900):
-    server = create_server(state_dir, ttl=ttl)
+def run_gui(state_dir, open_browser=False, ttl=900, investigation_id=None):
+    server = create_server(state_dir, ttl=ttl,investigation_id=investigation_id)
     print(json.dumps({'url': server.url}), flush=True)
     try:
         if open_browser:

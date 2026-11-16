@@ -46,6 +46,7 @@ def main(argv=None):
     init = commands.add_parser('init')
     init.add_argument('--open-browser', action='store_true')
     init.add_argument('--ttl', type=int, default=900)
+    init.add_argument('--investigation')
     knowledge = commands.add_parser('knowledge')
     knowledge.add_argument('query')
     apdex = commands.add_parser('apdex')
@@ -104,6 +105,15 @@ def main(argv=None):
     jr_events=commands.add_parser('jr-events');jr_events.add_argument('artifact_id')
     jr_events.add_argument('--event');jr_events.add_argument('--offset',type=int,default=0);jr_events.add_argument('--limit',type=int,default=20)
     jr_record=commands.add_parser('jr-record');jr_record.add_argument('artifact_id');jr_record.add_argument('record_id')
+    commands.add_parser('templates')
+    help_source=commands.add_parser('source-help');help_source.add_argument('type',choices=('tj','jr','source','sql','rac','os'))
+    template=commands.add_parser('template');template.add_argument('template_id');template.add_argument('--variant')
+    template.add_argument('--database-mode',choices=('file','server','unknown'),default='unknown')
+    template.add_argument('--time-mode',choices=('past','current','reproduce'),default='past')
+    investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
+    investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
+    investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
+    investigation_update.add_argument('patch',type=Path);investigation_update.add_argument('--expected-revision',type=int,required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':
@@ -131,7 +141,7 @@ def main(argv=None):
                                         properties=filters, offset=args.offset, limit=args.limit, linked_run=args.linked_run)
         elif args.command == 'init':
             from .gui import run_gui
-            run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl)
+            run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,investigation_id=args.investigation)
             return 0
         elif args.command == 'apdex':
             from .artifacts import import_apdex
@@ -176,6 +186,26 @@ def main(argv=None):
         elif args.command=='jr-record':
             from .native_jr import read_record
             result=read_record(args.state_dir,args.artifact_id,args.record_id)
+        elif args.command=='templates':
+            from .incident_templates import catalogue
+            result=catalogue()
+        elif args.command=='source-help':
+            from .source_help import source_help
+            result=source_help(args.type)
+        elif args.command=='template':
+            from .incident_templates import plan
+            result=plan(args.template_id,variant=args.variant,database_mode=args.database_mode,time_mode=args.time_mode)
+        elif args.command in ('investigation-create','investigation-update','investigation'):
+            from .investigations import create,revise,load,revision_folder
+            from .inputs import read_snapshot,json_value
+            if args.command=='investigation-create':
+                result=create(args.state_dir,json_value(read_snapshot(args.request,1024*1024).decode('utf-8-sig'),reject_duplicates=True))
+            elif args.command=='investigation-update':
+                result=revise(args.state_dir,args.investigation_id,
+                    json_value(read_snapshot(args.patch,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
+            else:result=load(args.state_dir,args.investigation_id,revision=args.revision)
+            folder=revision_folder(args.state_dir,result['investigation_id'],result['revision']).absolute()
+            result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
         elif args.command=='source-search':
             from .source_code import search_source
             result=search_source(args.state_dir,args.artifact_id,args.query,limit=args.limit)

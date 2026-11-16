@@ -69,6 +69,21 @@
       <button type="button" data-step="review">3 · Проверить и сохранить</button>
     </nav>
     <p id="notice" role="status" aria-live="polite" hidden></p>
+    <details id="investigation-context" class="box" hidden open>
+      <summary>Контекст из текущего чата</summary>
+      <div class="stack">
+        <p id="investigation-task"></p>
+        <div class="grid">
+          <label class="field"><span>Шаблон проверки</span><select id="incident-template"></select></label>
+          <label class="field" id="incident-variant-field" hidden><span>Уточнение</span><select id="incident-variant"></select></label>
+          <label class="field"><span>Когда проявляется</span><select id="incident-time"><option value="past">Уже произошло</option><option value="current">Происходит сейчас</option><option value="reproduce">Будем воспроизводить</option></select></label>
+          <label class="field"><span>У кого проявляется</span><select id="incident-scale"><option value="one">Один пользователь</option><option value="several">Несколько пользователей</option><option value="all">Все</option><option value="background">Фоновое задание</option><option value="unknown">Пока неизвестно</option></select></label>
+        </div>
+        <p class="note" id="investigation-revision"></p>
+        <p class="hint" id="investigation-stage"></p>
+        <p class="note">Описание уже получено от агента. При сохранении выбранный профиль связывается с этим расследованием; прежний отчёт сохраняется в истории. Шаблон помогает выбрать проверки и не назначает причину.</p>
+      </div>
+    </details>
     <section data-view="bases" class="stack">
       <div><h1>Базы окружения</h1><p class="sub">Добавьте нужные базы вручную или прочитайте свой список стартера 1С.</p></div>
       <label class="field"><span>Название окружения</span><input type="text" id="environment-name" maxlength="120" placeholder="Например, рабочее окружение" autocomplete="off"></label>
@@ -96,7 +111,7 @@
     <section data-view="review" class="stack" hidden>
       <div><h1 id="review-title">Сохранить настройки</h1><p class="sub" id="review-sub">Проверьте состав профиля. Исходные данные останутся по указанным адресам.</p></div>
       <dl id="saved-list"></dl>
-      <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Проверяются адреса локальных каталогов и наличие инструментов. Сетевые подключения, чтение журналов и сбор не запускаются.</p><div id="preflight-results" role="status" aria-live="polite"></div></div>
+      <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Проверяются поля и связи настроек. Доступность источников агент проверяет отдельным действием. Чтение журналов и сбор не запускаются.</p><div id="preflight-results" role="status" aria-live="polite"></div></div>
       <p class="hint" id="save-status">Сохранение не подтверждает доступность источников и не запускает расследование.</p>
       <footer><button type="button" data-back="sources">Вернуться к источникам</button><button type="button" class="primary" id="save-profile">Сохранить и вернуться к агенту</button><button type="button" class="primary" id="close-helper" hidden>Закрыть помощник</button></footer>
     </section>
@@ -113,6 +128,9 @@
       let selected = new Set();
       let step = 'bases';
       let saved = null;
+      let investigation = null;
+      let templateBook = null;
+      let sourceHelp = null;
       let busy = false;
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
@@ -127,6 +145,24 @@
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
       }
       function markChanged() { saved = null; message(''); }
+      function renderVariant(selectedValue) {
+        const template = templateBook.templates.find(item=>item.id===q('#incident-template').value);
+        const select=q('#incident-variant');select.replaceChildren(new Option('Общий вариант',''));
+        (template?.variants || []).forEach(item=>select.append(new Option(item.title,item.id)));
+        select.value=selectedValue || '';q('#incident-variant-field').hidden=!(template?.variants.length);
+      }
+      function renderContext() {
+        q('#investigation-context').hidden=!investigation;
+        if(!investigation)return;
+        q('#investigation-task').textContent=investigation.task;
+        const select=q('#incident-template');select.replaceChildren();
+        templateBook.templates.forEach(item=>select.append(new Option(item.title,item.id)));
+        select.value=investigation.template_id;renderVariant(investigation.variant);
+        q('#incident-time').value=investigation.time_mode;q('#incident-scale').value=investigation.scale;
+        q('#investigation-revision').textContent='Расследование · ревизия '+investigation.revision+(investigation.profile_revision?' · профиль '+investigation.profile_revision:' · профиль ещё не связан');
+        const stages={initial_analysis:'Первичный анализ',prepare_observation:'Подготовка фиксации повторения',awaiting_occurrence:'Подготовка завершена · ожидается сообщение о повторении',analyze_episode:'Анализ сообщённого эпизода',verify_fix:'Проверка исправления',closed:'Расследование завершено'};
+        q('#investigation-stage').textContent=(stages[investigation.workflow_stage] || 'Текущий этап')+(investigation.observation_window_seconds?' · окно наблюдения '+(investigation.observation_window_seconds/3600)+' ч':'')+'. '+(investigation.continuation?.message || 'Продолжайте работу с агентом в текущем чате.');
+      }
       async function api(route, data) {
         if (!token) throw new Error('Откройте актуальную ссылку init из текущего чата. В этой вкладке нет ключа доступа.');
         const options = {method:data === undefined ? 'GET' : 'POST', cache:'no-store', credentials:'omit', headers:{Authorization:'Bearer ' + token}};
@@ -197,6 +233,8 @@
           const card = element('details',undefined,'box'); card.dataset.sourceId = source.id; card.dataset.sourceType = source.type; card.open = source.id === openId || previousOpen.has(source.id);
           const summary = element('summary',typeNames[source.type]); card.append(summary);
           const fields = element('div',undefined,'stack');
+          const help=sourceHelp?.sources[source.type];
+          if(help)fields.append(element('p',help.purpose,'note'));
           const bindings = element('fieldset'); bindings.append(element('legend','Относится к базам'));
           const choices = element('div',undefined,'bindings');
           eligibleBases(source.type).forEach(base => {
@@ -207,6 +245,7 @@
           bindings.append(choices); fields.append(bindings);
           const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр · БД указываются ниже' : source.type === 'rac' ? 'Адрес RAS · узел:порт' : source.type === 'os' ? 'Файл готовых метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
           const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
+          if(help){pathField.append(element('small','Ожидается: '+help.expected_format,'note'),element('small','Пример: '+help.example,'note'));}
           const hostField = field(source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
           fields.append(pathField,hostField);
           if(source.type==='os') {
@@ -228,6 +267,18 @@
             fields.append(field('Версия платформы источника · если известна',settings.platform_version,value=>{settings.platform_version=value;},'8.3.27.1989'),field('Смещение времени журнала от UTC · если подтверждено',settings.utc_offset,value=>{settings.utc_offset=value;},'Например, +03:00'));
           }
           fields.append(element('p',hintFor(source),'note'),element('p','Настроен адрес · подключение, формат и полнота данных не подтверждены.','note'));
+          if(help){
+            const preparation=element('details');preparation.append(element('summary','Для чего нужен источник и как его подготовить'));
+            const instructions=element('div',undefined,'stack');
+            instructions.append(element('p','Доступы: '+help.rights,'note'),element('p','Что делает агент: '+help.agent_actions,'note'));
+            for(const [title,key] of [['Windows','windows_steps'],['Linux','linux_steps']]){
+              const section=element('details');section.append(element('summary',title));const list=element('ol');
+              help[key].forEach(text=>list.append(element('li',text)));section.append(list);instructions.append(section);
+            }
+            instructions.append(element('p',help.long_observation,'note'),element('p','Ограничения входа: '+help.excluded_inputs,'note'));
+            (help.links || []).forEach(link=>{const a=element('a',link.title);a.href=link.url;a.target='_blank';a.rel='noopener noreferrer';instructions.append(a);});
+            preparation.append(instructions);fields.append(preparation);
+          }
           const remove = element('button','Убрать источник','link'); remove.type = 'button';
           remove.addEventListener('click', () => { markChanged(); state.sources = state.sources.filter(item => item.id !== source.id); renderSources(); }); fields.append(remove); card.append(fields); box.append(card);
         });
@@ -249,6 +300,7 @@
         data.sources.filter(source=>source.type==='os').forEach(source=>add('План сборщика',source.settings.duration_seconds+' с · шаг '+source.settings.interval_seconds+' с · '+({local:'На этом компьютере',ssh:'SSH',winrm:'WinRM'}[source.settings.transport])+' · один запуск, ещё не начат'));
         if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
         if (saved) add('Ревизия профиля',String(saved.revision));
+        if (investigation) add('Контекст расследования',[q('#incident-template').selectedOptions[0]?.textContent,q('#incident-variant').value?q('#incident-variant').selectedOptions[0]?.textContent:'',q('#incident-time').selectedOptions[0]?.textContent,q('#incident-scale').selectedOptions[0]?.textContent].filter(Boolean).join(' · '));
         q('#review-title').textContent = saved ? 'Настройки сохранены' : 'Сохранить настройки';
         q('#review-sub').textContent = saved ? 'Вернитесь в текущий чат. Агент может прочитать сохранённый профиль и продолжить.' : 'Проверьте состав профиля. Исходные данные останутся по указанным адресам.';
         q('#save-status').textContent = saved ? 'Сохранена только конфигурация. Подключения, анализ и сбор не запускались; чтение профиля агентом ещё не подтверждено.' : 'Сохранение не подтверждает доступность источников и не запускает расследование.';
@@ -280,7 +332,12 @@
       const rasRequest=()=>({endpoint:q('#ras-endpoint').value.trim(),executable:q('#rac-executable').value.trim() || 'rac',docker_container:q('#rac-container').value.trim()});
       q('#read-clusters').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',rasRequest());const select=q('#ras-cluster');select.replaceChildren();response.clusters.forEach(row=>{const option=element('option',(row.name || row.host || 'Кластер')+' · '+row.cluster);option.value=row.cluster;select.append(option);});q('#ras-cluster-choice').hidden=!response.clusters.length;message('Получено кластеров: '+response.clusters.length+'. Настройки не изменены.');}));
       q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();response.bases.forEach(base=>{if(!state.bases.some(item=>item.id===base.id))state.bases.push(base);selected.add(base.id);});renderBases();message('Из RAS прочитано серверных баз: '+response.bases.length+'. SQL и журналы подключаются отдельно.');}));
-      q('#check-profile').addEventListener('click',()=>perform(async()=>{validateSources();const result=await api('/api/check',payload());const box=q('#preflight-results');box.replaceChildren();const labels={local_directory_exists:'Каталог существует; формат не проверен',unavailable:'Каталог недоступен с этого компьютера',local_collector_available:'Локальный сборщик доступен; не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_found_not_connected:'Клиент СУБД найден; подключения не было',client_not_found:'Нужен клиент СУБД или настроенный контейнер',configured_not_connected:'Адрес сохранён; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));}));
+      q('#check-profile').addEventListener('click',()=>perform(async()=>{
+        validateSources();const result=await api('/api/check',payload());const box=q('#preflight-results');box.replaceChildren();
+        const labels={requires_explicit_path_check:'Путь указан; доступ и формат проверяются отдельным действием',local_collector_available:'План локального сборщика доступен; сбор не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_configured_not_checked:'Параметры СУБД указаны; инструмент и доступ проверяются отдельно',configured_not_connected:'Адрес указан; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};
+        result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));
+        if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));
+      }));
       q('#add-source').addEventListener('click', () => {
         markChanged(); const type = q('#new-source-type').value; const eligible = eligibleBases(type); if (!eligible.length) { message('Для этого источника нет подходящих выбранных баз.',true); return; }
         const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : [],settings:defaults(type)}; state.sources.push(source); renderSources(source.id);
@@ -289,10 +346,21 @@
       root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.back); } catch(error) { message(error.message,true); } }));
       q('#to-sources').addEventListener('click', () => { try { navigate('sources'); } catch(error) { message(error.message,true); } });
       q('#to-review').addEventListener('click', () => { try { navigate('review'); } catch(error) { message(error.message,true); } });
-      q('#save-profile').addEventListener('click', () => perform(async () => { validateSources(); saved = await api('/api/profile',payload()); renderReview(); message('Профиль сохранён. Можно продолжить в текущем чате.'); }));
+      function contextChanged(){markChanged();if(step==='review')renderReview();}
+      q('#incident-template').addEventListener('change',()=>{renderVariant(null);contextChanged();});
+      ['#incident-variant','#incident-time','#incident-scale'].forEach(selector=>q(selector).addEventListener('change',contextChanged));
+      q('#save-profile').addEventListener('click', () => perform(async () => {
+        validateSources(); saved = await api('/api/profile',payload());
+        if(investigation){
+          try {investigation=await api('/api/context',{expected_revision:investigation.revision,template_id:q('#incident-template').value,variant:q('#incident-variant').value || null,time_mode:q('#incident-time').value,scale:q('#incident-scale').value,profile_revision:saved.revision});renderContext();}
+          catch(error){const revision=saved.revision;saved=null;renderReview();throw new Error('Профиль '+revision+' сохранён. Контекст расследования не обновлён: '+error.message+' Перезагрузите помощник, чтобы прочитать актуальную ревизию.');}
+        }
+        renderReview();message(investigation?'Профиль и контекст сохранены. Можно продолжить в текущем чате.':'Профиль сохранён. Можно продолжить в текущем чате.');
+      }));
       q('#close-helper').addEventListener('click', () => { window.close(); message('Если вкладка не закрылась, закройте её вручную и вернитесь в текущий чат.'); });
       renderBases(); renderStep();
       perform(async () => {
+        [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);renderContext();
         const profile = await api('/api/profile');
         if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids],settings:{...defaults(source.type),...source.settings}}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
       });

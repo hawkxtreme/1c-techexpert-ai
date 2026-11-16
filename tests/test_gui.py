@@ -10,6 +10,33 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_source_help_requires_auth_and_includes_offline_preparation(self):
+        self.assertEqual(self.request('GET','/api/source-help',token=False)[0],401)
+        status,_,body=self.request('GET','/api/source-help');self.assertEqual(status,200)
+        value=json.loads(body)
+        self.assertIn('1Cv8.lgf',value['sources']['jr']['expected_format'])
+        self.assertTrue(value['sources']['tj']['windows_steps'])
+        self.assertFalse(self.state_dir.exists())
+
+    def test_investigation_context_requires_auth_and_only_edits_selected_investigation(self):
+        from src.techexpert.investigations import create,load
+        investigation=create(self.state_dir,dict(task='Загрузка медленная',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=investigation['investigation_id']
+        self.assertEqual(self.request('GET','/api/context',token=False)[0],401)
+        status,_,body=self.request('GET','/api/context');self.assertEqual(status,200)
+        context=json.loads(body);self.assertEqual(context['task'],investigation['task'])
+        self.assertEqual(self.request('GET','/api/templates',token=False)[0],401)
+        status,_,body=self.request('GET','/api/templates');self.assertEqual(status,200)
+        self.assertEqual(len(json.loads(body)['templates']),10)
+        body=dict(expected_revision=1,template_id='TPL-01',variant='document-posting',time_mode='current',scale='one')
+        self.assertEqual(self.request('POST','/api/context',body,origin=False)[0],403)
+        self.assertEqual(self.request('POST','/api/context',dict(body,investigation_id='other'))[0],400)
+        status,_,result=self.request('POST','/api/context',body);self.assertEqual(status,200,result)
+        self.assertEqual(json.loads(result)['revision'],2)
+        self.assertEqual(load(self.state_dir,investigation['investigation_id'])['task'],investigation['task'])
+        self.assertEqual(self.request('POST','/api/context',body)[0],400)
+        self.assertFalse((self.state_dir/'artifacts').exists())
+
     def test_new_checks_require_auth_and_local_preflight_has_no_side_effects(self):
         status,_,_=self.request('POST','/api/check',self.profile,token=False)
         self.assertEqual(status,401)

@@ -32,6 +32,10 @@ class PackageTests(unittest.TestCase):
             report = json.loads(run.stdout)
             self.assertEqual(report['durations_seconds']['execution'], 2460)
             self.assertTrue((folder / 'unpacked/src/techexpert/assets/init.html').is_file())
+            for command,key in ((['templates'],'templates'),(['source-help','jr'],'expected_format')):
+                checked=subprocess.run([sys.executable,str(folder/'unpacked/techexpert.py'),*command],cwd=folder,capture_output=True,encoding='utf-8',timeout=20)
+                self.assertEqual(checked.returncode,0,checked.stdout+checked.stderr)
+                self.assertIn(key,json.loads(checked.stdout))
             help_result=subprocess.run([sys.executable,str(folder/'unpacked/scripts/sc01_blind.py'),'--help'],
                 cwd=folder,capture_output=True,encoding='utf-8',timeout=20)
             self.assertEqual(help_result.returncode,0,help_result.stdout+help_result.stderr)

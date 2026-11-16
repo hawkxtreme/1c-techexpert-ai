@@ -77,6 +77,7 @@ def _scan(data,source):
         except (_Incomplete,_Syntax,UnicodeError) as exc:
             issues.append(dict(code='incomplete_record' if isinstance(exc,_Incomplete) else 'invalid_record_encoding_or_syntax',
                                source=source,byte_start=start,byte_end=len(data)));break
+        if parser.pos-start>MAX_RECORD_BYTES:raise InputError('JR record exceeds byte limit')
         records.append((start,parser.pos,values));need_separator=True
         if len(records)>MAX_EVENTS:raise InputError('JR record count exceeds limit')
     return match[1].decode('ascii').lower(),records,issues

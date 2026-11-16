@@ -1,5 +1,9 @@
 # Локальный CLI
 
+## Ревизии расследования
+
+Для `templates`, `template`, `investigation-create`, `investigation-update`, `investigation` и продолжения после сообщения о повторении используйте [контракт состояния](investigation-state.md). Это дополнение к immutable `case_id`, `artifact_id` и `comparison_id`; оно не заменяет их сырые доказательства. `init --investigation ID` получает контекст из того же сохранённого расследования.
+
 Команды выполняются из проверенного корня пакета. `python` ниже означает рабочий интерпретатор Python в среде пользователя; при необходимости используй его полный путь. Корневой `techexpert.py` и его локальные модули должны поставляться вместе со skills.
 
 ```text
@@ -14,6 +18,13 @@ python techexpert.py evidence CASE_ID EVIDENCE_ID
 python techexpert.py compare --before BEFORE_CASE_ID --after AFTER_CASE_ID
 python techexpert.py comparison COMPARISON_ID
 python techexpert.py knowledge "медленное фоновое задание"
+python techexpert.py source-help tj
+python techexpert.py templates
+python techexpert.py template TPL-02 --database-mode file --time-mode past
+python techexpert.py investigation-create "путь/request.json"
+python techexpert.py investigation INVESTIGATION_ID
+python techexpert.py investigation-update INVESTIGATION_ID "путь/patch.json" --expected-revision 1
+python techexpert.py init --investigation INVESTIGATION_ID
 python techexpert.py rac clusters --endpoint server:1545
 python techexpert.py rac infobases --endpoint server:1545 --cluster CLUSTER_UUID
 python techexpert.py postgresql capabilities --database DATABASE --host SERVER --user OBSERVER

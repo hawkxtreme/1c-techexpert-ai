@@ -1,0 +1,91 @@
+# Состояние расследования
+
+Агент готовит request/patch в частном временном каталоге из уже известного диалога. Пользователь не обязан писать JSON. Все команды выполняются с одним `--state-dir`, если его переопределили; аргумент располагается перед подкомандой. Идентификаторы случаев/артефактов/сравнений получают из реальных результатов CLI.
+
+`templates` возвращает один каталог TPL-01–TPL-10. `template TPL-01 --variant document-posting --database-mode file --time-mode past` выдаёт вопросы, источники, проверки и ограничения. SQL/RAC исключаются для file/unknown. Наличие шаблона не означает реализации всех сценариев и Testpilot.
+
+## Создание и контекст
+
+`investigation-create request.json` принимает:
+
+```json
+{
+  "task": "Фоновая загрузка заказов стала медленной",
+  "template_id": "TPL-02",
+  "time_mode": "past",
+  "scale": "background",
+  "episode": {"database_mode": "file", "user_reported_baseline": "Обычно пять минут; сообщение пользователя"},
+  "harness": {"name": "current harness", "version": null, "model": null}
+}
+```
+
+Время: `past/current/reproduce`. Масштаб: `one/several/all/background/unknown`. Для TPL-01 есть необязательный `variant: document-posting`. Точные модель и версия остаются null, если harness их не сообщает. `episode` допускает description/start/end/utc_offset/database_mode/operation/user_reported_baseline/client_context; recurrence_seconds и requested_window_seconds задаются отдельно как положительные числа секунд либо null.
+
+Вернувшийся `investigation_id` сохраняется в этом чате. `init --investigation ID` показывает уже полученное описание и сохраняет выбранный профиль/контекст новой ревизией. `investigation ID` загружает актуальную ревизию; `--revision N` — прежнюю. Ответ содержит пути `local_reports.json` и `local_reports.md`. Эти поля ответа не нужно помещать в patch.
+
+## Дополнение данных
+
+`investigation-update ID patch.json --expected-revision N` изменяет только переданные поля. Массивы заменяются целиком; сохраняйте нужные прежние элементы. Устаревший writer отклоняется: перечитайте актуальную ревизию и объедините изменения, не перезаписывая работу другого исполнителя. Исходная task не меняется; уточнение помещается в episode.
+
+Пример связей — подставьте существующий CASE_ID и настоящее свидетельство:
+
+```json
+{
+  "attachments": [{"id": "A-1", "kind": "case", "target_id": "CASE_ID"}],
+  "evidence": [{"id": "E-1", "attachment": "A-1", "record": "s1:1"}],
+  "facts": [{"id": "F-1", "text": "Длительность выполнения по наблюдаемым границам", "evidence": ["E-1"], "measurement": {"attachment": "A-1", "pointer": "/durations_seconds/execution"}}],
+  "hypotheses": [{"id": "H-1", "text": "Проверяемое объяснение", "status": "proposed", "evidence": ["E-1"]}],
+  "open_questions": ["Есть ли сравнимый нормальный запуск?"]
+}
+```
+
+Attachment kind: case/artifact/comparison. Для case `record` — существующий evidence_id; для artifact — sN, для native-jr также sN:rN; для comparison — `report`. Создание/чтение проверяет сохранённые отчёты и снимки. F-измерение получает scalar `value` по JSON pointer из отчёта инструмента, не из ответа модели. Null остаётся неизвестным. Текст факта имеет basis утверждения harness со ссылками; семантика текста инструментом не доказана.
+
+Гипотезы: proposed/testing/supported/refuted/insufficient_data; supported/refuted требуют доказательств. Contradictions: id C-…, text, evidence, hypotheses, status unresolved/resolved и resolution при разрешении. Обе позиции сохраняются; unresolved противоречие выбранной гипотезе блокирует confirmed.
+
+## Объяснение и результат
+
+Поле assessment содержит summary, cause_state, evidence, limitations, recommendations, references. Для hypothesis/confirmed нужны hypothesis_id и mechanism. Для confirmed требуются supported-гипотеза, verification и непустой массив alternatives. Это проверка структуры, а не независимое суждение о причине. Указывайте область применимости и не называйте синтетические или лабораторные наблюдения производственным случаем.
+
+Рекомендация: id R-…, kind diagnostic/lab_change/production_change, basis (E-/H-ID), goal, prerequisites, expected_effect, verification, limitations. Для изменения также risk/rollback. Reference: credential-free HTTPS url, purpose, applicability; ссылка не становится подтверждением механизма только по факту включения.
+
+execution_status: completed/partial/error/cancelled, отдельно от cause_state: confirmed/hypothesis/insufficient_data. Изменение эпизода, доказательств, гипотез, шаблона, времени/масштаба или профиля делает прежнее assessment неактуальным без явно переданной новой интерпретации. Старые отчёты остаются. Смена текущего harness сама не переписывает автора предыдущего assessment.
+
+improvement хранит независимые признаки:
+
+- applied: proposed/reported/evidenced;
+- comparability: comparable/not_comparable/unknown;
+- effect: better/no_confirmed_change/worse/unknown;
+- goal: reached/not_reached/unknown;
+- recurrence: observed/not_observed_in_window/unknown;
+- window: описание точного окна либо null, evidence: E-ID.
+
+Отсутствие повторения требует окна и свидетельств. Ускорение не доказывает достижения цели. Изменение основания снимает старое improvement с текущей ревизии, сохраняя его в истории.
+
+## Этапы и возвращение после повторения
+
+workflow_stage: initial_analysis/prepare_observation/awaiting_occurrence/analyze_episode/verify_fix/closed. При периодическом инциденте сначала подготовьте конкретный способ сбора. observation_plan содержит operations, sources, metrics, необязательные thresholds, duration_seconds, max_bytes, responsible, rollback, verification, status и при наличии evidence. Дополнительные start/end требуют часового пояса и согласованной длительности; collection_method/rotation описывают способ, collection_state отделяет unknown/not_started/launch_reported/receiving_data/stopped_reported. Статус плана: proposed/configured_reported/data_verified/cancelled; для data_verified и receiving_data требуются доказательства.
+
+Окно плана — до семи суток, отдельно от одного ОС-запуска до 30 минут. Запись суточного плана не запускает и не реализует суточный коллектор. Укажите реальные средства источников/оператора, достаточное место, ротацию и остановку. Сам план и tool_runs в этой версии хранят описание и учёт; они не являются общим исполнителем и не обеспечивают глобальный контроль расхода harness.
+
+При сообщённой/проверенной подготовке сохраните `workflow_stage: awaiting_occurrence`; ответ будет partial для расследования и completed для этапа подготовки. continuation указывает внешний триггер и model_polling_required=false. Завершите текущий этап: дайте пользователю ID, что готово, ограничения запуска и как вернуться в этот же чат после сообщения о событии. Не держите модель в ожидании и не выдавайте короткий сбор за проверку суток.
+
+После сообщения пользователя или внешнего мониторинга загрузите тот же ID и передайте patch:
+
+```json
+{
+  "occurrence": {
+    "source": "user",
+    "message": "Мониторинг сообщил о повторении; точное время пока неизвестно",
+    "started_at": null,
+    "ended_at": null,
+    "evidence": []
+  }
+}
+```
+
+source: user/external_monitoring. Время при наличии требует смещения. Автоматически добавляется время приёма сообщения и этап analyze_episode; сообщение имеет status reported_not_verified. После проверки собранного эпизода evidence и link_basis описывают связь, статус становится evidenced_by_harness. Это не независимое подтверждение связи инструментом. Подключите новые снимки, проверьте покрытие и продолжайте анализ/проверку исправления в прежней истории.
+
+## Ограничения сохранения
+
+До 1000 ревизий, 16 attachments, 200 evidence/facts, 100 hypotheses/contradictions/tool_runs; документ/Markdown до 2 МиБ. Input patch до 1 МиБ. Состояние частное; report не обезличен для внешней отправки. Учёт затрат tool_runs сообщён harness, токены неизвестны при отсутствии фактического счётчика. Receipt и head записываются последними; незавершённая ревизия не подменяет прежнюю. Автоматического удаления lock/прерванной ревизии нет: сохраните материалы и проверьте владельца до восстановления, не обходите guard принудительно.

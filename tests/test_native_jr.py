@@ -114,6 +114,8 @@ class NativeJRTests(unittest.TestCase):
             self.assertEqual(json.loads(proof.stdout)['text'].encode(),event())
 
     def test_unsupported_versions_lgd_links_and_record_budgets_fail_closed(self):
+        with self.assertRaisesRegex(ValueError,'record exceeds'):
+            self.api.parse_snapshot([('1Cv8.lgf',DICTIONARY),('x.lgp',HEADER+b'{'+b' '*262145+b'}')])
         with self.assertRaises(ValueError):self.api.parse_snapshot([('1Cv8.lgf',DICTIONARY),('x.lgp',HEADER+b'{'+b'a'*262145+b'}')])
         with self.assertRaises(ValueError):self.api.parse_snapshot([('1Cv8.lgf',HEADER+b'{'*40+b'}'*40)])
         with tempfile.TemporaryDirectory() as temp:

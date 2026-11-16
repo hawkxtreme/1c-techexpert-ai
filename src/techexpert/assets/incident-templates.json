@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "time_modes": ["past", "current", "reproduce"],
+  "scales": ["one", "several", "all", "background", "unknown"],
+  "unknown_allowed": true,
+  "required_fields": ["task"],
+  "common_questions": ["Что делает пользователь или задание?", "Когда это произошло и известен ли часовой пояс?", "Кого затрагивает проблема?", "Какие данные уже доступны?"],
+  "stop_conditions": ["Исчерпан разрешённый объём или время проверки", "Следующий шаг требует нового источника доступа или изменения системы", "Нет данных для различения оставшихся объяснений"],
+  "expected_report": ["Результат и состояние причины", "Эпизод и покрытие источников", "Наблюдения и доказательства", "Гипотезы и противоречия", "Адресные рекомендации", "Проверка исправления", "План наблюдения и ограничения"],
+  "templates": [
+    {
+      "id": "TPL-01", "revision": 1, "title": "Медленная операция",
+      "applicability": "Открытие, запись, проведение или ввод данных; файловая и серверная ИБ",
+      "optional_fields": ["operation", "client_type", "open_forms", "normal_duration", "document_type"],
+      "questions": ["Какое действие начинается и когда интерфейс снова готов?", "Влияют ли открытые формы и динамические списки?"],
+      "sources": ["tj", "os", "jr", "sql", "source", "client"],
+      "checks": ["operation-boundaries", "source-coverage", "compare-baseline", "client-refresh"],
+      "variants": [{"id": "document-posting", "title": "Документ долго проводится", "questions": ["Какой документ и команда записи/проведения?", "Задержка до записи или при последующем обновлении окон?", "Есть ли сравнимый обычный запуск?"]}]
+    },
+    {
+      "id": "TPL-02", "revision": 1, "title": "Долгое фоновое задание",
+      "applicability": "Конкретный запуск загрузки или обмена; первый сквозной случай SC-01",
+      "optional_fields": ["job", "run", "workload", "normal_duration"],
+      "questions": ["Какое задание и какой запуск?", "Сколько данных обрабатывается?", "Известны ли очередь, начало и завершение отдельно?"],
+      "sources": ["tj", "jr", "source", "os", "sql", "rac"],
+      "checks": ["job-identity", "source-coverage", "queue-versus-execution", "compare-baseline"], "variants": []
+    },
+    {
+      "id": "TPL-03", "revision": 1, "title": "Общее замедление",
+      "applicability": "Несколько пользователей или все; ухудшение нескольких операций",
+      "optional_fields": ["operations", "affected_bases", "change_time"],
+      "questions": ["С какого времени и какие операции?", "Затронуты ли другие базы на общих узлах?"],
+      "sources": ["os", "tj", "sql", "rac"], "checks": ["source-coverage", "shared-resources", "compare-baseline"], "variants": []
+    },
+    {
+      "id": "TPL-04", "revision": 1, "title": "Зависание или отсутствие прогресса",
+      "applicability": "Операция не завершается или интерфейс не отвечает",
+      "optional_fields": ["last_action", "started_at", "still_active"],
+      "questions": ["Последнее действие и время начала?", "Операция ещё выполняется или уже завершилась?"],
+      "sources": ["tj", "os", "sql", "rac", "client"], "checks": ["source-coverage", "active-versus-historical", "client-refresh"], "variants": []
+    },
+    {
+      "id": "TPL-05", "revision": 1, "title": "Блокировки и конфликты",
+      "applicability": "Ожидание блокировки, тайм-аут или взаимоблокировка",
+      "optional_fields": ["operation", "error", "participants"],
+      "questions": ["Какой текст ошибки и период?", "Есть ли данные об участниках в момент ожидания?"],
+      "sources": ["tj", "sql", "rac", "source"], "checks": ["source-coverage", "active-versus-historical", "lock-versus-deadlock"], "variants": []
+    },
+    {
+      "id": "TPL-06", "revision": 1, "title": "Повторяющаяся ошибка",
+      "applicability": "Периодическая техническая ошибка при известном действии",
+      "optional_fields": ["error", "frequency", "operation"],
+      "questions": ["Текст или код ошибки?", "Как часто и при каких действиях она появляется?"],
+      "sources": ["tj", "jr", "source", "os"], "checks": ["source-coverage", "error-context", "compare-baseline"], "variants": []
+    },
+    {
+      "id": "TPL-07", "revision": 1, "title": "Ухудшение после изменения",
+      "applicability": "Замедление после обновления кода или изменения настройки",
+      "optional_fields": ["change", "versions", "baseline_period", "workload"],
+      "questions": ["Что изменилось и когда?", "Сопоставимы ли версии, объём работы и контрольный период?"],
+      "sources": ["tj", "source", "os", "sql"], "checks": ["source-coverage", "version-match", "compare-baseline"], "variants": []
+    },
+    {
+      "id": "TPL-08", "revision": 1, "title": "Обрыв соединения или аварийное завершение",
+      "applicability": "Отключение пользователя, завершение или перезапуск процесса",
+      "optional_fields": ["error", "process_history", "affected_users"],
+      "questions": ["Время и доступная ошибка?", "Есть ли подтверждённая история процессов, а не только текущий список?"],
+      "sources": ["tj", "jr", "os", "rac"], "checks": ["source-coverage", "process-lifetime", "error-context"], "variants": []
+    },
+    {
+      "id": "TPL-09", "revision": 1, "title": "Проверить известный случай",
+      "applicability": "Ссылка на статью, чужой инцидент или карточку знаний",
+      "optional_fields": ["known_case", "matching_signs", "differences"],
+      "questions": ["Какая ссылка или карточка?", "Какие признаки и версии совпадают, а какие отличаются?"],
+      "sources": ["tj", "jr", "source", "os", "sql"], "checks": ["reference-applicability", "source-coverage", "compare-baseline"], "variants": []
+    },
+    {
+      "id": "TPL-10", "revision": 1, "title": "Другая проблема",
+      "applicability": "Свободное описание без подходящего готового варианта",
+      "optional_fields": ["description", "operation", "expected_behavior"],
+      "questions": ["Что ожидалось и что произошло?", "Какие данные доступны без дополнительной настройки?"],
+      "sources": ["tj", "jr", "source", "os", "sql", "client"], "checks": ["source-coverage", "operation-boundaries"], "variants": []
+    }
+  ]
+}
