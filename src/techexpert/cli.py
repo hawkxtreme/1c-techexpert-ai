@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .inputs import InputError
 from .profiles import doctor, load_profile
-from .storage import ROOT, default_state_dir, investigate, load_case, read_evidence
+from .storage import ROOT, default_state_dir, investigate, load_case, read_evidence, list_native_events
 
 
 def emit(value):
@@ -29,6 +29,13 @@ def main(argv=None):
     proof = commands.add_parser('evidence')
     proof.add_argument('case_id')
     proof.add_argument('evidence_id')
+    events = commands.add_parser('events')
+    events.add_argument('case_id')
+    events.add_argument('--source')
+    events.add_argument('--event')
+    events.add_argument('--property', action='append', default=[], dest='properties')
+    events.add_argument('--offset', type=int, default=0)
+    events.add_argument('--limit', type=int, default=20)
     init = commands.add_parser('init')
     init.add_argument('--open-browser', action='store_true')
     init.add_argument('--ttl', type=int, default=900)
@@ -46,6 +53,15 @@ def main(argv=None):
             result = load_case(args.state_dir, args.case_id)
         elif args.command == 'evidence':
             result = read_evidence(args.state_dir, args.case_id, args.evidence_id)
+        elif args.command == 'events':
+            filters = {}
+            for item in args.properties:
+                key, separator, value = item.partition('=')
+                if not separator or not key or key in filters:
+                    raise InputError('each property filter requires a unique NAME=VALUE')
+                filters[key] = value
+            result = list_native_events(args.state_dir, args.case_id, source_id=args.source, event=args.event,
+                                        properties=filters, offset=args.offset, limit=args.limit)
         elif args.command == 'init':
             from .gui import run_gui
             run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl)

@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "scenario": "SC-01",
+  "origin": "provided",
+  "symptom": "Фоновое задание загрузки заказов выполняется 45 минут вместо обычных пяти",
+  "reported_normal_seconds": 300,
+  "normal_basis": "user_reported_not_measured",
+  "selection": {
+    "database": "REPLACE_WITH_DATABASE_LABEL",
+    "node": "REPLACE_WITH_NODE_LABEL",
+    "process": "REPLACE_WITH_PROCESS_LABEL",
+    "epoch": "REPLACE_WITH_EPOCH_LABEL",
+    "run": "REPLACE_WITH_RUN_LABEL"
+  },
+  "sources": [
+    {
+      "path": "REPLACE_WITH_NATIVE_TJ_SNAPSHOT_PATH",
+      "format": "1c-tj-text-v1",
+      "platform_version": "8.3.27.1989",
+      "encoding": "utf-8",
+      "placement": "folders",
+      "timestamp_format": "minute",
+      "rotation_hours": 1,
+      "file_hour": "REPLACE_WITH_FILE_HOUR_ISO8601_WITH_OFFSET",
+      "context": {
+        "node": "REPLACE_WITH_NODE_LABEL",
+        "process": "REPLACE_WITH_PROCESS_LABEL",
+        "epoch": "REPLACE_WITH_EPOCH_LABEL"
+      }
+    }
+  ]
+}

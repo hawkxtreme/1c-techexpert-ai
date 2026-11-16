@@ -1,0 +1,47 @@
+{
+  "platform_version": "8.3.27.1989",
+  "os": "Windows 11",
+  "capture_date": "2026-11-16",
+  "utc_offset": "+03:00",
+  "origin": "real_isolated_platform_capture_excerpts",
+  "sc01_job_reproduced": false,
+  "scope": "empty file infobase creation and successful Designer DumpCfg; parser grammar only",
+  "operations": [
+    "CREATEINFOBASE without AddToList",
+    "DESIGNER /DumpCfg of the isolated empty infobase"
+  ],
+  "fixtures": [
+    {
+      "file": "folders-minute.txt",
+      "bytes": 96,
+      "sha256": "9aa58df592cd16af82f24ebcfefe29de29b15f846a6341692af85bb0f3b63ba8",
+      "timestamp_format": "minute",
+      "source_sha256": "c0612618ce3b44f79b1ae8c1071521f40fb2f904a1b74c9c14d70fcf168fc4f9",
+      "original_byte_ranges": [
+        {
+          "start": 86493,
+          "end": 86589
+        }
+      ],
+      "transformation": "selected complete records copied byte-for-byte; omitted all other records and initial BOM"
+    },
+    {
+      "file": "plain-iso.txt",
+      "bytes": 410,
+      "sha256": "674d5504a69009a30794014cbd5ec54e1e4e9ffb89f88d84172db93961371e8d",
+      "timestamp_format": "iso",
+      "source_sha256": "e0359fa657a51d60698e97d517bd72971fade8ad3b34ed38b554989972e9ac7e",
+      "original_byte_ranges": [
+        {
+          "start": 16804,
+          "end": 17117
+        },
+        {
+          "start": 58117,
+          "end": 58214
+        }
+      ],
+      "transformation": "selected complete records copied byte-for-byte; omitted all other records and initial BOM"
+    }
+  ]
+}

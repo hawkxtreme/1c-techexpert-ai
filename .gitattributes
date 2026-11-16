@@ -1,0 +1,2 @@
+# Captured evidence excerpts must preserve exact bytes on every checkout.
+tests/fixtures/native-tj/*.txt -text whitespace=cr-at-eol

@@ -1,0 +1,4 @@
+2026-11-16T08:25:43.948080-1,DBV8DBEng,1,level=DEBUG,process=1cv8,OSThread=15280,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Sql='SELECT TOP 1 ID, Name, Descr, OSName, Changed, RolesID, Show, Data, EAuth, AdmRole, UsSprH, Email
+FROM v8users
+WHERE EAuth IS NULL OR AdmRole IS NULL OR UsSprH IS NULL',NParams=0,Rows=0
+2026-11-16T08:25:44.354000-4890000,PROC,0,level=INFO,process=1cv8,OSThread=15280,Finish=success

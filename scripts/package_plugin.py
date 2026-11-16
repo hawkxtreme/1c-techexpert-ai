@@ -11,6 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def build(output):
     output = Path(output).resolve()
     files = [ROOT / 'techexpert.py', ROOT / 'README.md', ROOT / 'AGENTS.md', ROOT / '.codex-plugin/plugin.json']
+    # Only these reviewed, nonprivate capture excerpts are shipped as test data.
+    files.extend(ROOT / 'tests/fixtures/native-tj' / name
+                 for name in ('passport.json', 'folders-minute.txt', 'plain-iso.txt'))
     for directory in ('src/techexpert', 'skills', 'knowledge', 'examples/sc01', '.agents/skills'):
         files.extend(p for p in (ROOT / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix in ('.py','.md','.html','.json','.jsonl','.yaml'))
