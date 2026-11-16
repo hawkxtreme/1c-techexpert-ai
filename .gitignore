@@ -22,3 +22,6 @@ __pycache__/
 /.local/
 .pytest_cache/
 *.pyc
+# Only these reviewed, sanitized JR excerpts are public fixtures.
+!/tests/fixtures/native-jr/1Cv8.lgf
+!/tests/fixtures/native-jr/20261116000000.lgp
