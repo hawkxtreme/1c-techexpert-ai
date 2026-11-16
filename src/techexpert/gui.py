@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 import secrets
 import threading
 import time
@@ -60,7 +61,7 @@ class InitHandler(BaseHTTPRequestHandler):
         # URLs, source paths and credentials must not become access-log entries.
         pass
 
-    def _reply(self, status, body, content_type='application/json; charset=utf-8', nonce=None):
+    def _reply(self, status, body, content_type='application/json; charset=utf-8', nonce=None, etag=None):
         self.send_response(status)
         self.send_header('Content-Type', content_type)
         self.send_header('Content-Length', str(len(body)))
@@ -68,6 +69,7 @@ class InitHandler(BaseHTTPRequestHandler):
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
+        if etag is not None:self.send_header('ETag',etag)
         policy = "default-src 'none'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         if nonce:
             policy += f"; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'"
@@ -78,11 +80,25 @@ class InitHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
-    def _json(self, status, data):
-        self._reply(status, json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8'))
+    def _json(self, status, data, etag=None):
+        self._reply(status, json.dumps(data, ensure_ascii=False, allow_nan=False).encode('utf-8'),etag=etag)
 
     def _error(self, status, message):
         self._json(status, {'error': message})
+
+    @staticmethod
+    def _profile_etag(profile):return '"profile-'+str(profile['revision'] if profile else 0)+'"'
+
+    def _expected_profile_revision(self):
+        values=self.headers.get_all('If-Match',[])
+        if not values:
+            self._error(428,'Сначала загрузите профиль в актуальном окне init. Сохранение без его ревизии не выполняется.')
+            return None
+        match=re.fullmatch(r'"profile-(0|[1-9][0-9]{0,9})"',values[0]) if len(values)==1 else None
+        if match is None:
+            self._error(400,'Для сохранения требуется одна точная ревизия загруженного профиля.')
+            return None
+        return int(match[1])
 
     @staticmethod
     def _context(doc):
@@ -162,7 +178,7 @@ class InitHandler(BaseHTTPRequestHandler):
                         from .investigations import load
                         result=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
                     else:result = profiles.load_profile(self.server.state_dir)
-                self._json(200, result)
+                self._json(200, result,etag=self._profile_etag(result))
             elif self.path == '/api/doctor':
                 self._json(200, profiles.doctor(self.server.state_dir))
             elif self.path == '/api/templates':
@@ -209,9 +225,13 @@ class InitHandler(BaseHTTPRequestHandler):
                     raise ValueError('Укажите путь к файлу .v8i или ibases.v8i.')
                 result = profiles.read_starter(path)
             else:
+                expected=self._expected_profile_revision()
+                if expected is None:return
                 with self.server.profile_lock:
-                    result = profiles.save_profile(self.server.state_dir, data)
-            self._json(200, result)
+                    result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
+            self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
+        except profiles.ProfileRevisionConflict:
+            self._error(409,'Профиль изменён агентом, в другом окне или относится к иной закреплённой ревизии. Настройки не сохранены. Вернитесь в текущий чат, чтобы сопоставить изменения; автоматической перезаписи нет.')
         except ValueError as error:
             self._error(400, str(error))
         except OSError:

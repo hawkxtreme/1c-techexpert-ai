@@ -10,6 +10,52 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_stale_gui_does_not_remove_a_source_added_by_the_cli_writer(self):
+        from src.techexpert.profiles import save_profile,load_profile
+        first=save_profile(self.state_dir,self.profile)
+        self.request('GET','/api/profile')
+        changed=json.loads(json.dumps(self.profile));changed['sources'].append(dict(id='fresh-code',type='source',path='D:/fresh-code',host='',base_ids=['file-1']))
+        fresh=save_profile(self.state_dir,changed,expected_revision=first['revision'])
+        status,_,body=self.request('POST','/api/profile',self.profile,headers={'If-Match':'"profile-'+str(first['revision'])+'"'})
+        self.assertEqual(status,409,'stale GUI replaced the fresh CLI source configuration')
+        self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
+        self.assertTrue(any(x['id']=='fresh-code' for x in load_profile(self.state_dir)['sources']))
+
+    def test_pinned_gui_cannot_overwrite_a_different_current_profile(self):
+        from src.techexpert.profiles import save_profile,load_profile
+        from src.techexpert.investigations import create,load
+        first=save_profile(self.state_dir,self.profile)
+        doc=create(self.state_dir,dict(task='Pinned A',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=doc['investigation_id']
+        other=json.loads(json.dumps(self.profile));other['name']='Other environment'
+        fresh=save_profile(self.state_dir,other,expected_revision=first['revision'])
+        _,headers,body=self.request('GET','/api/profile');self.assertEqual(json.loads(body)['revision'],first['revision'])
+        status,_,_=self.request('POST','/api/profile',self.profile,headers={'If-Match':'"profile-'+str(first['revision'])+'"'})
+        self.assertEqual(status,409);self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
+        self.assertEqual(load(self.state_dir,doc['investigation_id'])['revision'],doc['revision'])
+
+    def test_unconfigured_pinned_gui_does_not_replace_a_later_global_profile(self):
+        from src.techexpert.profiles import save_profile,load_profile
+        from src.techexpert.investigations import create
+        doc=create(self.state_dir,dict(task='Initially unconfigured',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=doc['investigation_id'];fresh=save_profile(self.state_dir,self.profile)
+        self.assertIsNone(json.loads(self.request('GET','/api/profile')[2]))
+        status,_,_=self.request('POST','/api/profile',self.profile,headers={'If-Match':'"profile-0"'})
+        self.assertEqual(status,409);self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
+
+    def test_profile_etag_is_returned_and_updates_only_after_a_successful_save(self):
+        status,headers,_=self.request('GET','/api/profile');self.assertEqual(status,200)
+        self.assertEqual(headers.get('ETag'),'"profile-0"')
+        status,headers,body=self.request('POST','/api/profile',self.profile)
+        self.assertEqual(status,200);self.assertEqual(headers.get('ETag'),'"profile-'+str(json.loads(body)['revision'])+'"')
+
+    def test_profile_write_requires_one_explicit_loaded_revision(self):
+        status,_,_=self.request('POST','/api/profile',self.profile,profile_tag=False)
+        self.assertEqual(status,428)
+        for value in ('*','profile-0','"profile-01"','"profile-0", "profile-1"'):
+            with self.subTest(value=value):
+                self.assertEqual(self.request('POST','/api/profile',self.profile,headers={'If-Match':value})[0],400)
+        self.assert_no_profile()
     def test_selected_investigation_loads_its_pinned_profile_instead_of_global_current(self):
         from src.techexpert.investigations import create
         from src.techexpert.profiles import save_profile
@@ -126,8 +172,9 @@ class GuiHTTPTests(unittest.TestCase):
         server.server_close()
         thread.join(timeout=3)
 
-    def request(self, method, route, body=None, *, token=True, origin=True, headers=None):
+    def request(self, method, route, body=None, *, token=True, origin=True, headers=None, profile_tag=True):
         options = {'Origin': self.origin} if origin else {}
+        if profile_tag and method=='POST' and route=='/api/profile':options['If-Match']=getattr(self,'profile_etag','"profile-0"')
         if token:
             options['Authorization'] = 'Bearer ' + self.server.token
         if body is not None:
@@ -139,7 +186,9 @@ class GuiHTTPTests(unittest.TestCase):
         try:
             connection.request(method, route, body=body, headers=options)
             response = connection.getresponse()
-            return response.status, dict(response.getheaders()), response.read()
+            response_headers=dict(response.getheaders());raw=response.read()
+            if route=='/api/profile' and response.status==200 and 'ETag' in response_headers:self.profile_etag=response_headers['ETag']
+            return response.status,response_headers,raw
         finally:
             connection.close()
 

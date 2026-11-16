@@ -132,6 +132,7 @@
       let investigation = null;
       let templateBook = null;
       let sourceHelp = null;
+      let profileEtag = null;
       let busy = false;
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
@@ -168,11 +169,20 @@
         if (!token) throw new Error('Откройте актуальную ссылку init из текущего чата. В этой вкладке нет ключа доступа.');
         const options = {method:data === undefined ? 'GET' : 'POST', cache:'no-store', credentials:'omit', headers:{Authorization:'Bearer ' + token}};
         if (data !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(data); }
+        if(route==='/api/profile' && data!==undefined){
+          if(profileEtag===null)throw new Error('Сначала загрузите профиль в актуальном окне init. Сохранение без ревизии не выполняется.');
+          options.headers['If-Match']=profileEtag;
+        }
         let response;
         try { response = await fetch(route, options); }
         catch (_error) { throw new Error('Помощник недоступен или время его работы истекло. Повторите init в текущем чате.'); }
         const body = await response.json();
         if (!response.ok) throw new Error(body.error || 'Не удалось выполнить действие.');
+        if(route==='/api/profile'){
+          const tag=response.headers.get('ETag');
+          if(!/^"profile-(0|[1-9][0-9]{0,9})"$/.test(tag || ''))throw new Error('Не получена ревизия профиля. Повторите init в текущем чате; сохранение не запущено.');
+          profileEtag=tag;
+        }
         return body;
       }
       async function perform(action) {

@@ -16,6 +16,10 @@ from .inputs import InputError, read_snapshot, json_value
 from .storage import write_json, default_state_dir
 
 
+class ProfileRevisionConflict(InputError):
+    """The displayed profile no longer names the current environment revision."""
+
+
 def doctor(state_dir=None):
     installations = []
     if os.name == 'nt':
@@ -223,7 +227,7 @@ def save_profile(state_dir, profile, *, expected_revision=None):
         if expected_revision is not None:
             if type(expected_revision) is not int or expected_revision<0:raise InputError('invalid expected profile revision')
             current=load_profile(state_dir)
-            if (current['revision'] if current else 0)!=expected_revision:raise InputError('profile revision changed; inspect the current profile before saving')
+            if (current['revision'] if current else 0)!=expected_revision:raise ProfileRevisionConflict('profile revision changed; inspect the current profile before saving')
         revisions = [int(p.stem) for p in folder.glob('*.json') if p.stem.isdecimal()]
         clean['revision'] = max(revisions, default=0) + 1
         if len((json.dumps(clean,ensure_ascii=False,indent=2)+'\n').encode('utf-8')) > 1024*1024:
