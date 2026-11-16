@@ -18,6 +18,10 @@ def preview_record(record):
         used += len(text)
     result['properties'] = properties
     result['properties_truncated'] = properties != record['properties']
+    if record.get('ambiguous_properties'):
+        result['ambiguous_property_names'] = [k[:128] for k in list(record['ambiguous_properties'])[:24]]
+        result['properties_truncated'] = True
+        result['ambiguity_detail'] = 'Repeated values are available in the raw evidence; exact filters use only unambiguous properties.'
     result['untrusted_source_content'] = True
     return result
 

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "artifact_profile": "sc01-platform-background-job-v1",
+  "scenario": "SC-01",
+  "instrumentation_version": 2,
+  "origin": "controlled_real_background_job",
+  "computer_name": "controlled-host",
+  "stage": "body_exit",
+  "observed_utc_ms": 63930406069654,
+  "clock_epoch": "0001-01-01T00:00:00Z",
+  "clock_precision": "milliseconds",
+  "observed_utc_seconds": "2026-11-16T06:07:49Z",
+  "batch_id": "3bdc62ce-94b7-4d4c-b0e1-f5c595aa7413",
+  "job_ordinal": 1,
+  "nonce": "54a79e26-cfed-4aae-8d24-20cac3a50d59",
+  "job_uuid": "c5f11c18-514d-449a-b3d8-7ba5d23c3b39",
+  "job_key": "SC01LIFECYCLE:3bdc62ce-94b7-4d4c-b0e1-f5c595aa7413",
+  "session_id": 2,
+  "connection_id": 2,
+  "body_observed_elapsed_ms": 2008,
+  "requested_pause_ms": 2000,
+  "interpretation": "callback body leaving; platform completion is observed separately by controller"
+}

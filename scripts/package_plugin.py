@@ -14,6 +14,12 @@ def build(output):
     # Only these reviewed, nonprivate capture excerpts are shipped as test data.
     files.extend(ROOT / 'tests/fixtures/native-tj' / name
                  for name in ('passport.json', 'folders-minute.txt', 'plain-iso.txt'))
+    files.extend(ROOT / 'tests/fixtures/job-lifecycle' / name for name in (
+        'README.md', 'passport.json', 'native.txt', 'completed.json', 'failed.json',
+        'completed-controller.json', 'completed-worker-enter.json', 'completed-worker-exit.json',
+        'failed-controller.json', 'failed-worker-enter.json'))
+    files.extend(p for p in (ROOT / 'examples/sc01/lifecycle-probe').rglob('*')
+                 if p.is_file() and p.suffix in ('.bsl', '.xml'))
     for directory in ('src/techexpert', 'skills', 'knowledge', 'examples/sc01', '.agents/skills'):
         files.extend(p for p in (ROOT / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix in ('.py','.md','.html','.json','.jsonl','.yaml'))

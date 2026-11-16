@@ -1,0 +1,456 @@
+{
+  "schema": 1,
+  "provenance": "sanitized_real_capture",
+  "byte_identical_to_original": false,
+  "scenario": "SC-01",
+  "capture": {
+    "platform_version": "8.3.27.1989",
+    "mode": "file",
+    "date": "2026-11-16",
+    "utc_offset": "+03:00",
+    "environment": "isolated empty test infobase",
+    "instrumentation": "controlled SC01Lifecycle callback, runtime JSON snapshots, and SDBL query markers",
+    "not_a_reproduction_of_45_minute_incident": true
+  },
+  "runs": [
+    {
+      "case": "completed",
+      "nonce": "54a79e26-cfed-4aae-8d24-20cac3a50d59",
+      "job_uuid": "c5f11c18-514d-449a-b3d8-7ba5d23c3b39",
+      "session_number": 2,
+      "session_uuid": "11c14f70-203c-4ec7-ab99-c2f116bb0240",
+      "expected_platform_state": "completed"
+    },
+    {
+      "case": "failed",
+      "nonce": "5f21a00a-0283-41c3-9eb8-f03afcd75ffa",
+      "job_uuid": "a1982c27-3c0b-4311-ac53-254753e9239a",
+      "session_number": 3,
+      "session_uuid": "fba7724c-3baf-4757-838b-b6f6ccd90dfb",
+      "expected_platform_state": "failed",
+      "worker_exit_present": false
+    }
+  ],
+  "shared_job_key": "SC01LIFECYCLE:3bdc62ce-94b7-4d4c-b0e1-f5c595aa7413",
+  "native_excerpt": {
+    "file": "native.txt",
+    "source": {
+      "label": "native_capture_2",
+      "sha256": "57cc91c77c7073a13f3c1cd03dcaffa23e2705113b5bdd3927a7e37d68dbeddf",
+      "bytes": 190355,
+      "parsed_records": 805,
+      "parse_status": "partial",
+      "limitations": [
+        {
+          "code": "ambiguous_property",
+          "message": "Repeated properties retained separately; no value selected.",
+          "line": 1105,
+          "end_line": 1105,
+          "byte_start": 172819,
+          "byte_end": 172988
+        }
+      ]
+    },
+    "records": [
+      {
+        "source_record_index_0": 608,
+        "event": "SESN",
+        "source": {
+          "line": 839,
+          "end_line": 839,
+          "byte_start": 132879,
+          "byte_end": 133096,
+          "sha256": "57f7c57479b198ff73d846d5c78c4624983203932d450c9a8b102778dd9bddf6"
+        },
+        "published": {
+          "line": 1,
+          "end_line": 1,
+          "byte_start": 0,
+          "byte_end": 177,
+          "sha256": "14b0d2582f1600ff0909961ba3e8654443f6f62fc9c0d30dbee4e6bf15bfb30f"
+        }
+      },
+      {
+        "source_record_index_0": 654,
+        "event": "SDBL",
+        "source": {
+          "line": 969,
+          "end_line": 973,
+          "byte_start": 146688,
+          "byte_end": 147174,
+          "sha256": "db8c54c0cd8d50741f3779414850b53d6933ee7a40f2756285182ddfd4c16091"
+        },
+        "published": {
+          "line": 2,
+          "end_line": 6,
+          "byte_start": 177,
+          "byte_end": 663,
+          "sha256": "db8c54c0cd8d50741f3779414850b53d6933ee7a40f2756285182ddfd4c16091"
+        }
+      },
+      {
+        "source_record_index_0": 655,
+        "event": "SDBL",
+        "source": {
+          "line": 974,
+          "end_line": 976,
+          "byte_start": 147174,
+          "byte_end": 147557,
+          "sha256": "56489a45b18960638804442f3d58735ca0a7fbb11b94e612db6fc63cbb27c54e"
+        },
+        "published": {
+          "line": 7,
+          "end_line": 9,
+          "byte_start": 663,
+          "byte_end": 1046,
+          "sha256": "56489a45b18960638804442f3d58735ca0a7fbb11b94e612db6fc63cbb27c54e"
+        }
+      },
+      {
+        "source_record_index_0": 656,
+        "event": "DBV8DBEng",
+        "source": {
+          "line": 977,
+          "end_line": 980,
+          "byte_start": 147557,
+          "byte_end": 148054,
+          "sha256": "c0b46aa501ded7150bdd2e63a1497ddafd2bd5992536d75fcb03eaa7eaa7344f"
+        },
+        "published": {
+          "line": 10,
+          "end_line": 13,
+          "byte_start": 1046,
+          "byte_end": 1543,
+          "sha256": "c0b46aa501ded7150bdd2e63a1497ddafd2bd5992536d75fcb03eaa7eaa7344f"
+        }
+      },
+      {
+        "source_record_index_0": 657,
+        "event": "SDBL",
+        "source": {
+          "line": 981,
+          "end_line": 985,
+          "byte_start": 148054,
+          "byte_end": 148538,
+          "sha256": "8eb14ef7fe51c7ab97e80b4accf1c738caf654181957010654baa630ad818399"
+        },
+        "published": {
+          "line": 14,
+          "end_line": 18,
+          "byte_start": 1543,
+          "byte_end": 2027,
+          "sha256": "8eb14ef7fe51c7ab97e80b4accf1c738caf654181957010654baa630ad818399"
+        }
+      },
+      {
+        "source_record_index_0": 664,
+        "event": "SESN",
+        "source": {
+          "line": 994,
+          "end_line": 994,
+          "byte_start": 149793,
+          "byte_end": 150017,
+          "sha256": "d96734c38a2471584c55353e6ec2a6d9e0ddf0a5868f124d2c64cde1370b33b9"
+        },
+        "published": {
+          "line": 19,
+          "end_line": 19,
+          "byte_start": 2027,
+          "byte_end": 2211,
+          "sha256": "ddbdc94af51f2d03a3c99e4df96c2cec39513ed762ec78b4920e52ee4647ecf9"
+        }
+      },
+      {
+        "source_record_index_0": 671,
+        "event": "SESN",
+        "source": {
+          "line": 1021,
+          "end_line": 1021,
+          "byte_start": 155163,
+          "byte_end": 155380,
+          "sha256": "3bf214034a3136274b4e8e05283f8c0b3db36e3edee03f30173585b64e3b5f19"
+        },
+        "published": {
+          "line": 20,
+          "end_line": 20,
+          "byte_start": 2211,
+          "byte_end": 2388,
+          "sha256": "b8e0e785d285fa4cfe54bd745d99f74e8edee53d5273208cd64b86e472029f18"
+        }
+      },
+      {
+        "source_record_index_0": 681,
+        "event": "SDBL",
+        "source": {
+          "line": 1042,
+          "end_line": 1046,
+          "byte_start": 158400,
+          "byte_end": 158886,
+          "sha256": "c347a99374a8dcca4043fffdbf3e33ba3af8d8983e2eea57e1fe5e49bc058f18"
+        },
+        "published": {
+          "line": 21,
+          "end_line": 25,
+          "byte_start": 2388,
+          "byte_end": 2874,
+          "sha256": "c347a99374a8dcca4043fffdbf3e33ba3af8d8983e2eea57e1fe5e49bc058f18"
+        }
+      },
+      {
+        "source_record_index_0": 688,
+        "event": "SESN",
+        "source": {
+          "line": 1067,
+          "end_line": 1067,
+          "byte_start": 161353,
+          "byte_end": 161577,
+          "sha256": "7f7e56543b02d81a08c4812cbe1ad3f82a568456b699ac8cde04e35b256a0ecf"
+        },
+        "published": {
+          "line": 26,
+          "end_line": 26,
+          "byte_start": 2874,
+          "byte_end": 3058,
+          "sha256": "d53ef99c4f189d0f8dfa88b79e9c11628cedbb34f6476c4f6f728aa617d9ad55"
+        }
+      }
+    ],
+    "contiguous_completed_body_window": {
+      "source_record_indices_0": [
+        654,
+        655,
+        656,
+        657
+      ],
+      "published_record_indices_0": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "all_source_records_in_window_included": true
+    },
+    "transformations": [
+      {
+        "operation": "select_complete_records",
+        "details": "Selected records concatenated in original order; all unselected records and any initial BOM omitted. This is an excerpt, not complete job/session coverage."
+      },
+      {
+        "operation": "replace_infobase_path",
+        "replacement": "C:\\controlled\\sc01-ib",
+        "occurrences": 4
+      },
+      {
+        "operation": "preserve_remaining_native_bytes",
+        "details": "Timestamps, UUIDs, session numbers, keys, event values and mixed line endings retained."
+      }
+    ]
+  },
+  "runtime_documents": [
+    {
+      "file": "completed-controller.json",
+      "role": "controller",
+      "source": {
+        "label": "completed_controller_capture",
+        "sha256": "04ffe8828ae2cf7b45b3cbd4c71372a656d5bed6d1b8a1ee14ce76490ddebd57",
+        "bytes": 2914,
+        "byte_start": 0,
+        "byte_end": 2914,
+        "line": 1,
+        "end_line": 86
+      },
+      "transformations": [
+        {
+          "pointer": "/stages",
+          "operation": "omit_controller_polling_stages",
+          "reason": "Not needed for final platform state or worker/body linkage; no queue interval is claimed."
+        },
+        {
+          "pointer": "/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "pointer": "/connection_string",
+          "operation": "replace_infobase_path",
+          "replacement": "C:\\controlled\\sc01-ib"
+        },
+        {
+          "pointer": "/final_job_snapshot/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "operation": "serialize_json_utf8",
+          "details": "Retained JSON values preserved except listed replacements; indentation/newlines normalized to UTF-8 without BOM and LF."
+        }
+      ]
+    },
+    {
+      "file": "completed-worker-enter.json",
+      "role": "worker_enter",
+      "source": {
+        "label": "completed_worker-enter_capture",
+        "sha256": "1016e7e032521de4e347c13faf501bed961ef2b80cc9420de79d12ce266786f5",
+        "bytes": 1068,
+        "byte_start": 0,
+        "byte_end": 1068,
+        "line": 1,
+        "end_line": 27
+      },
+      "transformations": [
+        {
+          "pointer": "/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "pointer": "/connection_string",
+          "operation": "replace_infobase_path",
+          "replacement": "C:\\controlled\\sc01-ib"
+        },
+        {
+          "operation": "serialize_json_utf8",
+          "details": "Retained JSON values preserved except listed replacements; indentation/newlines normalized to UTF-8 without BOM and LF."
+        }
+      ]
+    },
+    {
+      "file": "completed-worker-exit.json",
+      "role": "worker_exit",
+      "source": {
+        "label": "completed_worker-exit_capture",
+        "sha256": "9f099ecf60240f294aa646ff95e040d37e41b6faa0ce94a52b0b8ce3e5379ecd",
+        "bytes": 825,
+        "byte_start": 0,
+        "byte_end": 825,
+        "line": 1,
+        "end_line": 23
+      },
+      "transformations": [
+        {
+          "pointer": "/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "operation": "serialize_json_utf8",
+          "details": "Retained JSON values preserved except listed replacements; indentation/newlines normalized to UTF-8 without BOM and LF."
+        }
+      ]
+    },
+    {
+      "file": "failed-controller.json",
+      "role": "controller",
+      "source": {
+        "label": "failed_controller_capture",
+        "sha256": "409462467ce5c04f1a7274aff794453688c8a8241802c657d4dbf476fc8eef39",
+        "bytes": 3051,
+        "byte_start": 0,
+        "byte_end": 3051,
+        "line": 1,
+        "end_line": 87
+      },
+      "transformations": [
+        {
+          "pointer": "/stages",
+          "operation": "omit_controller_polling_stages",
+          "reason": "Not needed for final platform state or worker/body linkage; no queue interval is claimed."
+        },
+        {
+          "pointer": "/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "pointer": "/connection_string",
+          "operation": "replace_infobase_path",
+          "replacement": "C:\\controlled\\sc01-ib"
+        },
+        {
+          "pointer": "/final_job_snapshot/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "operation": "serialize_json_utf8",
+          "details": "Retained JSON values preserved except listed replacements; indentation/newlines normalized to UTF-8 without BOM and LF."
+        }
+      ]
+    },
+    {
+      "file": "failed-worker-enter.json",
+      "role": "worker_enter",
+      "source": {
+        "label": "failed_worker-enter_capture",
+        "sha256": "56ad9947c76ab30b97baf8508b1e78758de0c26bf29192a0e980c42f5df798aa",
+        "bytes": 1067,
+        "byte_start": 0,
+        "byte_end": 1067,
+        "line": 1,
+        "end_line": 27
+      },
+      "transformations": [
+        {
+          "pointer": "/computer_name",
+          "operation": "replace_computer_name",
+          "replacement": "controlled-host"
+        },
+        {
+          "pointer": "/connection_string",
+          "operation": "replace_infobase_path",
+          "replacement": "C:\\controlled\\sc01-ib"
+        },
+        {
+          "operation": "serialize_json_utf8",
+          "details": "Retained JSON values preserved except listed replacements; indentation/newlines normalized to UTF-8 without BOM and LF."
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "No full-job lifecycle is inferred from native event duration.",
+    "Runtime sidecars come from explicit instrumentation of an isolated test, not an automatically available production source.",
+    "Begin/End platform dates have seconds precision; queue and total submit-to-completion durations are not established.",
+    "Missing failed worker_exit is retained as missing evidence, not a successful body exit.",
+    "Source hashes support provenance checks but do not independently authenticate the capture."
+  ],
+  "files": {
+    "completed-controller.json": {
+      "bytes": 1796,
+      "sha256": "2927c085c9c56261e55832408d1f5ed04ed1982922a5fb223d3bb6d493be02c3"
+    },
+    "completed-worker-enter.json": {
+      "bytes": 1063,
+      "sha256": "18647144705afda22b626d6e4cef3fb0d49372dc51908e28c2866502f024bdba"
+    },
+    "completed-worker-exit.json": {
+      "bytes": 859,
+      "sha256": "611ca9f4c4f8c715b5db815cafa71c61f8863477c1f41bffba234debf79662a8"
+    },
+    "completed.json": {
+      "bytes": 1045,
+      "sha256": "4fa623501697dae3da11ecc89095a47654d7894627beb86ba874aee9df0aee30"
+    },
+    "failed-controller.json": {
+      "bytes": 1936,
+      "sha256": "fa07a56f0df9dea93e89b49b04733995a443c1c4075091d5223e7b7d47aa6250"
+    },
+    "failed-worker-enter.json": {
+      "bytes": 1062,
+      "sha256": "7bdb97dd3792b37dd49848a239d417079ee5982c2ab779fa99812671610a132a"
+    },
+    "failed.json": {
+      "bytes": 837,
+      "sha256": "3ce902787e85146c94ac370d529ea9308319b41c2ec17c26dc9a7e6ba824f6ae"
+    },
+    "native.txt": {
+      "bytes": 3058,
+      "sha256": "4faad2503dca1eebe3af03855aabf26666b5ae749134989128bb0afad5dc3c13"
+    },
+    "README.md": {
+      "bytes": 2459,
+      "sha256": "027c649c5b3223ff32875a057c64222afb6884d80886e9ee33d60c8a4938edd7"
+    }
+  }
+}

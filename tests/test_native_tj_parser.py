@@ -196,12 +196,21 @@ class NativeTJParserTests(unittest.TestCase):
         self.assertEqual(result['records'], [])
         self.assertEqual(result['status'], 'invalid')
 
-    def test_duplicate_decoded_keys_invalidate_whole_record(self):
+    def test_duplicate_decoded_keys_preserve_record_without_selecting_a_value(self):
         bad = b'04:05.123456-1,CALL,0,k=first,"k"=second\n'
         result = self.parse(bad + GOOD)
         self.assertEqual(result['status'], 'partial')
         self.assertEqual(result['records_seen'], 2)
-        self.assertEqual(len(result['records']), 1)
+        self.assertEqual(len(result['records']), 2)
+        self.assertNotIn('k', result['records'][0]['properties'])
+        self.assertEqual(result['records'][0]['ambiguous_properties'], {'k':['first','second']})
+
+    def test_real_transaction_has_two_func_properties(self):
+        raw=b'04:05.123456-20,SDBL,2,process=1cv8,Func=Transaction,Func=CommitTransaction\n'
+        result=self.parse(raw)
+        self.assertEqual(len(result['records']),1)
+        self.assertEqual(result['records'][0]['ambiguous_properties']['Func'],['Transaction','CommitTransaction'])
+        self.assertNotIn('Func',result['records'][0]['properties'])
 
     def test_bad_record_recovery_requires_fresh_valid_header(self):
         bad = b'not a header\n04:05.123456-1,CALL,0,k="closed"junk\n'

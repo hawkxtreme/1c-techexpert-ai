@@ -1,0 +1,26 @@
+2026-11-16T09:07:47.649025-0,SESN,0,level=INFO,process=1cv8,OSThread=26324,Func=Start,IB=C:\controlled\sc01-ib,Appl=BackgroundJob,Nmb=2,ID=11c14f70-203c-4ec7-ab99-c2f116bb0240
+2026-11-16T09:07:47.649117-3,SDBL,1,level=DEBUG,process=1cv8,OSThread=26324,Usr=DefUser,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Sdbl='SELECT
+"SC01LIFECYCLE:body_enter:54a79e26-cfed-4aae-8d24-20cac3a50d59:c5f11c18-514d-449a-b3d8-7ba5d23c3b39"
+',Rows=1,Context='
+ОбщийМодуль.SC01Lifecycle.Модуль : 127 : МаркерЗапроса("body_enter", Nonce, UUIDЗадания);
+	ОбщийМодуль.SC01Lifecycle.Модуль : 166 : Запрос.Выполнить();'
+2026-11-16T09:07:47.649118-5,SDBL,0,level=DEBUG,process=1cv8,OSThread=26324,Usr=DefUser,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Func=HoldConnection,Context='
+ОбщийМодуль.SC01Lifecycle.Модуль : 127 : МаркерЗапроса("body_enter", Nonce, UUIDЗадания);
+	ОбщийМодуль.SC01Lifecycle.Модуль : 166 : Запрос.Выполнить();'
+2026-11-16T09:07:49.649003-1,DBV8DBEng,2,level=DEBUG,process=1cv8,OSThread=26324,Usr=DefUser,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Sql="SELECT
+'SC01LIFECYCLE:body_exit:54a79e26-cfed-4aae-8d24-20cac3a50d59:c5f11c18-514d-449a-b3d8-7ba5d23c3b39'",NParams=0,Rows=1,Context='
+ОбщийМодуль.SC01Lifecycle.Модуль : 146 : МаркерЗапроса("body_exit", Nonce, UUIDЗадания);
+	ОбщийМодуль.SC01Lifecycle.Модуль : 166 : Запрос.Выполнить();'
+2026-11-16T09:07:49.649004-3,SDBL,1,level=DEBUG,process=1cv8,OSThread=26324,Usr=DefUser,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Sdbl='SELECT
+"SC01LIFECYCLE:body_exit:54a79e26-cfed-4aae-8d24-20cac3a50d59:c5f11c18-514d-449a-b3d8-7ba5d23c3b39"
+',Rows=1,Context='
+ОбщийМодуль.SC01Lifecycle.Модуль : 146 : МаркерЗапроса("body_exit", Nonce, UUIDЗадания);
+	ОбщийМодуль.SC01Lifecycle.Модуль : 166 : Запрос.Выполнить();'
+2026-11-16T09:07:49.665009-2015985,SESN,0,level=INFO,process=1cv8,OSThread=26324,Func=Finish,IB=C:\controlled\sc01-ib,Appl=BackgroundJob,Nmb=2,ID=11c14f70-203c-4ec7-ab99-c2f116bb0240
+2026-11-16T09:07:49.665021-0,SESN,0,level=INFO,process=1cv8,OSThread=26324,Func=Start,IB=C:\controlled\sc01-ib,Appl=BackgroundJob,Nmb=3,ID=fba7724c-3baf-4757-838b-b6f6ccd90dfb
+2026-11-16T09:07:49.665041-3,SDBL,1,level=DEBUG,process=1cv8,OSThread=26324,Usr=DefUser,DBMS=DBV8DBEng,DataBase=test-ib,Trans=0,Sdbl='SELECT
+"SC01LIFECYCLE:body_enter:5f21a00a-0283-41c3-9eb8-f03afcd75ffa:a1982c27-3c0b-4311-ac53-254753e9239a"
+',Rows=1,Context='
+ОбщийМодуль.SC01Lifecycle.Модуль : 127 : МаркерЗапроса("body_enter", Nonce, UUIDЗадания);
+	ОбщийМодуль.SC01Lifecycle.Модуль : 166 : Запрос.Выполнить();'
+2026-11-16T09:07:51.680008-2014988,SESN,0,level=INFO,process=1cv8,OSThread=26324,Func=Finish,IB=C:\controlled\sc01-ib,Appl=BackgroundJob,Nmb=3,ID=fba7724c-3baf-4757-838b-b6f6ccd90dfb

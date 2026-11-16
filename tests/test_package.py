@@ -1,4 +1,5 @@
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -45,6 +46,21 @@ class PackageTests(unittest.TestCase):
             native_report=json.loads(native.stdout)
             self.assertEqual(native_report['native_observations']['event_count'],2)
             self.assertIsNone(native_report['durations_seconds']['execution'])
+            # Controlled real fixture and the verified probe sources also travel
+            # with the bundle; neither needs this checkout or the platform to read.
+            packaged=folder/'unpacked'
+            receipt=json.loads((packaged/'examples/sc01/lifecycle-probe/verification.json').read_text(encoding='utf-8'))
+            for name, digest in receipt['configuration_source_sha256'].items():
+                member=packaged/'examples/sc01/lifecycle-probe'/name
+                self.assertEqual(hashlib.sha256(member.read_bytes()).hexdigest(),digest)
+            linked=subprocess.run([sys.executable,str(packaged/'techexpert.py'),'--state-dir',str(folder/'state'),
+                'analyze',str(packaged/'tests/fixtures/job-lifecycle/completed.json')],cwd=folder,
+                capture_output=True,encoding='utf-8',timeout=20)
+            self.assertEqual(linked.returncode,0,linked.stdout+linked.stderr)
+            linked_report=json.loads(linked.stdout)
+            self.assertEqual(linked_report['job_correlation']['native_link']['status'],'established')
+            self.assertEqual(linked_report['job_correlation']['native_link']['linked_count'],4)
+            self.assertEqual(linked_report['durations_seconds'],dict(queue=None,execution=2,total=None))
 
 
 if __name__ == '__main__':

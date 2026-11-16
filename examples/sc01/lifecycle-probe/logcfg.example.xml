@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Replace location explicitly. Install only in the isolated test platform's conf. -->
+<!-- External launcher must enforce the 30-second / 16-MiB capture bounds. -->
+<config xmlns="http://v8.1c.ru/v8/tech-log">
+  <log location="ABSOLUTE_TJ_CAPTURE_DIRECTORY" history="1" format="text"
+       placement="plain" rotation="size" rotationsize="1">
+    <event><eq property="name" value="SESN"/></event>
+    <event><eq property="name" value="CALL"/></event>
+    <event><eq property="name" value="SCALL"/></event>
+    <event><eq property="name" value="SDBL"/></event>
+    <event><eq property="name" value="DBV8DBENG"/></event>
+    <event><eq property="name" value="PROC"/></event>
+    <event><eq property="name" value="EXCP"/></event>
+    <property name="all"/>
+  </log>
+  <dump create="false"/>
+</config>

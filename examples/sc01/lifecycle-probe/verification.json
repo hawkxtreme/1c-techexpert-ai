@@ -1,0 +1,219 @@
+{
+  "schema": 1,
+  "kind": "controlled_probe_verification",
+  "artifact_profile": "sc01-platform-background-job-v1",
+  "instrumentation_version": 4,
+  "platform_build": "8.3.27.1989",
+  "os_family": "Windows",
+  "database_mode": "file",
+  "run_started_utc": "2026-11-16T06:22:30.892392+00:00",
+  "configuration_source_sha256": {
+    "config/CommonModules/SC01Lifecycle/Ext/Module.bsl": "114a6ae55661d0115365e38b7537757e1e809c2c3c04808f80b0d43dbab12f63",
+    "config/CommonModules/SC01Lifecycle.xml": "25e1c7ce0dee5759abe0720508d95349ca8c6d96b5b4ed776022e6e9b792ebca",
+    "config/ConfigDumpInfo.xml": "d9e1739e465860bb72377119299cc362ad569950994ec8c349830884551477e9",
+    "config/Configuration.xml": "a15b58ab91553fec7f51875c339526b2d67e26e999faab5c3d21a797ba024ad2",
+    "config/Ext/ManagedApplicationModule.bsl": "7fb73a680f250d62a4361ff25ddbd00c7a49a29a70e861bed0f09856e8c4dbb5",
+    "config/Languages/Русский.xml": "a924e3e522d7280839ac816ff6b331d8c064bd1e57c5ae9f7395ce76b3dda147"
+  },
+  "checks": {
+    "load_exit_code": 0,
+    "load_dump_result": 0,
+    "update_exit_code": 0,
+    "update_dump_result": 0,
+    "check_exit_code": 0,
+    "check_dump_result": 0,
+    "check_report": "no errors found",
+    "run_exit_code": 0,
+    "run_natural_exit": true,
+    "run_seconds": 6.358,
+    "captured_tj_bytes": 191562,
+    "batch_finished": true,
+    "expected_cases_passed": true,
+    "canonical_job_states": [
+      "completed",
+      "failed"
+    ],
+    "distinct_job_uuids": true,
+    "same_actual_job_key": true,
+    "launch_parameter_output_directory": "explicit existing empty absolute directory",
+    "utc_representations_from_one_sample": true,
+    "all_runtime_utc_fields_consistent": true
+  },
+  "scope_limits": {
+    "full_native_tj_correlation_included": false,
+    "reproduces_45_minute_incident": false,
+    "exact_queue_timestamp_available": false,
+    "job_platform_date_precision": "seconds",
+    "job_platform_date_timezone": "not inferred by instrumentation",
+    "observed_utc_ms_epoch": "0001-01-01T00:00:00Z",
+    "bounded_native_body_correlation_verified": true,
+    "native_correlation_scope": "selected bounded body in complete capture; not whole-job coverage"
+  },
+  "not_verified": [
+    "Linux",
+    "client/server database mode",
+    "other platform builds"
+  ],
+  "primary_api_reference": {
+    "book": "shcntx_ru.hbk from the verified platform build",
+    "topics": [
+      "objects/Global context/properties/LaunchParameter2287.html",
+      "objects/Global context/methods/catalog805/GetPathSeparator4324.html",
+      "objects/catalog63/catalog343/File/methods/Exists797.html",
+      "objects/catalog63/catalog343/File/methods/IsDirectory811.html",
+      "objects/Global context/methods/catalog805/FindFiles809.html",
+      "objects/catalog63/catalog1482/BackgroundJobsManager/methods/Execute3343.html",
+      "objects/catalog63/catalog1482/BackgroundJob/methods/WaitForExecutionCompletion5454.html",
+      "objects/Global context/methods/catalog1762/CallSleep6493.html"
+    ],
+    "utc_seconds_representation": "Derived from the single UTC millisecond observation, not a second clock call."
+  },
+  "correlation_checks": [
+    {
+      "run": "run2",
+      "state": "completed",
+      "lifecycle_status": "established",
+      "native_link_status": "established",
+      "execution_seconds": 2,
+      "bounds_seconds": [
+        1,
+        3
+      ],
+      "native_parsed": 805,
+      "linked_count": 4,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": true,
+        "marker_enter_minus_runtime_enter_ms": 3.117,
+        "marker_exit_minus_runtime_exit_ms": -4.996
+      }
+    },
+    {
+      "run": "run2",
+      "state": "failed",
+      "lifecycle_status": "established",
+      "native_link_status": "not_established",
+      "execution_seconds": 2,
+      "bounds_seconds": [
+        1,
+        3
+      ],
+      "native_parsed": 805,
+      "linked_count": 0,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": null,
+        "marker_enter_minus_runtime_enter_ms": null,
+        "marker_exit_minus_runtime_exit_ms": null
+      }
+    },
+    {
+      "run": "run3",
+      "state": "completed",
+      "lifecycle_status": "established",
+      "native_link_status": "established",
+      "execution_seconds": 2,
+      "bounds_seconds": [
+        1,
+        3
+      ],
+      "native_parsed": 805,
+      "linked_count": 4,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": false,
+        "marker_enter_minus_runtime_enter_ms": 11.035,
+        "marker_exit_minus_runtime_exit_ms": 14.004
+      }
+    },
+    {
+      "run": "run3",
+      "state": "failed",
+      "lifecycle_status": "established",
+      "native_link_status": "not_established",
+      "execution_seconds": 2,
+      "bounds_seconds": [
+        1,
+        3
+      ],
+      "native_parsed": 805,
+      "linked_count": 0,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": null,
+        "marker_enter_minus_runtime_enter_ms": null,
+        "marker_exit_minus_runtime_exit_ms": null
+      }
+    },
+    {
+      "run": "run4",
+      "state": "completed",
+      "lifecycle_status": "established",
+      "native_link_status": "established",
+      "execution_seconds": 3,
+      "bounds_seconds": [
+        2,
+        4
+      ],
+      "native_parsed": 805,
+      "linked_count": 4,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": false,
+        "marker_enter_minus_runtime_enter_ms": -10.75,
+        "marker_exit_minus_runtime_exit_ms": -5.996
+      }
+    },
+    {
+      "run": "run4",
+      "state": "failed",
+      "lifecycle_status": "established",
+      "native_link_status": "not_established",
+      "execution_seconds": 2,
+      "bounds_seconds": [
+        1,
+        3
+      ],
+      "native_parsed": 805,
+      "linked_count": 0,
+      "pagination_checked": true,
+      "clock_alignment": {
+        "status": "not_verified",
+        "containment_at_1ms_resolution": null,
+        "marker_enter_minus_runtime_enter_ms": null,
+        "marker_exit_minus_runtime_exit_ms": null
+      }
+    }
+  ],
+  "negative_directory_checks": [
+    {
+      "case": "missing",
+      "instrumentation_version": 3,
+      "expected_error_observed": true,
+      "background_session_present": false
+    },
+    {
+      "case": "nonempty",
+      "instrumentation_version": 3,
+      "expected_error_observed": true,
+      "background_session_present": false
+    },
+    {
+      "case": "relative",
+      "instrumentation_version": 3,
+      "expected_error_observed": true,
+      "background_session_present": false
+    },
+    {
+      "case": "nonexistent",
+      "instrumentation_version": 3,
+      "expected_error_observed": true,
+      "background_session_present": false
+    }
+  ]
+}

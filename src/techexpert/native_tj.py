@@ -159,23 +159,26 @@ def _token(text, position, delimiter):
 
 
 def _properties(text, position):
-    properties = {}
+    properties, ambiguous = {}, {}
     while position < len(text):
         name, position = _token(text, position, '=')
         if not name or position >= len(text) or text[position] != '=':
             raise ValueError('property name must be followed by equals')
         value, position = _token(text, position + 1, ',')
-        if name in properties:
-            raise ValueError('duplicate property name')
-        properties[name] = value
+        if name in ambiguous:
+            ambiguous[name].append(value)
+        elif name in properties:
+            ambiguous[name] = [properties.pop(name), value]
+        else:
+            properties[name] = value
         if position == len(text):
-            return properties
+            return properties, ambiguous
         if text[position] != ',':
             raise ValueError('quoted value must end at a property boundary')
         position += 1
         if position == len(text):
             raise ValueError('trailing property separator')
-    return properties
+    return properties, ambiguous
 
 
 def _record(text, profile):
@@ -190,9 +193,9 @@ def _record(text, profile):
         timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=_offset(profile['utc_offset']))
     if header['separator'] == ',' and header.end() == len(text):
         raise ValueError('missing property after separator')
-    properties = _properties(text, header.end())
+    properties, ambiguous = _properties(text, header.end())
     return dict(raw_time=raw_time, event=header['event'], duration_us=int(header['duration']),
-                depth=int(header['depth']), properties=properties,
+                depth=int(header['depth']), properties=properties, ambiguous_properties=ambiguous,
                 timestamp=timestamp.isoformat(timespec='microseconds'),
                 timestamp_utc=timestamp.astimezone(timezone.utc).isoformat(timespec='microseconds'),
                 start_timestamp_utc=None)
@@ -259,6 +262,8 @@ def parse_tj(data, profile, max_records=100000, max_record_bytes=262144):
             limited('invalid_record', 'Record header, time or property grammar is invalid.', **location)
             continue
         record.update(location)
+        if record['ambiguous_properties']:
+            limited('ambiguous_property', 'Repeated properties retained separately; no value selected.', **location)
         records.append(record)
     if cursor < stop:
         limited('record_limit', 'Record-attempt budget reached; remaining bytes were not parsed.', byte_start=cursor)

@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "scenario": "SC-01",
+  "origin": "provided",
+  "correlation_profile": "1c-file-job-markers-v1",
+  "selection": {
+    "run": "a1982c27-3c0b-4311-ac53-254753e9239a"
+  },
+  "sources": [
+    {
+      "path": "native.txt",
+      "format": "1c-tj-text-v1",
+      "platform_version": "8.3.27.1989",
+      "encoding": "utf-8",
+      "placement": "plain",
+      "timestamp_format": "iso",
+      "utc_offset": "+03:00"
+    },
+    {
+      "path": "failed-controller.json",
+      "format": "1c-job-runtime-v1",
+      "role": "controller",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "failed-worker-enter.json",
+      "format": "1c-job-runtime-v1",
+      "role": "worker_enter",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    }
+  ]
+}

@@ -30,7 +30,8 @@ def doctor():
                 onec_installations=installations,
                 commands={x: shutil.which(x) for x in ('git', 'rac', 'ras', 'ssh', 'psql', 'sqlcmd')},
                 capabilities=dict(sc01_normalized_evidence='ready', synthetic_demo='ready',
-                                  source_profile='ready', native_tj='text_8.3.27.1989_only', native_jr='not_implemented',
+                                  source_profile='ready', native_tj='text_8.3.27.1989_only',
+                                  job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='not_implemented',
                                   sql='not_implemented', remote_os_collection='not_implemented', testpilot='not_implemented'))
 
 

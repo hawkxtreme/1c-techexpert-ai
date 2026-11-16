@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "scenario": "SC-01",
+  "origin": "provided",
+  "correlation_profile": "1c-file-job-markers-v1",
+  "selection": {
+    "run": "c5f11c18-514d-449a-b3d8-7ba5d23c3b39"
+  },
+  "sources": [
+    {
+      "path": "native.txt",
+      "format": "1c-tj-text-v1",
+      "platform_version": "8.3.27.1989",
+      "encoding": "utf-8",
+      "placement": "plain",
+      "timestamp_format": "iso",
+      "utc_offset": "+03:00"
+    },
+    {
+      "path": "completed-controller.json",
+      "format": "1c-job-runtime-v1",
+      "role": "controller",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "completed-worker-enter.json",
+      "format": "1c-job-runtime-v1",
+      "role": "worker_enter",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "completed-worker-exit.json",
+      "format": "1c-job-runtime-v1",
+      "role": "worker_exit",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    }
+  ]
+}
