@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=3
+SANITIZER_VERSION=4
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -165,17 +165,17 @@ def _json_secrets(text,privacy):
     elif not candidate.startswith('{'):return text
     try:value=json_value(text,reject_duplicates=True)
     except (ValueError,RecursionError) as exc:raise InputError('JSON excerpt cannot be safely decoded; provide complete bounded JSON or separately prepared text') from exc
-    stack=[(value,0)];visited=0;changed=False
+    stack=[(value,0)];visited=0
     while stack:
         item,depth=stack.pop();visited+=1
         if visited>8192 or depth>32:raise InputError('JSON excerpt requires bounded prepared text')
         if isinstance(item,dict):
             for key,child in item.items():
                 if re.fullmatch(SECRET_NAME,key,re.I):
-                    item[key]='[SECRET_REMOVED]';privacy.counts['secret']+=1;changed=True
+                    item[key]='[SECRET_REMOVED]';privacy.counts['secret']+=1
                 elif isinstance(child,(dict,list)):stack.append((child,depth+1))
         elif isinstance(item,list):stack.extend((child,depth+1) for child in item)
-    return json.dumps(value,ensure_ascii=False) if changed else text
+    return json.dumps(value,ensure_ascii=False)
 
 def _sanitize(text,privacy,known,public_urls):
     if not isinstance(text,str) or len(text.encode('utf-8'))>MAX_BODY:raise InputError('incident text exceeds 128 KiB')

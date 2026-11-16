@@ -295,6 +295,19 @@ class IncidentDraftTests(unittest.TestCase):
             view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
             self.assertNotIn('PRIVATE-VALUE',json.dumps(view));self.assertNotIn('PRIVATE-TOKEN',json.dumps(view))
 
+    def test_json_identifier_escapes_are_decoded_before_known_name_cleanup(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state)
+            artifact=save_artifact(state,'test',{},[('observation.json',b'{"database":"\\u0050rivateOrders"}')],{})
+            inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+                evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
+            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+            excerpt=next(f['text'] for f in view['files'] if f['path'].startswith('evidence/'))
+            self.assertNotIn('\\u0050rivateOrders',excerpt)
+            self.assertIn('DB_',excerpt)
+
     def test_old_cleanup_policy_draft_requires_new_preparation_before_export(self):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp);inv=self.investigation(state);view=self.api.prepare(state,inv['investigation_id'])
