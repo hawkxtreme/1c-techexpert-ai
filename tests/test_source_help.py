@@ -17,4 +17,12 @@ class SourceHelpTests(unittest.TestCase):
         self.assertIn('XML',help['sources']['jr']['excluded_inputs'])
         self.assertIn('сут',help['sources']['os']['long_observation'])
 
+    def test_source_export_help_distinguishes_planning_copy_and_explicit_native_step(self):
+        api=importlib.import_module('src.techexpert.source_help')
+        help=api.catalogue()['sources']['source'].get('export_help')
+        self.assertIsNotNone(help,'obtaining sources is missing from the setup helper')
+        self.assertTrue(help['title']);self.assertTrue(help['request_in_chat']);self.assertGreaterEqual(len(help['steps']),3)
+        text=' '.join(help['steps'])+' '+help['scope']
+        self.assertIn('копи',text);self.assertIn('отдельн',text);self.assertIn('Windows',text)
+
 if __name__=='__main__':unittest.main()

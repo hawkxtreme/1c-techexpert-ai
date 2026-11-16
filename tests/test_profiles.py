@@ -10,6 +10,15 @@ def profile():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_profile_save_uses_expected_revision_without_overwriting_another_context(self):
+        from src.techexpert.profiles import save_profile,load_profile
+        import inspect
+        self.assertIn('expected_revision',inspect.signature(save_profile).parameters,'CLI profile save needs a stale-writer guard')
+        with tempfile.TemporaryDirectory() as temp:
+            a=save_profile(temp,profile(),expected_revision=0)
+            b=dict(profile(),name='Other context');saved=save_profile(temp,b,expected_revision=a['revision'])
+            with self.assertRaisesRegex(ValueError,'changed|revision'):save_profile(temp,profile(),expected_revision=a['revision'])
+            self.assertEqual(load_profile(temp)['name'],'Other context');self.assertEqual(load_profile(temp)['revision'],saved['revision'])
     def test_local_preflight_does_not_probe_network_directories(self):
         from src.techexpert.profiles import check_profile
         for address in (r'\\network-review.invalid\logs', '//network-review.invalid/logs'):

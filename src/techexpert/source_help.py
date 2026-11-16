@@ -7,6 +7,11 @@ def catalogue():
     result=json_value(read_snapshot(Path(__file__).parent/'assets/source-help.json',128*1024).decode('utf-8'),reject_duplicates=True)
     if result.get('schema_version')!=1 or set(result.get('sources',{}))!={'tj','jr','source','sql','rac','os'}:raise InputError('unsupported source-help catalogue')
     for item in result['sources'].values():
+        if 'export_help' in item:
+            helper=item['export_help']
+            if not isinstance(helper,dict) or set(helper)!={'title','request_in_chat','steps','scope'}:raise InputError('invalid source export help')
+            if any(not isinstance(helper[key],str) or not helper[key] or len(helper[key])>2048 for key in ('title','request_in_chat','scope')):raise InputError('invalid source export help text')
+            if not isinstance(helper['steps'],list) or not 1<=len(helper['steps'])<=10 or any(not isinstance(x,str) or not x or len(x)>2048 for x in helper['steps']):raise InputError('invalid source export help steps')
         for key in ('purpose','expected_format','example','rights','agent_actions','long_observation','excluded_inputs'):
             if not isinstance(item.get(key),str) or not 1<=len(item[key])<=8192:raise InputError('incomplete source help')
         for key in ('windows_steps','linux_steps'):

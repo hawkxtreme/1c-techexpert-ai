@@ -1,7 +1,6 @@
 """Immutable local observations with bounded evidence and integrity receipts."""
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
 import uuid
@@ -42,8 +41,10 @@ def save_artifact(state_dir, kind, request, sources, result):
                 result=result,sources=evidence,requires_ai_interpretation=True)
     report_data=encoded(report,MAX_REPORT_BYTES)
     folder=artifact_folder(state_dir,report['artifact_id'])
-    (folder/'sources').mkdir(parents=True,exist_ok=False)
-    if os.name!='nt':folder.chmod(0o700)
+    folder.mkdir(parents=True,exist_ok=False)
+    from .windows_native import protect_directory
+    protect_directory(folder)
+    (folder/'sources').mkdir()
     (folder/'request.json').write_bytes(request_data)
     (folder/'report.json').write_bytes(report_data)
     for metadata,(_,data) in zip(evidence,sources):

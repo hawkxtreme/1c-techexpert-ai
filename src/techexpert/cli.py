@@ -22,6 +22,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('doctor')
     commands.add_parser('profile')
+    profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
     commands.add_parser('demo')
     analyze = commands.add_parser('analyze')
     analyze.add_argument('manifest', type=Path)
@@ -98,6 +99,9 @@ def main(argv=None):
     source_read=commands.add_parser('source-read')
     source_read.add_argument('artifact_id');source_read.add_argument('path')
     source_read.add_argument('--start',type=int,default=1);source_read.add_argument('--limit',type=int,default=50)
+    export_plan=commands.add_parser('source-export-plan');export_plan.add_argument('request',type=Path)
+    source_export=commands.add_parser('source-export');source_export.add_argument('plan_id');source_export.add_argument('--expected-sha256',required=True)
+    export_status=commands.add_parser('source-export-status');export_status.add_argument('plan_id')
     jr=commands.add_parser('jr-import')
     jr.add_argument('path',type=Path);jr.add_argument('--platform-version',required=True)
     jr.add_argument('--utc-offset')
@@ -131,6 +135,10 @@ def main(argv=None):
     try:
         if args.command == 'doctor':
             result = doctor(args.state_dir)
+        elif args.command == 'profile-save':
+            from .profiles import save_profile
+            from .inputs import read_snapshot,json_value
+            result=save_profile(args.state_dir,json_value(read_snapshot(args.document,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
         elif args.command == 'profile':
             result = load_profile(args.state_dir) or dict(status='not_configured', next_step='init')
         elif args.command in ('demo','analyze'):
@@ -240,6 +248,13 @@ def main(argv=None):
             if getattr(args,'summary',False):
                 result.pop('body',None)
                 if 'files' in result:result['files']=[{k:v for k,v in item.items() if k!='text'} for item in result['files']]
+        elif args.command in ('source-export-plan','source-export','source-export-status'):
+            from .source_export import prepare,execute,status
+            if args.command=='source-export-plan':
+                from .inputs import read_snapshot,json_value
+                result=prepare(args.state_dir,json_value(read_snapshot(args.request,1024*1024).decode('utf-8-sig'),reject_duplicates=True))
+            elif args.command=='source-export':result=execute(args.state_dir,args.plan_id,expected_sha256=args.expected_sha256)
+            else:result=status(args.state_dir,args.plan_id)
         elif args.command=='source-search':
             from .source_code import search_source
             result=search_source(args.state_dir,args.artifact_id,args.query,limit=args.limit)

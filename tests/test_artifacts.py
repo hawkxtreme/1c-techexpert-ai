@@ -1,6 +1,7 @@
 import importlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,17 @@ class ArtifactTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('src.techexpert.artifacts'), 'immutable artifact storage is missing')
         self.api = importlib.import_module('src.techexpert.artifacts')
+
+    @unittest.skipUnless(os.name=='nt','Windows ACL read-back')
+    def test_new_artifact_and_evidence_inherit_private_access(self):
+        from src.techexpert.windows_native import directory_policy
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp);report=self.api.save_artifact(root,'test',{},[('private.txt',b'private')],{})
+            folder=root/'artifacts'/report['artifact_id']
+            try:policy=directory_policy(folder)
+            except ValueError as exc:self.fail('new artifact directory lacks private access: '+str(exc))
+            self.assertTrue(policy['protected'])
+            self.assertEqual(set(directory_policy(folder/'sources/s1.bin')['allow']),{'owner','administrators','system'})
 
     def test_apdex_cli_keeps_snapshot_and_explicit_selection(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -22,6 +22,7 @@ description: Подготовить локальный 1C TechExpert AI, отк�
 - **Настройка и доступы.** [setup-and-access](../setup-and-access/SKILL.md).
 - **ТЖ / ЖР / кластер.** [tech-log](../tech-log/SKILL.md), [event-log](../event-log/SKILL.md), [onec-cluster](../onec-cluster/SKILL.md).
 - **СУБД и код.** [postgresql](../postgresql/SKILL.md), [sql-server](../sql-server/SKILL.md), [onec-source](../onec-source/SKILL.md).
+- **Нет исходников выбранной базы.** Прочитай [onec-source](../onec-source/SKILL.md) и используй `source-export-plan` для проверенного Windows/file-профиля. Покажи условия и пределы, выполни отдельно разрешённый экспорт на частной копии, подключи снимок к тому же расследованию. Готовый каталог не упаковывается в архив.
 - **Нагрузка и клиент.** [os-metrics](../os-metrics/SKILL.md), [client-ui-performance](../client-ui-performance/SKILL.md).
 - **Цель, исправление, отчёт.** [apdex-and-observation](../apdex-and-observation/SKILL.md), [verify-improvement](../verify-improvement/SKILL.md), [report-and-evidence](../report-and-evidence/SKILL.md).
 - **Предложить случай в базу знаний.** [Предпросмотр и экспорт](references/incident-drafts.md): подготовь очищенный локальный черновик, покажи человеку полный текст и состав, внеси исправления. Отправляй в конкретный GitHub-репозиторий только по явному поручению отправить этот просмотренный результат.

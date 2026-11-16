@@ -103,6 +103,7 @@
       <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
       <p class="hint" id="source-context"></p>
       <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="rac">Кластер 1С · RAS/RAC</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
+      <details class="box" id="source-export-help" hidden><summary>Помочь получить исходники</summary><div id="source-export-help-body" class="stack"></div></details>
       <div id="source-list" class="stack"></div>
       <p id="empty-sources" class="note">Источников пока нет. Можно сохранить выбранные базы и вместе с агентом подготовить необходимые данные.</p>
       <p class="hint">Настройте только доступные источники. Сохранение не подключает системы и не запускает сбор. На следующем шаге можно отдельно проверить локальную готовность; подключение SQL и удалённый сбор выполняются агентом по разрешённому плану.</p>
@@ -223,6 +224,12 @@
         return 'По умолчанию один сбор длится 300 секунд с шагом 1 секунда. Значения можно изменить. SSH и WinRM должны быть настроены заранее; на узле требуется Python 3.10+. Службы и сбор при сохранении не запускаются.';
       }
       function renderSources(openId) {
+        const exportHelp=sourceHelp?.sources.source.export_help;const exportPanel=q('#source-export-help');exportPanel.hidden=!exportHelp;
+        const exportBody=q('#source-export-help-body');exportBody.replaceChildren();
+        if(exportHelp){
+          exportBody.append(element('p',exportHelp.request_in_chat));const steps=element('ol');
+          exportHelp.steps.forEach(text=>steps.append(element('li',text)));exportBody.append(steps,element('p',exportHelp.scope,'note'));
+        }
         const box = q('#source-list'); const previousOpen = new Set([...box.querySelectorAll('details[open]')].map(node => node.dataset.sourceId)); box.replaceChildren();
         const bases = selectedBases(); const serverCount = eligibleBases('sql').length;
         q('#source-context').textContent = (state.name.trim() || 'Окружение без названия') + ' · ' + bases.map(base => base.name).join(', ') + (serverCount ? '. Общие ресурсы связываются с нужными базами ниже.' : bases.every(base => base.mode === 'file') ? '. Для файловых баз SQL неприменим.' : '. Для неизвестного типа SQL пока недоступен; тип можно уточнить с агентом.');
@@ -262,6 +269,7 @@
             fields.append(field('Пользователь СУБД · если задан отдельно',settings.user,value=>{settings.user=value;}),field('Ссылка на существующий способ доступа · без пароля',settings.credential_ref,value=>{settings.credential_ref=value;},'Например, настроенный pgpass / служба libpq'));
           } else if(source.type==='source') {
             fields.append(choice('Вид исходников',[['catalog','Локальный каталог'],['git','Git-репозиторий']],settings.kind,value=>{settings.kind=value;renderSources(source.id);}));
+            if(exportHelp){const obtain=element('button','Помочь получить исходники');obtain.type='button';obtain.addEventListener('click',()=>{exportPanel.open=true;exportPanel.scrollIntoView({block:'nearest'});});fields.append(obtain);}
             if(settings.kind==='git')fields.append(field('Ветка / commit · если известны',settings.ref,value=>{settings.ref=value;}));
           } else if(source.type==='tj' || source.type==='jr') {
             fields.append(field('Версия платформы источника · если известна',settings.platform_version,value=>{settings.platform_version=value;},'8.3.27.1989'),field('Смещение времени журнала от UTC · если подтверждено',settings.utc_offset,value=>{settings.utc_offset=value;},'Например, +03:00'));

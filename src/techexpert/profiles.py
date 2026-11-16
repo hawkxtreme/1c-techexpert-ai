@@ -39,6 +39,7 @@ def doctor(state_dir=None):
                                   local_os_collection='windows_pdh_linux_proc; counters_require_actual_check',
                                   remote_os_collection='ssh_winrm_launchers; existing_access_and_remote_python_required',
                                   apdex='normalized_measurements_only',source_snapshot='bounded_xml_bsl_catalog_or_local_git_commit',
+                                  source_export='windows_file_8.3.27.1989_private_copy_editable_main_only',
                                   knowledge='bundled_offline_linked_cards',testpilot='not_implemented'))
 
 
@@ -208,7 +209,7 @@ def check_profile(value):
     return dict(status='local_preflight_only',sources=checks,connected=False,collection_started=False,logcfg_changed=False)
 
 
-def save_profile(state_dir, profile):
+def save_profile(state_dir, profile, *, expected_revision=None):
     clean = validate_profile(profile)
     folder = Path(state_dir) / 'profiles'
     folder.mkdir(parents=True, exist_ok=True)
@@ -219,6 +220,10 @@ def save_profile(state_dir, profile):
     except FileExistsError as exc:
         raise InputError('profile is being saved; retry after the current writer completes') from exc
     try:
+        if expected_revision is not None:
+            if type(expected_revision) is not int or expected_revision<0:raise InputError('invalid expected profile revision')
+            current=load_profile(state_dir)
+            if (current['revision'] if current else 0)!=expected_revision:raise InputError('profile revision changed; inspect the current profile before saving')
         revisions = [int(p.stem) for p in folder.glob('*.json') if p.stem.isdecimal()]
         clean['revision'] = max(revisions, default=0) + 1
         if len((json.dumps(clean,ensure_ascii=False,indent=2)+'\n').encode('utf-8')) > 1024*1024:

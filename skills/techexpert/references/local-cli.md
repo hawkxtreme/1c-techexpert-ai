@@ -1,5 +1,7 @@
 # Локальный CLI
 
+Если готовых XML/BSL нет, [помощник выгрузки](source-export.md) задаёт `source-export-plan`, отдельно выбранный `source-export`, проверку `source-export-status` и сохранение готового пути через `profile-save --expected-revision`. Сохранение профиля остаётся настройкой и не запускает native-операции.
+
 ## Ревизии расследования
 
 Для `templates`, `template`, `investigation-create`, `investigation-update`, `investigation` и продолжения после сообщения о повторении используйте [контракт состояния](investigation-state.md). Это дополнение к immutable `case_id`, `artifact_id` и `comparison_id`; оно не заменяет их сырые доказательства. `init --investigation ID` получает контекст из того же сохранённого расследования.

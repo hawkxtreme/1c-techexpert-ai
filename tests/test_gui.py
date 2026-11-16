@@ -39,6 +39,16 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertTrue(value['sources']['tj']['windows_steps'])
         self.assertFalse(self.state_dir.exists())
 
+    def test_source_export_help_is_available_without_starting_export_or_saving_profile(self):
+        from unittest.mock import patch
+        with patch('src.techexpert.source_export.prepare') as prepare,patch('src.techexpert.windows_native.run') as launch:
+            status,_,body=self.request('GET','/')
+            self.assertEqual(status,200);self.assertTrue(b'id="source-export-help"' in body,'source preparation route is missing')
+            self.assertTrue('Помочь получить исходники' in body.decode('utf-8'))
+            status,_,body=self.request('GET','/api/source-help');self.assertEqual(status,200)
+            self.assertTrue(json.loads(body)['sources']['source']['export_help']['request_in_chat'])
+            prepare.assert_not_called();launch.assert_not_called();self.assertFalse(self.state_dir.exists())
+
     def test_investigation_context_requires_auth_and_only_edits_selected_investigation(self):
         from src.techexpert.investigations import create,load
         investigation=create(self.state_dir,dict(task='Загрузка медленная',template_id='TPL-02',time_mode='past',scale='background'))
