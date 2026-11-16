@@ -128,11 +128,12 @@ class IncidentDraftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp);inv=self.investigation(state)
             first=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-1'])
-            excerpt=next(f for f in first['files'] if f['path']=='evidence/E-1.txt')
+            excerpt=next(f for f in first['files'] if f['path'].startswith('evidence/'))
+            public_id=Path(excerpt['path']).stem
             self.assertEqual(hashlib.sha256(excerpt['text'].encode()).hexdigest(),excerpt['sha256'])
             self.assertIn('private raw source',first['body'])
             self.assertIn('private raw source',self.api.send_plan(state,first['draft_id'],'owner/repository',expected_sha256=first['preview_sha256'])['body'])
-            removed=self.api.edit(state,first['draft_id'],title=first['title'],body=first['body'],exclude_evidence_ids=['E-1'],expected_sha256=first['preview_sha256'])
+            removed=self.api.edit(state,first['draft_id'],title=first['title'],body=first['body'],exclude_evidence_ids=[public_id],expected_sha256=first['preview_sha256'])
             self.assertFalse(any(f['path'].startswith('evidence/') for f in removed['files']))
             self.assertNotIn('private raw source',removed['body'])
             self.assertNotEqual(first['preview_sha256'],removed['preview_sha256'])
@@ -244,5 +245,90 @@ class IncidentDraftTests(unittest.TestCase):
             path=state/'incident-drafts'/prepared['draft_id']/'submissions'/(action['action_sha256']+'.json')
             receipt=json.loads(path.read_text());receipt['unexpected']='private value';path.write_text(json.dumps(receipt),encoding='utf-8')
             with self.assertRaisesRegex(ValueError,'submission'):self.api.send_plan(state,prepared['draft_id'],'owner/repository',expected_sha256=prepared['preview_sha256'])
+
+    def test_quoted_json_secret_fields_are_removed_including_nested_and_escaped_values(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state)
+            secrets={'password':'SYNTHETIC-JSON-SECRET','api_key':'SYNTHETIC-KEY','пароль':'СЕКРЕТ-ИЗ-JSON','token':'SYNTHETIC-ESCAPED-"-TAIL'}
+            data=json.dumps({'nested':secrets},ensure_ascii=False).encode()
+            artifact=save_artifact(state,'test',{},[('observation.json',data)],{})
+            inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+                evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
+            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+            serialized=json.dumps(view,ensure_ascii=False)
+            for value in (*secrets.values(),'SYNTHETIC-ESCAPED','TAIL'):
+                self.assertNotIn(value,serialized)
+                self.assertNotIn(value,(state/'incident-private'/(inv['investigation_id']+'.json')).read_text(encoding='utf-8'))
+
+    def test_public_evidence_names_do_not_expose_arbitrary_local_identifiers(self):
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state)
+            inv=revise(state,inv['investigation_id'],dict(evidence=inv['evidence']+[dict(id='E-PrivateOrders',attachment='A-1',record='s1')]),expected_revision=2)
+            first=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-PrivateOrders'])
+            self.assertNotIn('PrivateOrders',json.dumps(first,ensure_ascii=False))
+            file=next(f for f in first['files'] if f['path'].startswith('evidence/'))
+            another=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-PrivateOrders'],include_versions=True)
+            self.assertEqual(file['path'],next(f for f in another['files'] if f['path'].startswith('evidence/'))['path'])
+
+    def test_encoded_json_secret_keys_and_nonstring_values_are_removed_before_text_cleanup(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state)
+            artifact=save_artifact(state,'test',{},[('observation.json',b'{"\\u0070assword":{"part":"PRIVATE-VALUE"},"nested":[{"token":["PRIVATE-TOKEN"]}]}')],{})
+            inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+                evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
+            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+            self.assertNotIn('PRIVATE-VALUE',json.dumps(view));self.assertNotIn('PRIVATE-TOKEN',json.dumps(view))
+
+    def test_old_cleanup_policy_draft_requires_new_preparation_before_export(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state);view=self.api.prepare(state,inv['investigation_id'])
+            folder=state/'incident-drafts'/view['draft_id']/'revisions'/'000001'
+            source=json.loads((folder/'source.json').read_text(encoding='utf-8'));source['sanitizer_version']=0
+            raw=json.dumps(source).encode();(folder/'source.json').write_bytes(raw)
+            receipt=json.loads((folder/'receipt.json').read_text(encoding='utf-8'));receipt['source_sha256']=hashlib.sha256(raw).hexdigest()
+            (folder/'receipt.json').write_text(json.dumps(receipt),encoding='utf-8')
+            with self.assertRaisesRegex(ValueError,'policy changed'):self.api.export(state,view['draft_id'],state/'old.zip',expected_sha256=view['preview_sha256'])
+            self.assertFalse((state/'old.zip').exists())
+
+    def test_json_decoding_must_not_introduce_hidden_direction_controls_into_the_preview(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.investigation(state)
+            artifact=save_artifact(state,'test',{},[('observation.json',b'{"password":"private","note":"\\u202e"}')],{})
+            inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+                evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
+            with self.assertRaisesRegex(ValueError,'control'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+
+    def jr_investigation(self,state):
+        from src.techexpert.native_jr import read_journal
+        from src.techexpert.investigations import revise
+        inv=self.investigation(state);journal=state/'jr';journal.mkdir()
+        header='1CV8LOG(ver 2.0)\n12345678-1234-4234-8234-123456789012\n'
+        (journal/'1Cv8.lgf').write_text(header+'{1,"OperatorPetrov",1},\n{2,"PERSONAL-COMPUTER-01",1},\n{3,"Client",1},\n{4,"_$Job$_.Start",1},\n',encoding='utf-8')
+        (journal/'20261116000000.lgp').write_text(header+'{20261116090000,N,0,1,1,1,1,1,I,"OperatorPetrov PERSONAL-COMPUTER-01",0,{},0,0,0,0,1,0,0},\n',encoding='utf-8')
+        artifact=read_journal(state,journal,platform_version='8.3.27.1989',utc_offset='+03:00')
+        self.assertEqual(artifact['result']['event_count'],1)
+        inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=artifact['artifact_id'])],
+            evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1'),dict(id='E-3',attachment='A-2',record='s2:r1')]),expected_revision=2)
+        return inv
+
+    def test_whole_serialized_jr_dictionary_is_not_a_prepared_public_excerpt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.jr_investigation(state)
+            with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+
+    def test_selected_jr_record_uses_resolved_user_and_computer_for_cleanup(self):
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp);inv=self.jr_investigation(state)
+            inv=revise(state,inv['investigation_id'],dict(open_questions=['OperatorPetrov on PERSONAL-COMPUTER-01']),expected_revision=3)
+            view=self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-3'])
+            for value in ('OperatorPetrov','PERSONAL-COMPUTER-01'):self.assertNotIn(value,json.dumps(view))
 
 if __name__=='__main__':unittest.main()

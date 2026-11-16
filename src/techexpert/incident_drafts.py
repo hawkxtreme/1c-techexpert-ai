@@ -24,8 +24,10 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
+SANITIZER_VERSION=2
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
-SECRET=re.compile(r'''(?ix)\b(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)\s*[=:]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
+SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
+SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
 URL=re.compile(r'(?i)\b[a-z][a-z0-9+.-]{1,20}://[^\s<>"\[\]]+')
 GUID=re.compile(r'(?i)\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b')
 EMAIL=re.compile(r'(?iu)\b[\w.+%-]+@(?:[\w-]+\.)+[\w-]{2,63}\b')
@@ -150,8 +152,25 @@ def _known(doc,state_dir):
         if len(values)>2048:raise InputError('incident identifier catalogue exceeds bounds')
     return values
 
+def _json_secrets(text,privacy):
+    if not text.lstrip().startswith(('{','[')):return text
+    try:value=json_value(text,reject_duplicates=True)
+    except (ValueError,RecursionError):return text
+    stack=[(value,0)];visited=0;changed=False
+    while stack:
+        item,depth=stack.pop();visited+=1
+        if visited>8192 or depth>32:raise InputError('JSON excerpt requires bounded prepared text')
+        if isinstance(item,dict):
+            for key,child in item.items():
+                if re.fullmatch(SECRET_NAME,key,re.I):
+                    item[key]='[SECRET_REMOVED]';privacy.counts['secret']+=1;changed=True
+                elif isinstance(child,(dict,list)):stack.append((child,depth+1))
+        elif isinstance(item,list):stack.extend((child,depth+1) for child in item)
+    return json.dumps(value,ensure_ascii=False) if changed else text
+
 def _sanitize(text,privacy,known,public_urls):
     if not isinstance(text,str) or len(text.encode('utf-8'))>MAX_BODY:raise InputError('incident text exceeds 128 KiB')
+    text=_json_secrets(text,privacy)
     if any((ord(c)<32 and c not in '\n\r\t') or ord(c)==127 or unicodedata.category(c)=='Cf' for c in text):raise InputError('incident excerpt requires plain text preparation; hidden control characters are not exported')
     def removed(category,replacement):
         def apply(match):privacy.counts[category]+=1;return replacement
@@ -188,17 +207,22 @@ def _sanitize(text,privacy,known,public_urls):
     for key,value in protected.items():text=text.replace(key,value)
     return text
 
-def _source_bytes(state_dir,doc,evidence_id):
+def _source_bytes(state_dir,doc,evidence_id,known):
     evidence=next((e for e in doc['evidence'] if e['id']==evidence_id),None)
     if evidence is None:raise InputError('unknown evidence selected for draft')
     attachment=next(a for a in doc['attachments'] if a['id']==evidence['attachment'])
     if attachment['kind']=='case':result=read_evidence(state_dir,attachment['target_id'],evidence['record'])
     elif attachment['kind']=='artifact':
-        if load_artifact(state_dir,attachment['target_id'])['kind']=='onec_source':
+        kind=load_artifact(state_dir,attachment['target_id'])['kind']
+        if kind=='onec_source':
             raise InputError('encoded source snapshots require a separate prepared text excerpt; raw source bundles are not exported')
-        if ':r' in evidence['record']:
+        if kind=='native-jr':
+            if ':r' not in evidence['record']:raise InputError('whole JR dictionaries/parts require separate prepared text; select a jr-record instead')
             from .native_jr import read_record
             result=read_record(state_dir,attachment['target_id'],evidence['record'])
+            for key,category in (('user','USER'),('computer','NODE')):
+                value=result['record'].get(key)
+                if isinstance(value,str) and 2<=len(value)<=4096 and not SECRET.search(value):known.setdefault(value,category)
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])
     else:
         result=dict(text=json.dumps(dict(kind='calculation',report_digest=attachment['report_sha256']),ensure_ascii=False),truncated=False)
@@ -301,6 +325,7 @@ def _load(state_dir,draft_id):
     source_bytes=read_snapshot(revision/'source.json',65536)
     if _hash(source_bytes)!=receipt.get('source_sha256'):raise InputError('incident source integrity mismatch')
     source=json_value(source_bytes.decode(),reject_duplicates=True)
+    if source.get('sanitizer_version')!=SANITIZER_VERSION:raise InputError('incident cleanup policy changed; prepare a new draft from the investigation')
     doc=load_investigation(state_dir,source['investigation_id'],revision=source['investigation_revision'])
     if _digest(doc)!=source['investigation_digest']:raise InputError('incident source investigation integrity mismatch')
     _,entries=_privacy_document(Path(state_dir)/'incident-private'/(_identifier(source['investigation_id'])+'.json'))
@@ -338,7 +363,7 @@ def prepare(state_dir,investigation_id,*,revision=None,include_versions=False,ex
     if not isinstance(selected,list) or len(selected)>10 or any(not isinstance(e,str) for e in selected) or len(set(selected))!=len(selected):raise InputError('select at most 10 distinct evidence records')
     allowed_urls=_public_urls(urls);known=_known(doc,state_dir)
     options=dict(include_versions=include_versions,exclude_sections=excluded,public_urls=urls,evidence_ids=selected)
-    key=_digest(dict(investigation_id=investigation_id,revision=doc['revision'],digest=_digest(doc),options=options,sanitizer_version=1))
+    key=_digest(dict(investigation_id=investigation_id,revision=doc['revision'],digest=_digest(doc),options=options,sanitizer_version=SANITIZER_VERSION))
     root=Path(state_dir)/'incident-drafts';root.mkdir(parents=True,exist_ok=True);lock=root/'write.lock'
     try:
         with lock.open('x',encoding='ascii') as stream:stream.write(str(os.getpid()))
@@ -349,20 +374,23 @@ def prepare(state_dir,investigation_id,*,revision=None,include_versions=False,ex
         if len(index)>=1000:raise InputError('incident index limit reached; retain existing drafts')
         excerpts={};provenance={}
         with _Privacy(state_dir,investigation_id) as privacy:
+            originals={eid:_source_bytes(state_dir,doc,eid,known) for eid in selected}
             title=('[Кейс] '+_sanitize(doc['task'],privacy,known,allowed_urls).replace('\n',' '))[:120]
             body=_sanitize(_content(doc,excluded),privacy,known,allowed_urls).strip()+'\n'
             for eid in selected:
-                raw,truncated,proof=_source_bytes(state_dir,doc,eid)
+                raw,truncated,proof=originals[eid]
                 cleaned=_sanitize(raw,privacy,known,allowed_urls).encode('utf-8')
-                excerpts['evidence/'+eid+'.txt']=cleaned;provenance[eid]=dict(original=proof,truncated_before_cleanup=truncated,sanitized_sha256=_hash(cleaned))
+                public_eid='E-'+privacy.alias('ID',eid)[3:]
+                excerpts['evidence/'+public_eid+'.txt']=cleaned
+                provenance[public_eid]=dict(original_evidence_id=eid,original=proof,truncated_before_cleanup=truncated,sanitized_sha256=_hash(cleaned))
             body=_with_excerpts(body,excerpts)
             scopes={'synthetic','provided','controlled_real_background_job','controlled_loopback_http_service','not_established'}
             report=dict(schema_version=1,source_origin_scopes=sorted({a['source_origin'] if isinstance(a['source_origin'],str) and a['source_origin'] in scopes else 'unknown' for a in doc['attachments']}),
-                        evidence=[dict(id=eid,truncated=provenance[eid]['truncated_before_cleanup'],sanitized_sha256=provenance[eid]['sanitized_sha256']) for eid in selected])
+                        evidence=[dict(id=eid,truncated=record['truncated_before_cleanup'],sanitized_sha256=record['sanitized_sha256']) for eid,record in provenance.items()])
             if include_versions:
                 report['versions']={key:value if isinstance(value,str) and (bool(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?',value)) if key=='product' else bool(re.fullmatch('[a-f0-9]{64}',value))) else None
                     for key,value in doc['versions'].items() if key in ('product','knowledge','skills_sha256','instructions_sha256')}
-            source=dict(investigation_id=investigation_id,investigation_revision=doc['revision'],investigation_digest=_digest(doc),options=options,evidence_provenance=provenance,aliases=sorted(privacy.used))
+            source=dict(sanitizer_version=SANITIZER_VERSION,investigation_id=investigation_id,investigation_revision=doc['revision'],investigation_digest=_digest(doc),options=options,evidence_provenance=provenance,aliases=sorted(privacy.used))
             draft_id=uuid.uuid4().hex;head=_persist(draft_folder(state_dir,draft_id),1,title,body,report,excerpts,privacy.counts,source)
         write_json(draft_folder(state_dir,draft_id)/'head.json',head)
         index[key]=draft_id;write_json(root/'index.json',index)
@@ -385,6 +413,7 @@ def edit(state_dir,draft_id,*,title,body,expected_sha256,exclude_evidence_ids=No
         if not isinstance(excluded,list) or any(e not in ids for e in excluded):raise InputError('unknown excluded incident evidence')
         with _Privacy(state_dir,source['investigation_id']) as privacy:
             known=_known(doc,state_dir);urls=_public_urls(source['options']['public_urls'])
+            for eid in source['options']['evidence_ids']:_source_bytes(state_dir,doc,eid,known)
             if not isinstance(body,str):raise InputError('incident body requires text')
             _,_,old_tail=view['body'].partition(EXCERPT_HEADING)
             supplied_body,_,supplied_tail=body.partition(EXCERPT_HEADING)
