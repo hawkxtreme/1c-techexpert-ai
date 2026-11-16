@@ -32,6 +32,8 @@ def doctor():
                 capabilities=dict(sc01_normalized_evidence='ready', synthetic_demo='ready',
                                   source_profile='ready', native_tj='text_8.3.27.1989_only',
                                   job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='not_implemented',
+                                  order_load='controlled_windows_file_8.3.27.1989_only',
+                                  fix_comparison='sc01_order_load_five_pairs_only',
                                   sql='not_implemented', remote_os_collection='not_implemented', testpilot='not_implemented'))
 
 

@@ -1,0 +1,763 @@
+{
+  "schema": 1,
+  "provenance": "sanitized_real_capture",
+  "byte_identical_to_original": false,
+  "scenario": "SC-01",
+  "workload_profile": "sc01-order-load-v1",
+  "platform_version": "8.3.27.1989",
+  "capture_date": "2026-11-16",
+  "environment": "isolated controlled Windows file infobase and loopback HTTP catalog",
+  "cases": [
+    {
+      "case": "baseline",
+      "manifest": "baseline.json",
+      "job_uuid": "0a5f27a8-f170-4bd8-a114-d0e89787d047",
+      "nonce": "8cc12a5e-8d1d-45f8-88eb-0fbfb763d909",
+      "batch_id": "070c2f3d-0d5c-4bcd-82b1-cd6ddecde228",
+      "session_number": 2,
+      "session_uuid": "62f1665e-4488-4435-bb45-0f834ecb9711",
+      "source_manifest": {
+        "label": "baseline_input_manifest",
+        "sha256": "3395d46936a29d1afb7f8e9c1b59b3bfcb685044adb4be31387b1f325cde5e88",
+        "bytes": 2247
+      },
+      "native": {
+        "file": "baseline-native.txt",
+        "source": {
+          "label": "baseline_native_capture",
+          "sha256": "131b11f4484dcbc37034a3c945e5f915c71306d60ed713ba145d7034f259e25f",
+          "bytes": 617229,
+          "records": 1123,
+          "parse_status": "partial",
+          "limitation_counts": {
+            "ambiguous_property": 201
+          }
+        },
+        "published_records": 1007,
+        "body_records": 1005,
+        "body_events": {
+          "SDBL": 1005
+        },
+        "ambiguous_properties": {
+          "Func": 200
+        },
+        "ranges": [
+          {
+            "label": "session_start",
+            "source": {
+              "record_index_start_0": 84,
+              "record_index_end_0": 84,
+              "record_count": 1,
+              "line": 223,
+              "end_line": 223,
+              "byte_start": 33498,
+              "byte_end": 33715,
+              "sha256": "ba2e7270fba8aa104fc9b3cc85a084e1b36ae028c2052cd9d8ce90614b02cd67"
+            },
+            "published": {
+              "line": 1,
+              "end_line": 1,
+              "byte_start": 0,
+              "byte_end": 178,
+              "sha256": "c6b10d3304e6172ac11fd123073faeae6cd4c470a9f8351327e7657cb4e69a83"
+            }
+          },
+          {
+            "label": "complete_body_window",
+            "source": {
+              "record_index_start_0": 99,
+              "record_index_end_0": 1103,
+              "record_count": 1005,
+              "line": 240,
+              "end_line": 4058,
+              "byte_start": 38064,
+              "byte_end": 606949,
+              "sha256": "7432e9494075018edeae6f0857568e0cfca9e7c7e9eccbb67ae17d64a86bc06e"
+            },
+            "published": {
+              "line": 2,
+              "end_line": 3820,
+              "byte_start": 178,
+              "byte_end": 569063,
+              "sha256": "7432e9494075018edeae6f0857568e0cfca9e7c7e9eccbb67ae17d64a86bc06e"
+            }
+          },
+          {
+            "label": "session_finish",
+            "source": {
+              "record_index_start_0": 1106,
+              "record_index_end_0": 1106,
+              "record_count": 1,
+              "line": 4063,
+              "end_line": 4063,
+              "byte_start": 607556,
+              "byte_end": 607781,
+              "sha256": "1ec342cbc445845a8250df32110a6378826eeb885478e25c3ccfab15653e9a49"
+            },
+            "published": {
+              "line": 3821,
+              "end_line": 3821,
+              "byte_start": 569063,
+              "byte_end": 569249,
+              "sha256": "e97c3d90723adb58c7fcf7531fbda3933c29381769767ad88ce5dcfcc45bd2be"
+            }
+          }
+        ],
+        "transformations": [
+          {
+            "operation": "select_complete_record_ranges",
+            "details": "One contiguous body range including both exact SDBL markers, plus matching SESN Start and Finish; other records omitted."
+          },
+          {
+            "operation": "replace_infobase_path",
+            "replacement": "C:\\controlled\\order-ib",
+            "occurrences": 2
+          },
+          {
+            "operation": "preserve_other_native_bytes",
+            "details": "All body bytes, duplicate fields, timestamps, identifiers and original line endings retained."
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "file": "baseline-controller.json",
+          "format": "1c-job-runtime-v1",
+          "role": "controller",
+          "source": {
+            "label": "baseline_controller",
+            "sha256": "17a4ff3cc9bab8220c295ca3df9f407f1400e238f2edffc7d58629dd819e1b57",
+            "bytes": 30889,
+            "byte_start": 0,
+            "byte_end": 30889,
+            "line": 1,
+            "end_line": 1727
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/input_csv",
+              "operation": "replace_input_path",
+              "replacement": "C:\\controlled\\orders.csv"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "pointer": "/stages/0/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/1/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/2/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/3/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/4/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/final_job_snapshot/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "baseline-worker-enter.json",
+          "format": "1c-job-runtime-v1",
+          "role": "worker_enter",
+          "source": {
+            "label": "baseline_worker_enter",
+            "sha256": "4729a1a66fd31b51c0b8315188f2d1b1385b27621132cb419da83c117e9fcac3",
+            "bytes": 1071,
+            "byte_start": 0,
+            "byte_end": 1071,
+            "line": 1,
+            "end_line": 27
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "baseline-worker-exit.json",
+          "format": "1c-job-runtime-v1",
+          "role": "worker_exit",
+          "source": {
+            "label": "baseline_worker_exit",
+            "sha256": "8502050ee99ae769e818121e0b621bacef1a4d61990b600fa444fdf0a6c4a48e",
+            "bytes": 75856,
+            "byte_start": 0,
+            "byte_end": 75856,
+            "line": 1,
+            "end_line": 2236
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "orders.csv",
+          "format": "sc01-orders-csv-v1",
+          "role": null,
+          "source": {
+            "label": "baseline_sc01-orders-csv-v1",
+            "sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+            "bytes": 3817,
+            "byte_start": 0,
+            "byte_end": 3817,
+            "line": 1,
+            "end_line": 201
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        },
+        {
+          "file": "baseline-http.json",
+          "format": "sc01-http-service-v1",
+          "role": null,
+          "source": {
+            "label": "baseline_sc01-http-service-v1",
+            "sha256": "a31831974aafd9cd15bf9993bf58a93588e0752f6ff80b30411993a149baa77c",
+            "bytes": 142015,
+            "byte_start": 0,
+            "byte_end": 142015,
+            "line": 1,
+            "end_line": 3426
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        },
+        {
+          "file": "baseline-capture.json",
+          "format": "sc01-run-capture-v1",
+          "role": null,
+          "source": {
+            "label": "baseline_sc01-run-capture-v1",
+            "sha256": "77f7fe68ee18afe9f64d6a6f86eee7d895259b3a9ebccf41eff6d6bdf9d49376",
+            "bytes": 1045,
+            "byte_start": 0,
+            "byte_end": 1045,
+            "line": 1,
+            "end_line": 19
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/database_file",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "../../../examples/sc01/order-load-probe/config/CommonModules/SC01Lifecycle/Ext/Module.bsl",
+          "format": "1c-source-text-v1",
+          "source": {
+            "label": "controlled_source_module",
+            "sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+            "bytes": 31628,
+            "byte_start": 0,
+            "byte_end": 31628
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        }
+      ],
+      "observed": {
+        "platform_execution_seconds": 14,
+        "platform_precision_seconds": 1,
+        "load_duration_ms": 13138,
+        "external_call_count": 200,
+        "unique_skus": 10,
+        "repeated_lookups": 190,
+        "client_elapsed_seconds": 11.035,
+        "server_elapsed_seconds": 9.901561,
+        "result_count": 200,
+        "business_result_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "native_link_limitations": [
+          {
+            "code": "cross_clock_order_disagreement"
+          }
+        ]
+      }
+    },
+    {
+      "case": "cached",
+      "manifest": "cached.json",
+      "job_uuid": "dacf30db-2511-4acd-ba00-4836b5019448",
+      "nonce": "088c425b-e26d-4174-9bd6-330deb2eb80d",
+      "batch_id": "1200db2a-2209-46d0-a249-9c6156d07397",
+      "session_number": 2,
+      "session_uuid": "e668a205-2a83-498e-a7be-1edf1f3add37",
+      "source_manifest": {
+        "label": "cached_input_manifest",
+        "sha256": "065c3a323420c631dd29ec588bc0a46465da6dc8b6842e37bfcd6c1afca22c44",
+        "bytes": 2247
+      },
+      "native": {
+        "file": "cached-native.txt",
+        "source": {
+          "label": "cached_native_capture",
+          "sha256": "58cb539a4816639fc0d0c55a121368c4b43abe6955daff9e82fdea60bce31943",
+          "bytes": 617305,
+          "records": 1124,
+          "parse_status": "partial",
+          "limitation_counts": {
+            "ambiguous_property": 201
+          }
+        },
+        "published_records": 1007,
+        "body_records": 1005,
+        "body_events": {
+          "SDBL": 1005
+        },
+        "ambiguous_properties": {
+          "Func": 200
+        },
+        "ranges": [
+          {
+            "label": "session_start",
+            "source": {
+              "record_index_start_0": 84,
+              "record_index_end_0": 84,
+              "record_count": 1,
+              "line": 223,
+              "end_line": 223,
+              "byte_start": 33502,
+              "byte_end": 33719,
+              "sha256": "bd392d294e887b7def48a2146180d1e6f9166232540fce7112af274c54a475ca"
+            },
+            "published": {
+              "line": 1,
+              "end_line": 1,
+              "byte_start": 0,
+              "byte_end": 178,
+              "sha256": "5af603525662f277ca46c0bf82f9f41ab6e2b085dfebe12795df7ac626001d14"
+            }
+          },
+          {
+            "label": "complete_body_window",
+            "source": {
+              "record_index_start_0": 99,
+              "record_index_end_0": 1103,
+              "record_count": 1005,
+              "line": 240,
+              "end_line": 4058,
+              "byte_start": 38068,
+              "byte_end": 606543,
+              "sha256": "5ecb5854fc5a688b002e8ccf89fbb2c05774fd9a835f8115f9a32507de34644b"
+            },
+            "published": {
+              "line": 2,
+              "end_line": 3820,
+              "byte_start": 178,
+              "byte_end": 568653,
+              "sha256": "5ecb5854fc5a688b002e8ccf89fbb2c05774fd9a835f8115f9a32507de34644b"
+            }
+          },
+          {
+            "label": "session_finish",
+            "source": {
+              "record_index_start_0": 1106,
+              "record_index_end_0": 1106,
+              "record_count": 1,
+              "line": 4063,
+              "end_line": 4063,
+              "byte_start": 607149,
+              "byte_end": 607373,
+              "sha256": "786388c456897c44aed1b6f1211732e25b12f8a89d6e8ffc6b68b0727621aac7"
+            },
+            "published": {
+              "line": 3821,
+              "end_line": 3821,
+              "byte_start": 568653,
+              "byte_end": 568838,
+              "sha256": "c44de06aa5b64267a6674eb8100cc0d0c45f358bc197372f682edcb18849725a"
+            }
+          }
+        ],
+        "transformations": [
+          {
+            "operation": "select_complete_record_ranges",
+            "details": "One contiguous body range including both exact SDBL markers, plus matching SESN Start and Finish; other records omitted."
+          },
+          {
+            "operation": "replace_infobase_path",
+            "replacement": "C:\\controlled\\order-ib",
+            "occurrences": 2
+          },
+          {
+            "operation": "preserve_other_native_bytes",
+            "details": "All body bytes, duplicate fields, timestamps, identifiers and original line endings retained."
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "file": "cached-controller.json",
+          "format": "1c-job-runtime-v1",
+          "role": "controller",
+          "source": {
+            "label": "cached_controller",
+            "sha256": "4ce12655dfa55f729554d4f479d357ac7cba5b4f39842a70985b6c34daa626d7",
+            "bytes": 30887,
+            "byte_start": 0,
+            "byte_end": 30887,
+            "line": 1,
+            "end_line": 1727
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/input_csv",
+              "operation": "replace_input_path",
+              "replacement": "C:\\controlled\\orders.csv"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "pointer": "/stages/0/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/1/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/2/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/3/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/stages/4/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/final_job_snapshot/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "cached-worker-enter.json",
+          "format": "1c-job-runtime-v1",
+          "role": "worker_enter",
+          "source": {
+            "label": "cached_worker_enter",
+            "sha256": "cbf1226bcc42258ad7da33f09c9e963f52ae0d2159e46ecc00bbe97da451598c",
+            "bytes": 1069,
+            "byte_start": 0,
+            "byte_end": 1069,
+            "line": 1,
+            "end_line": 27
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "cached-worker-exit.json",
+          "format": "1c-job-runtime-v1",
+          "role": "worker_exit",
+          "source": {
+            "label": "cached_worker_exit",
+            "sha256": "40144712a6ecc4e6aae7218f5bd96901546a2a506429f486906414deb4760bea",
+            "bytes": 4981,
+            "byte_start": 0,
+            "byte_end": 4981,
+            "line": 1,
+            "end_line": 146
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/computer_name",
+              "operation": "replace_computer_name",
+              "replacement": "controlled-host"
+            },
+            {
+              "pointer": "/connection_string",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "orders.csv",
+          "format": "sc01-orders-csv-v1",
+          "role": null,
+          "source": {
+            "label": "cached_sc01-orders-csv-v1",
+            "sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+            "bytes": 3817,
+            "byte_start": 0,
+            "byte_end": 3817,
+            "line": 1,
+            "end_line": 201
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        },
+        {
+          "file": "cached-http.json",
+          "format": "sc01-http-service-v1",
+          "role": null,
+          "source": {
+            "label": "cached_sc01-http-service-v1",
+            "sha256": "9979424a12f1ed5a78a74877c10579350e8a5adaf689cab11bfe37d0bbac1d5d",
+            "bytes": 7685,
+            "byte_start": 0,
+            "byte_end": 7685,
+            "line": 1,
+            "end_line": 196
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        },
+        {
+          "file": "cached-capture.json",
+          "format": "sc01-run-capture-v1",
+          "role": null,
+          "source": {
+            "label": "cached_sc01-run-capture-v1",
+            "sha256": "7117938acc1c6be14272ce253766f365b7e3b7cd3e8cc9df29eb51dc00eb7802",
+            "bytes": 1045,
+            "byte_start": 0,
+            "byte_end": 1045,
+            "line": 1,
+            "end_line": 19
+          },
+          "byte_identical_to_original": false,
+          "transformations": [
+            {
+              "pointer": "/database_file",
+              "operation": "replace_infobase_path",
+              "replacement": "C:\\controlled\\order-ib"
+            },
+            {
+              "operation": "serialize_complete_json_utf8",
+              "details": "All fields retained; only listed string values changed. UTF-8 without BOM, two-space indentation, LF."
+            }
+          ]
+        },
+        {
+          "file": "../../../examples/sc01/order-load-probe/config/CommonModules/SC01Lifecycle/Ext/Module.bsl",
+          "format": "1c-source-text-v1",
+          "source": {
+            "label": "controlled_source_module",
+            "sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+            "bytes": 31628,
+            "byte_start": 0,
+            "byte_end": 31628
+          },
+          "byte_identical_to_original": true,
+          "transformations": []
+        }
+      ],
+      "observed": {
+        "platform_execution_seconds": 3,
+        "platform_precision_seconds": 1,
+        "load_duration_ms": 2535,
+        "external_call_count": 10,
+        "unique_skus": 10,
+        "repeated_lookups": 0,
+        "client_elapsed_seconds": 0.549,
+        "server_elapsed_seconds": 0.486133,
+        "result_count": 200,
+        "business_result_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "native_link_limitations": [
+          {
+            "code": "cross_clock_order_disagreement"
+          }
+        ]
+      }
+    }
+  ],
+  "invariants": {
+    "input_sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+    "module_sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+    "business_result_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+    "database_seed_sha256": "05001b90b35c67ea7f4e173592906ea499d4eddb5c8a9e9a3a842e35abee8946",
+    "service_module_sha256": "4173089c9af039e2252db82867930144275d0b2c9eea2dab9bb300386b3869c8"
+  },
+  "limitations": [
+    "Not a literal 45-minute incident capture.",
+    "Native excerpts preserve complete body windows but omit other session/process records.",
+    "Repeated native properties are retained; no winning Func value is selected.",
+    "HTTP timings are independent instrumented client/server observations, not native TJ HTTP events.",
+    "Source hashes and runner seed attestations do not independently authenticate the capture or provide the private infobase binary."
+  ],
+  "dependencies": {
+    "../../../examples/sc01/order-load-probe/config/CommonModules/SC01Lifecycle/Ext/Module.bsl": {
+      "bytes": 31628,
+      "sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+      "byte_identical_to_captured_source": true
+    }
+  },
+  "files": {
+    "README.md": {
+      "bytes": 2754,
+      "sha256": "02d52f89bedd72002ba0dce0a62b0cbed6341e4d9d24542fb38770817054a711"
+    },
+    "baseline-capture.json": {
+      "bytes": 986,
+      "sha256": "5ad28daeafd3aba28cdc5b37a9aa52e999998a746568f8c94de96a0312a896f7"
+    },
+    "baseline-controller.json": {
+      "bytes": 38527,
+      "sha256": "9f927b24394c8c2db61bce21649b108c3ecef4558b7629fe27b8816c6c16907d"
+    },
+    "baseline-http.json": {
+      "bytes": 142015,
+      "sha256": "a31831974aafd9cd15bf9993bf58a93588e0752f6ff80b30411993a149baa77c"
+    },
+    "baseline-native.txt": {
+      "bytes": 569249,
+      "sha256": "83450f9c02fbf5cb3105e778d3d8a16a51deed00ea8eab27eddc177dd79ade40"
+    },
+    "baseline-worker-enter.json": {
+      "bytes": 1067,
+      "sha256": "2a3a69ecfc4a5424c8f466c6384820325f443dbe04465fdd2518dbf495056ecb"
+    },
+    "baseline-worker-exit.json": {
+      "bytes": 90479,
+      "sha256": "63bdda39fbf34ce753e04a0e7ef8e5fc6c775f01344037dad938c07c1e45c426"
+    },
+    "baseline.json": {
+      "bytes": 1599,
+      "sha256": "126b511dad50bd1c4641f20d99722a7a93e5cf8cfc8225055c69ce71a753b32c"
+    },
+    "cached-capture.json": {
+      "bytes": 986,
+      "sha256": "e9a3dd5c594d824c39501ce84a05616016d65693434aa167981a80e385b8b006"
+    },
+    "cached-controller.json": {
+      "bytes": 38525,
+      "sha256": "3279d7f0c69526b20cfc03c6dd34d757e89e176d2612b8888d3b8f91e9be4d38"
+    },
+    "cached-http.json": {
+      "bytes": 7685,
+      "sha256": "9979424a12f1ed5a78a74877c10579350e8a5adaf689cab11bfe37d0bbac1d5d"
+    },
+    "cached-native.txt": {
+      "bytes": 568838,
+      "sha256": "363bfd58fc79cc831d5545bca3ad58f9d52eb19e84bf76f3c17c1506c27fd6da"
+    },
+    "cached-worker-enter.json": {
+      "bytes": 1065,
+      "sha256": "d20f4d7184e38dc007b4b897b951eb92d4c56711593d86d09d3681a726d772de"
+    },
+    "cached-worker-exit.json": {
+      "bytes": 5734,
+      "sha256": "debec1870813f6400bd8aa029dce11db0f1f012f3a6ead7a0cbde82da08a303e"
+    },
+    "cached.json": {
+      "bytes": 1587,
+      "sha256": "7ca4e6ed830edfa2cc8f97908641c6f7fddc706e7daac0ae1830e9a3f05732d0"
+    },
+    "orders.csv": {
+      "bytes": 3817,
+      "sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8"
+    }
+  },
+  "observed_host_alias": {
+    "alias": "controlled-host",
+    "same_original_host_across_runtime_documents": true
+  }
+}

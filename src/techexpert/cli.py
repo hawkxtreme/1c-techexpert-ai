@@ -6,7 +6,8 @@ from pathlib import Path
 
 from .inputs import InputError
 from .profiles import doctor, load_profile
-from .storage import ROOT, default_state_dir, investigate, load_case, read_evidence, list_native_events
+from .storage import (ROOT, default_state_dir, investigate, load_case, read_evidence, list_native_events,
+                      compare_cases, load_comparison)
 
 
 def emit(value):
@@ -26,6 +27,11 @@ def main(argv=None):
     analyze.add_argument('manifest', type=Path)
     show = commands.add_parser('show')
     show.add_argument('case_id')
+    compare=commands.add_parser('compare')
+    compare.add_argument('--before',nargs='+',required=True)
+    compare.add_argument('--after',nargs='+',required=True)
+    comparison=commands.add_parser('comparison')
+    comparison.add_argument('comparison_id')
     proof = commands.add_parser('evidence')
     proof.add_argument('case_id')
     proof.add_argument('evidence_id')
@@ -52,6 +58,10 @@ def main(argv=None):
             result = investigate(ROOT / 'examples/sc01/case.json' if args.command=='demo' else args.manifest, args.state_dir)
         elif args.command == 'show':
             result = load_case(args.state_dir, args.case_id)
+        elif args.command == 'compare':
+            result = compare_cases(args.state_dir,args.before,args.after)
+        elif args.command == 'comparison':
+            result = load_comparison(args.state_dir,args.comparison_id)
         elif args.command == 'evidence':
             result = read_evidence(args.state_dir, args.case_id, args.evidence_id)
         elif args.command == 'events':

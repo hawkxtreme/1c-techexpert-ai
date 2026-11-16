@@ -20,6 +20,14 @@ def build(output):
         'failed-controller.json', 'failed-worker-enter.json'))
     files.extend(p for p in (ROOT / 'examples/sc01/lifecycle-probe').rglob('*')
                  if p.is_file() and p.suffix in ('.bsl', '.xml'))
+    files.extend(ROOT / 'tests/fixtures/order-load' / name for name in (
+        'README.md','passport.json','orders.csv',
+        'baseline.json','baseline-native.txt','baseline-controller.json','baseline-worker-enter.json',
+        'baseline-worker-exit.json','baseline-http.json','baseline-capture.json',
+        'cached.json','cached-native.txt','cached-controller.json','cached-worker-enter.json',
+        'cached-worker-exit.json','cached-http.json','cached-capture.json'))
+    files.extend(p for p in (ROOT / 'examples/sc01/order-load-probe').rglob('*')
+                 if p.is_file() and p.suffix in ('.bsl','.xml','.csv'))
     for directory in ('src/techexpert', 'skills', 'knowledge', 'examples/sc01', '.agents/skills'):
         files.extend(p for p in (ROOT / directory).rglob('*')
                      if p.is_file() and '__pycache__' not in p.parts and p.suffix in ('.py','.md','.html','.json','.jsonl','.yaml'))

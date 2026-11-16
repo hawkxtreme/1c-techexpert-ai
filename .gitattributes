@@ -2,3 +2,8 @@
 tests/fixtures/native-tj/*.txt -text whitespace=cr-at-eol
 tests/fixtures/job-lifecycle/** -text whitespace=cr-at-eol
 examples/sc01/lifecycle-probe/config/** -text whitespace=cr-at-eol
+examples/sc01/order-load-probe/config/** -text whitespace=cr-at-eol
+examples/sc01/order-load-probe/orders.csv -text
+tests/fixtures/order-load/** -text whitespace=cr-at-eol
+# The controlled experiment records the exact service implementation hash.
+src/techexpert/catalog_probe.py -text

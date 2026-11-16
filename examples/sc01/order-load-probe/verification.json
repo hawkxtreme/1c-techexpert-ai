@@ -1,0 +1,415 @@
+{
+  "schema": 1,
+  "kind": "controlled_order_load_probe_verification",
+  "artifact_profile": "sc01-platform-background-job-v1",
+  "workload_profile": "sc01-order-load-v1",
+  "instrumentation_version": 4,
+  "platform_build": "8.3.27.1989",
+  "os_family": "Windows",
+  "database_mode": "file",
+  "configuration_source_sha256": {
+    "config/CommonModules/SC01Lifecycle/Ext/Module.bsl": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+    "config/CommonModules/SC01Lifecycle.xml": "25e1c7ce0dee5759abe0720508d95349ca8c6d96b5b4ed776022e6e9b792ebca",
+    "config/ConfigDumpInfo.xml": "d9e1739e465860bb72377119299cc362ad569950994ec8c349830884551477e9",
+    "config/Configuration.xml": "1a5209527b9818b11f45cbba6bfef7683d60b488e825f2810eae578a9555310e",
+    "config/Documents/SC01Order.xml": "abad5765ed0187a81734d210915535465da5267c82306bb4172b666547c8e7eb",
+    "config/Ext/ManagedApplicationModule.bsl": "23355fa82dc58cb2aa537839e4218e2e64f16eb7d6a9053e10f437a91b524875",
+    "config/Languages/Русский.xml": "a924e3e522d7280839ac816ff6b331d8c064bd1e57c5ae9f7395ce76b3dda147"
+  },
+  "input": {
+    "path": "orders.csv",
+    "sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+    "origin": "synthetic",
+    "columns": [
+      "order_id",
+      "sku",
+      "qty"
+    ],
+    "rows": 200,
+    "unique_skus": 10
+  },
+  "source_evidence": {
+    "path": "config/CommonModules/SC01Lifecycle/Ext/Module.bsl",
+    "sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+    "cache_scope": {
+      "symbol": "OrderLoad",
+      "fact": "A new empty correspondence is created per job; lookup and insertion occur only when mode equals cached."
+    },
+    "common_write_path": {
+      "symbol": "ЗаписатьЗаказ",
+      "fact": "Both modes create and write one actual SC01Order per input row without an enclosing explicit transaction."
+    },
+    "response_validation": {
+      "symbol": "ПолучитьТовар",
+      "fact": "The actual per-call request UUID must match the response echo; SKU and immutable catalog revision are validated before using the price."
+    },
+    "input_binding": {
+      "symbol": "ХешФайла",
+      "fact": "SHA256 hashes raw file bytes with DataHashing.AppendFile, not the declared parameter value."
+    },
+    "persisted_result": {
+      "symbol": "RunController / ПрочитатьСохраненныеЗаказы",
+      "fact": "Controller queries documents by actual JobUUID after refreshed platform Completed state."
+    },
+    "result_projection_sha256": {
+      "symbol": "ХешПроекции",
+      "format": "UTF-8: order_id TAB sku TAB qty TAB price TAB amount TAB catalog_revision LF; XML numeric text; sorted by order_id"
+    },
+    "worker_artificial_pause": false
+  },
+  "protocol": {
+    "catalog_revision": "sc01-catalog-v1",
+    "catalog_price_rule": "100 + 5 * numeric SKU suffix",
+    "catalog_delay_ms": 40,
+    "baseline_expected_http_requests": 200,
+    "cached_expected_http_requests": 10,
+    "one_job_per_process": true,
+    "cache_lifetime": "one job",
+    "fresh_closed_seed_restored_before_each_run": true,
+    "warmups_excluded": {
+      "baseline": 1,
+      "cached": 1
+    },
+    "measured_pair_order": [
+      "AB",
+      "BA",
+      "AB",
+      "BA",
+      "AB"
+    ],
+    "A": "baseline",
+    "B": "cached",
+    "process_limit_seconds": 30,
+    "worker_wait_limit_seconds": 20,
+    "http_timeout_seconds": 5,
+    "tj_capture_limit_bytes": 16777216,
+    "batch_id": "fresh nonzero UUID per run; pairs defined by explicit before/after case order"
+  },
+  "measurement_series": {
+    "status": "observed_experiment_verified",
+    "whole_product_tests_and_review": "separate; not asserted by this receipt",
+    "measured_pairs": 5,
+    "measured_runs": 10,
+    "independent_controller_readback_check": "PASS 10/10",
+    "input_sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+    "business_fields": [
+      "order_id",
+      "sku",
+      "qty",
+      "price",
+      "amount",
+      "catalog_revision"
+    ],
+    "business_projection_json_format": "UTF-8 JSON, ensure_ascii=false, sort_keys=true, separators comma/colon, allow_nan=false; rows sorted by business fields",
+    "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+    "bsl_tab_lf_projection_sha256": "d9d11355ea8f3a3785e0c9badbb579f7d7a78b677ac07f511e1659dd0d2dc048",
+    "database_seed_sha256": "05001b90b35c67ea7f4e173592906ea499d4eddb5c8a9e9a3a842e35abee8946",
+    "same_seed_before_every_run": true,
+    "all_jobs_completed": true,
+    "all_rows_match_expected": true,
+    "all_http_response_ids_match": true,
+    "http_request_ids_unique_across_series": true,
+    "performance": {
+      "status": "improved",
+      "metric": "platform_job_execution_seconds",
+      "precision_seconds": 1,
+      "before_median_seconds": 13,
+      "after_median_seconds": 3,
+      "before_lower_median_seconds": 12,
+      "after_upper_median_seconds": 4,
+      "conservative_reduction_fraction": 0.6666666666666667,
+      "reported_speedup_ratio": 4.333333333333333,
+      "interpretation": "Measured execution only; correctness and causal interpretation are separate."
+    },
+    "load_observations": {
+      "before_median_ms": 12661,
+      "after_median_ms": 2500,
+      "metric": "worker callback order-loading loop; separate from platform job duration"
+    },
+    "before_http_requests": [
+      200,
+      200,
+      200,
+      200,
+      200
+    ],
+    "after_http_requests": [
+      10,
+      10,
+      10,
+      10,
+      10
+    ],
+    "raw_artifact_hashes_describe_private_capture": "Raw files are not included in the public example; fingerprints contain no paths, host labels or runtime identifiers.",
+    "measurements": [
+      {
+        "ordinal": 1,
+        "pair": 1,
+        "mode": "baseline",
+        "job_execution_seconds": 14.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 13138,
+        "http_requests": 200,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 15.538,
+        "native_tj_bytes": 617229,
+        "private_artifact_sha256": {
+          "controller": "17a4ff3cc9bab8220c295ca3df9f407f1400e238f2edffc7d58629dd819e1b57",
+          "worker_enter": "4729a1a66fd31b51c0b8315188f2d1b1385b27621132cb419da83c117e9fcac3",
+          "worker_exit": "8502050ee99ae769e818121e0b621bacef1a4d61990b600fa444fdf0a6c4a48e",
+          "runner_receipt": "91f7832d6857374fd849a2f2d5b24ae1176aa9abcc0b9a4f12154630ef87c3e1",
+          "run_capture": "77f7fe68ee18afe9f64d6a6f86eee7d895259b3a9ebccf41eff6d6bdf9d49376",
+          "native_tj_files": [
+            "131b11f4484dcbc37034a3c945e5f915c71306d60ed713ba145d7034f259e25f"
+          ]
+        }
+      },
+      {
+        "ordinal": 2,
+        "pair": 1,
+        "mode": "cached",
+        "job_execution_seconds": 3.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 2535,
+        "http_requests": 10,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 4.843,
+        "native_tj_bytes": 617305,
+        "private_artifact_sha256": {
+          "controller": "4ce12655dfa55f729554d4f479d357ac7cba5b4f39842a70985b6c34daa626d7",
+          "worker_enter": "cbf1226bcc42258ad7da33f09c9e963f52ae0d2159e46ecc00bbe97da451598c",
+          "worker_exit": "40144712a6ecc4e6aae7218f5bd96901546a2a506429f486906414deb4760bea",
+          "runner_receipt": "75eef38f0086ccc5e18d0275e76df9905228142a09c6655a41e0066e14befefb",
+          "run_capture": "7117938acc1c6be14272ce253766f365b7e3b7cd3e8cc9df29eb51dc00eb7802",
+          "native_tj_files": [
+            "58cb539a4816639fc0d0c55a121368c4b43abe6955daff9e82fdea60bce31943"
+          ]
+        }
+      },
+      {
+        "ordinal": 3,
+        "pair": 2,
+        "mode": "cached",
+        "job_execution_seconds": 3.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 2479,
+        "http_requests": 10,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 4.742,
+        "native_tj_bytes": 617297,
+        "private_artifact_sha256": {
+          "controller": "7fa1aeba143ec678ce9f5a8e3dcf402321a001079de76accebb05ac27855a924",
+          "worker_enter": "25ea9624f40406a8ea33e99753581ae0cea217f69cf315120058f36296d348b4",
+          "worker_exit": "6220a003405c617b6eab637f3ea4356487a045fe8c896519b6bc70009e3d667a",
+          "runner_receipt": "a165c7cd6a160a14b3c3e5ba473d2fdf3b5434d297230e90d0d1f57d9da34d9b",
+          "run_capture": "4b9da072ffb933f7ea41017452d755df133d43d41e40a939d34b26ba3f18ee8f",
+          "native_tj_files": [
+            "7b49ec95043e2c04068e2f25a877e7a0ba15540316a7b70df9b9a4b9de8728cd"
+          ]
+        }
+      },
+      {
+        "ordinal": 4,
+        "pair": 2,
+        "mode": "baseline",
+        "job_execution_seconds": 13.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 12630,
+        "http_requests": 200,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 14.931,
+        "native_tj_bytes": 617316,
+        "private_artifact_sha256": {
+          "controller": "872df6f1c3cb9047c18a383cac01deb340613839214f071514fa5c76ba93317f",
+          "worker_enter": "6c204f97c5baacb6a77583758765aab2d4e8f3ec1e85fef1a03725cfc49cae37",
+          "worker_exit": "08c68437e0fcff60bd79a42211c200413ab8d383b85af2c70dc67cb0eff56557",
+          "runner_receipt": "479c5446f42b123ad803a56031f4895080525e24b1a08476e1c8c99e5a07cd57",
+          "run_capture": "6efc217f9a67a677e09d9937256797f0f14b6c4533de160eac1e03fdea7cd110",
+          "native_tj_files": [
+            "20a93ad7ab404f4bef243b5330062b5e9644251a8b5159d03f14320b1e3b56cf"
+          ]
+        }
+      },
+      {
+        "ordinal": 5,
+        "pair": 3,
+        "mode": "baseline",
+        "job_execution_seconds": 13.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 12573,
+        "http_requests": 200,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 14.937,
+        "native_tj_bytes": 617234,
+        "private_artifact_sha256": {
+          "controller": "3de859834cc6bcdd4658db589e255355b527cc819b41c9980c7d7f18771cdd9e",
+          "worker_enter": "fda3ffbd6052de319da42502bfefaae07fc5642254b27bbe2a24048e88aebee3",
+          "worker_exit": "5d4a0f97c0722b117aaad8e2e15cf61234d28a8a65957c0a044280ac5de7fece",
+          "runner_receipt": "d31e6a2b49e05f830fe0aa741a78b3aca70ed7d8e9e8523ed39c120124ab23ad",
+          "run_capture": "d2eb1e48dc0b0fb1cef835e5b986c66a6e4f3d3de69720402fbe0efdaa042157",
+          "native_tj_files": [
+            "70b7ab69ff17913b7a0513136e14f607e4d1647ddce4382837f22ad6597c3a6d"
+          ]
+        }
+      },
+      {
+        "ordinal": 6,
+        "pair": 3,
+        "mode": "cached",
+        "job_execution_seconds": 3.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 2500,
+        "http_requests": 10,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 4.845,
+        "native_tj_bytes": 617294,
+        "private_artifact_sha256": {
+          "controller": "993f69e07f3095f24c3b876e1e9931dcdfceb03d7096884a7836b0a3e2490845",
+          "worker_enter": "c495ef013093302460005e9856fe11c4a599f6620324f7cc3574f007154749f6",
+          "worker_exit": "91d5887c6469d6445765b870771b967fdc9facbe19c104239ce024ec26bf464b",
+          "runner_receipt": "8d837718381c54c134182f11439841477f9ef2d51aa7f231dc5b086c91420f9a",
+          "run_capture": "963899a6c739d6e0fdc3fc244ec1e846a8027be615614dff30c02e7e5c04b917",
+          "native_tj_files": [
+            "bc1400ac4568699b8b0199da0e6db1877701521cd56bb80d131a40b7373672b6"
+          ]
+        }
+      },
+      {
+        "ordinal": 7,
+        "pair": 4,
+        "mode": "cached",
+        "job_execution_seconds": 3.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 2396,
+        "http_requests": 10,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 4.742,
+        "native_tj_bytes": 617248,
+        "private_artifact_sha256": {
+          "controller": "1470fb9dd4737745a565a4e73175465233549ddfd753ba7e6ff560cb201d33a4",
+          "worker_enter": "2fd2a04586962c01e82b75a2c0677b6b696d5bfc179f2a910fbfadccc0d6b9a5",
+          "worker_exit": "2ca4e705a63817e23b1b3efa47b4679bc7f4809e917867ce06b073211f3cb54c",
+          "runner_receipt": "b52696cfe9926f5cc55d1e88b27c17545f499a4bb1165faf7c30ac0876af6f2d",
+          "run_capture": "ac4a67ce6a667fa223a55055c11db920ce96118d73f810ce6339b0f1ec00853a",
+          "native_tj_files": [
+            "633d31052ef04f091a560b345ade161cf427610b34ee8ce767e17d7863617cec"
+          ]
+        }
+      },
+      {
+        "ordinal": 8,
+        "pair": 4,
+        "mode": "baseline",
+        "job_execution_seconds": 13.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 12713,
+        "http_requests": 200,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 15.035,
+        "native_tj_bytes": 617287,
+        "private_artifact_sha256": {
+          "controller": "6477c3571b92beacb52e9d3e09ee6062c0f75f43487ad188c56a14ce97b45822",
+          "worker_enter": "e6702e5f8bb7bd03d95bedd6871ed8a50af9166b769edfc341ae34d884c11d5d",
+          "worker_exit": "58b52256e50906dffbacf61b23f7275bca81550c07b4287e5d4a9219120c3988",
+          "runner_receipt": "0b275ddebdd638ba695bec58e84038197cccd36e7e1829896a78732aae843802",
+          "run_capture": "26955a25a2e8983f2f7cfe89d34f8d9aefafba06bf9fc101c6771a9fce80381b",
+          "native_tj_files": [
+            "03d73a07b7316c78604b13b8e40d4155048828f98edc813756585abc57c19483"
+          ]
+        }
+      },
+      {
+        "ordinal": 9,
+        "pair": 5,
+        "mode": "baseline",
+        "job_execution_seconds": 13.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 12661,
+        "http_requests": 200,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 14.934,
+        "native_tj_bytes": 617270,
+        "private_artifact_sha256": {
+          "controller": "c2dd2926154f3acc32778212551a247fd8767696495175507a0428d44f813925",
+          "worker_enter": "ca4ef7834b83a29142ceff0c14cc58845ff03473a4e976a05094655af114fef4",
+          "worker_exit": "601a7217e38ceeba9860f81f86bbf5a7ec95f86597ac0cfeed320db414165242",
+          "runner_receipt": "c42cd7e00882e622fa8fcd22acbde0cbc90213082996c9a937dd85fd889ab621",
+          "run_capture": "637af455a21019cb0fd7748a9a359958a04c66908ae91e003f2da486b9b6a6a0",
+          "native_tj_files": [
+            "e719789f20615014b97ba217a3ba8e91aadaa037289ea36f7a4691f2213b15d8"
+          ]
+        }
+      },
+      {
+        "ordinal": 10,
+        "pair": 5,
+        "mode": "cached",
+        "job_execution_seconds": 3.0,
+        "job_date_precision_seconds": 1,
+        "load_ms": 2506,
+        "http_requests": 10,
+        "persisted_rows": 200,
+        "business_projection_json_sha256": "1ec9e8834b1085135e0010b8a380ffb56322231489384a1847c904df97053ec5",
+        "process_exit_code": 0,
+        "natural_exit": true,
+        "process_elapsed_seconds": 4.843,
+        "native_tj_bytes": 617304,
+        "private_artifact_sha256": {
+          "controller": "76f953f303e949b016bdcf1aa6a348e7aeee21edfdc02f6b1a4f317c2adfd4b1",
+          "worker_enter": "8fc0cbfb0f76b5c31e7dd4e8acc96cd12170cfa7748760a85e5465a7e2706cd5",
+          "worker_exit": "af6a6635fbef710fcf3885cca0d6de0ccc9f18ba64de0ea03609f5ada9ef1f4c",
+          "runner_receipt": "3aee7f238f627b30a1748f52330e7e2f44580a00725cf4cb9bf50bb668fc2ef0",
+          "run_capture": "a65854985d1b5a12a15e32f5e441f6af6cfd19c53b31060e63a64a7c2daa3353",
+          "native_tj_files": [
+            "3edd2a532b4fcad7bab6c341d377cc6be1f814a8f45ebae49f63b7d235a65767"
+          ]
+        }
+      }
+    ]
+  },
+  "scope_limits": {
+    "original_45_minute_duration_reproduced": false,
+    "diagnoses_arbitrary_user_incident": false,
+    "exact_queue_timestamp_available": false,
+    "platform_date_timezone_inferred": false,
+    "production_changes_performed_by_example": false,
+    "observed_utc_ms_epoch": "0001-01-01T00:00:00Z",
+    "unsupported_profiles": [
+      "Linux",
+      "client/server mode",
+      "other platform builds",
+      "mutable catalog without an invalidation policy"
+    ]
+  },
+  "catalog_service_source": {
+    "repository_relative_path": "src/techexpert/catalog_probe.py",
+    "sha256": "4173089c9af039e2252db82867930144275d0b2c9eea2dab9bb300386b3869c8"
+  }
+}

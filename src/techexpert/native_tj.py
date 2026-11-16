@@ -217,6 +217,7 @@ def parse_tj(data, profile, max_records=100000, max_record_bytes=262144):
     profile = validate_profile(profile, '')
     records, limitations = [], []
     omitted, records_seen = 0, 0
+    omitted_by_code = {}
 
     def limited(code, message, **location):
         nonlocal omitted
@@ -224,6 +225,7 @@ def parse_tj(data, profile, max_records=100000, max_record_bytes=262144):
             limitations.append(dict(code=code, message=message, **location))
         else:
             omitted += 1
+            omitted_by_code[code] = omitted_by_code.get(code, 0) + 1
 
     start = 3 if data.startswith(BOM) else 0
     stop = min(len(data), MAX_INPUT_BYTES)
@@ -270,7 +272,7 @@ def parse_tj(data, profile, max_records=100000, max_record_bytes=262144):
     if len(data) > MAX_INPUT_BYTES:
         limited('input_byte_limit', 'Input exceeds the 16 MiB adapter scan limit.', byte_start=stop)
     if omitted:
-        limitations.append(dict(code='additional_limitations', count=omitted,
+        limitations.append(dict(code='additional_limitations', count=omitted, counts_by_code=omitted_by_code,
                                 message='Additional limitation details were omitted.'))
     if len(data) == start:
         status = 'empty'

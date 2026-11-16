@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "scenario": "SC-01",
+  "origin": "provided",
+  "correlation_profile": "1c-file-job-markers-v1",
+  "workload_profile": "sc01-order-load-v1",
+  "selection": {
+    "run": "0a5f27a8-f170-4bd8-a114-d0e89787d047"
+  },
+  "sources": [
+    {
+      "path": "baseline-native.txt",
+      "format": "1c-tj-text-v1",
+      "platform_version": "8.3.27.1989",
+      "encoding": "utf-8",
+      "placement": "plain",
+      "timestamp_format": "iso",
+      "utc_offset": "+03:00"
+    },
+    {
+      "path": "baseline-controller.json",
+      "format": "1c-job-runtime-v1",
+      "role": "controller",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "baseline-worker-enter.json",
+      "format": "1c-job-runtime-v1",
+      "role": "worker_enter",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "baseline-worker-exit.json",
+      "format": "1c-job-runtime-v1",
+      "role": "worker_exit",
+      "platform_version": "8.3.27.1989",
+      "platform_utc_offset": "+03:00"
+    },
+    {
+      "path": "orders.csv",
+      "format": "sc01-orders-csv-v1"
+    },
+    {
+      "path": "baseline-http.json",
+      "format": "sc01-http-service-v1"
+    },
+    {
+      "path": "baseline-capture.json",
+      "format": "sc01-run-capture-v1"
+    },
+    {
+      "path": "../../../examples/sc01/order-load-probe/config/CommonModules/SC01Lifecycle/Ext/Module.bsl",
+      "format": "1c-source-text-v1"
+    }
+  ],
+  "symptom": "Controlled order-loading slowdown; laboratory scale, not literal 45 minutes"
+}

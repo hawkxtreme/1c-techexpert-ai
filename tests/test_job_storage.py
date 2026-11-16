@@ -131,6 +131,19 @@ class JobStorageTests(unittest.TestCase):
             with self.assertRaises(InputError):
                 list_native_events(root/'state', report['case_id'], linked_run=True)
 
+    def test_many_retained_ambiguous_nonidentity_fields_are_not_unread_bytes(self):
+        for extra_invalid in (False,True):
+            with self.subTest(extra_invalid=extra_invalid), tempfile.TemporaryDirectory() as tmp:
+                root=Path(tmp);path=manifest(root);log=root/'native.txt'
+                row=b'2026-11-16T05:55:37.100000-1,SDBL,1,process=1cv8,OSThread=222,Func=Transaction,Func=CommitTransaction\n'
+                additions=row*240+(b'bad unread session transition\n' if extra_invalid else b'')
+                log.write_bytes(log.read_bytes().replace(b'2026-11-16T05:55:37.500000-',additions+b'2026-11-16T05:55:37.500000-'))
+                report=investigate(path,root/'state')
+                expected='not_established' if extra_invalid else 'established'
+                self.assertEqual(report['job_correlation']['native_link']['status'],expected)
+                if not extra_invalid:
+                    self.assertEqual(list_native_events(root/'state',report['case_id'],linked_run=True)['matched_count'],243)
+
 
 if __name__ == '__main__':
     unittest.main()

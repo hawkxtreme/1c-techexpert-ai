@@ -13,6 +13,9 @@ MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
 MAX_RECORD_BYTES = 256 * 1024
 MAX_EVENTS = 100_000
+AUXILIARY_FORMATS = frozenset(('sc01-orders-csv-v1', 'sc01-http-service-v1',
+                               'sc01-run-capture-v1', '1c-source-text-v1'))
+WHOLE_JSON_FORMATS = frozenset(('1c-job-runtime-v1', 'sc01-http-service-v1', 'sc01-run-capture-v1'))
 
 
 class InputError(ValueError):
@@ -70,6 +73,9 @@ def load_manifest(path):
         raise InputError('origin must explicitly be synthetic or provided')
     selection = manifest.get('selection')
     correlation=manifest.get('correlation_profile')
+    workload=manifest.get('workload_profile')
+    if workload is not None and (workload!='sc01-order-load-v1' or correlation!='1c-file-job-markers-v1'):
+        raise InputError('order-load workload requires the explicit controlled job correlation profile')
     if correlation is not None:
         if correlation!='1c-file-job-markers-v1':
             raise InputError('unsupported correlation_profile')
@@ -85,9 +91,12 @@ def load_manifest(path):
     lifecycle_documents=[]
     records_seen, omitted_details = 0, 0
     for source_number, spec in enumerate(specs, 1):
-        if not isinstance(spec, dict) or spec.get('format') not in ('normalized-events-v1', '1c-tj-text-v1','1c-job-runtime-v1'):
-            raise InputError('supported input: normalized-events-v1, 1c-tj-text-v1 or 1c-job-runtime-v1; native JR is not supported')
+        if not isinstance(spec, dict) or spec.get('format') not in (set(AUXILIARY_FORMATS)|{'normalized-events-v1','1c-tj-text-v1','1c-job-runtime-v1'}):
+            raise InputError('unsupported source format; native JR is not supported')
         is_runtime=spec['format']=='1c-job-runtime-v1'
+        is_auxiliary=spec['format'] in AUXILIARY_FORMATS
+        if is_auxiliary and workload is None:
+            raise InputError('auxiliary source requires workload_profile=sc01-order-load-v1')
         if (is_runtime and correlation is None) or (correlation is not None and spec['format']=='normalized-events-v1'):
             raise InputError('job correlation requires native TJ/runtime sources and explicit correlation_profile')
         if not isinstance(spec.get('path'), str) or not spec['path']:
@@ -111,7 +120,7 @@ def load_manifest(path):
         seen[identity] = interpretation
         source_id = f's{source_number}'
         try:
-            data = read_snapshot(source_path, min(1024*1024 if is_runtime else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total))
+            data = read_snapshot(source_path, min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total))
             total += len(data)
         except (OSError, InputError) as exc:
             limits.append(dict(code='source_unavailable', source=source_id, detail=str(exc)))
@@ -120,6 +129,22 @@ def load_manifest(path):
         source = dict(id=source_id, path=str(source_path), sha256=digest, size=len(data),
                       format=spec['format'], data=data)
         sources.append(source)
+        if is_runtime or is_auxiliary:
+            source['evidence']=dict(id=f'{source_id}:1',source=source_id,sha256=digest,line=1,
+                end_line=max(1,len(data.splitlines())),byte_start=0,byte_end=len(data))
+        if is_auxiliary:
+            source['parse_status']='captured'
+            try:
+                text=data.decode('utf-8-sig')
+                if spec['format'] in WHOLE_JSON_FORMATS:
+                    document=json_value(text,reject_duplicates=True)
+                    if not isinstance(document,dict) or type(document.get('schema')) is not int or document['schema']!=1:
+                        raise InputError('auxiliary JSON requires schema=1 object')
+                    source['parse_status']='parsed'
+            except (UnicodeError,ValueError,RecursionError):
+                source['parse_status']='invalid'
+                limits.append(dict(code='invalid_auxiliary_source',source=source_id))
+            continue
         if is_runtime:
             source.update(profile=job_profile,parse_status='not_parsed')
             if records_seen>=MAX_EVENTS:
@@ -135,8 +160,7 @@ def load_manifest(path):
                 limits.append(dict(code='invalid_runtime_document',source=source_id))
                 continue
             source['parse_status']='parsed'
-            evidence=dict(id=f'{source_id}:1',source=source_id,sha256=digest,line=1,
-                          end_line=max(1,len(data.splitlines())),byte_start=0,byte_end=len(data))
+            evidence=source['evidence']
             lifecycle_documents.append(dict(role=job_profile['role'],data=document,evidence=evidence,
                                             platform_utc_offset=job_profile['platform_utc_offset']))
             continue

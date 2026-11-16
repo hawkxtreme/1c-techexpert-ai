@@ -1,0 +1,1727 @@
+{
+  "schema": 1,
+  "artifact_profile": "sc01-platform-background-job-v1",
+  "scenario": "SC-01",
+  "instrumentation_version": 4,
+  "origin": "controlled_real_background_job",
+  "workload_profile": "sc01-order-load-v1",
+  "computer_name": "controlled-host",
+  "stage": "controller_created",
+  "observed_utc_ms": 63930409445641,
+  "clock_epoch": "0001-01-01T00:00:00Z",
+  "clock_precision": "milliseconds",
+  "observed_utc_seconds": "2026-11-16T07:04:05Z",
+  "batch_id": "070c2f3d-0d5c-4bcd-82b1-cd6ddecde228",
+  "mode": "baseline",
+  "nonce": "8cc12a5e-8d1d-45f8-88eb-0fbfb763d909",
+  "input_csv": "C:\\controlled\\orders.csv",
+  "input_sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+  "host": "127.0.0.1",
+  "port": 56472,
+  "catalog_revision": "sc01-catalog-v1",
+  "connection_string": "File=\"C:\\controlled\\order-ib\";",
+  "initiator_session_id": 1,
+  "status": "completed",
+  "stages": [
+    {
+      "schema": 1,
+      "artifact_profile": "sc01-platform-background-job-v1",
+      "scenario": "SC-01",
+      "instrumentation_version": 4,
+      "origin": "controlled_real_background_job",
+      "workload_profile": "sc01-order-load-v1",
+      "computer_name": "controlled-host",
+      "stage": "submit_requested",
+      "observed_utc_ms": 63930409445641,
+      "clock_epoch": "0001-01-01T00:00:00Z",
+      "clock_precision": "milliseconds",
+      "observed_utc_seconds": "2026-11-16T07:04:05Z"
+    },
+    {
+      "schema": 1,
+      "artifact_profile": "sc01-platform-background-job-v1",
+      "scenario": "SC-01",
+      "instrumentation_version": 4,
+      "origin": "controlled_real_background_job",
+      "workload_profile": "sc01-order-load-v1",
+      "computer_name": "controlled-host",
+      "stage": "execute_returned",
+      "observed_utc_ms": 63930409445642,
+      "clock_epoch": "0001-01-01T00:00:00Z",
+      "clock_precision": "milliseconds",
+      "observed_utc_seconds": "2026-11-16T07:04:05Z"
+    },
+    {
+      "schema": 1,
+      "artifact_profile": "sc01-platform-background-job-v1",
+      "scenario": "SC-01",
+      "instrumentation_version": 4,
+      "origin": "controlled_real_background_job",
+      "workload_profile": "sc01-order-load-v1",
+      "computer_name": "controlled-host",
+      "stage": "result_readback_started",
+      "observed_utc_ms": 63930409459061,
+      "clock_epoch": "0001-01-01T00:00:00Z",
+      "clock_precision": "milliseconds",
+      "observed_utc_seconds": "2026-11-16T07:04:19Z"
+    },
+    {
+      "schema": 1,
+      "artifact_profile": "sc01-platform-background-job-v1",
+      "scenario": "SC-01",
+      "instrumentation_version": 4,
+      "origin": "controlled_real_background_job",
+      "workload_profile": "sc01-order-load-v1",
+      "computer_name": "controlled-host",
+      "stage": "result_readback_finished",
+      "observed_utc_ms": 63930409459066,
+      "clock_epoch": "0001-01-01T00:00:00Z",
+      "clock_precision": "milliseconds",
+      "observed_utc_seconds": "2026-11-16T07:04:19Z"
+    },
+    {
+      "schema": 1,
+      "artifact_profile": "sc01-platform-background-job-v1",
+      "scenario": "SC-01",
+      "instrumentation_version": 4,
+      "origin": "controlled_real_background_job",
+      "workload_profile": "sc01-order-load-v1",
+      "computer_name": "controlled-host",
+      "stage": "controller_finished",
+      "observed_utc_ms": 63930409459066,
+      "clock_epoch": "0001-01-01T00:00:00Z",
+      "clock_precision": "milliseconds",
+      "observed_utc_seconds": "2026-11-16T07:04:19Z"
+    }
+  ],
+  "job_uuid": "0a5f27a8-f170-4bd8-a114-d0e89787d047",
+  "final_job_snapshot": {
+    "schema": 1,
+    "artifact_profile": "sc01-platform-background-job-v1",
+    "scenario": "SC-01",
+    "instrumentation_version": 4,
+    "origin": "controlled_real_background_job",
+    "workload_profile": "sc01-order-load-v1",
+    "computer_name": "controlled-host",
+    "stage": "platform_state_refreshed",
+    "observed_utc_ms": 63930409459061,
+    "clock_epoch": "0001-01-01T00:00:00Z",
+    "clock_precision": "milliseconds",
+    "observed_utc_seconds": "2026-11-16T07:04:19Z",
+    "job_uuid": "0a5f27a8-f170-4bd8-a114-d0e89787d047",
+    "job_state": "Задание выполнено",
+    "job_state_code": "completed",
+    "completed": true,
+    "job_method": "SC01Lifecycle.OrderLoad",
+    "job_key": "070c2f3d-0d5c-4bcd-82b1-cd6ddecde228",
+    "job_begin_platform_date": "2026-11-16T10:04:05",
+    "platform_date_precision": "seconds",
+    "platform_date_timezone": "not_assumed; compare with independent UTC observations",
+    "job_end_platform_date": "2026-11-16T10:04:19"
+  },
+  "result_rows": [
+    {
+      "order_id": "ORDER0001",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0002",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0003",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0004",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0005",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0006",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0007",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0008",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0009",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0010",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0011",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0012",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0013",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0014",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0015",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0016",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0017",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0018",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0019",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0020",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0021",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0022",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0023",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0024",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0025",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0026",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0027",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0028",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0029",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0030",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0031",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0032",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0033",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0034",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0035",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0036",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0037",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0038",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0039",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0040",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0041",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0042",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0043",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0044",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0045",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0046",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0047",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0048",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0049",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0050",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0051",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0052",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0053",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0054",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0055",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0056",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0057",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0058",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0059",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0060",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0061",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0062",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0063",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0064",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0065",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0066",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0067",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0068",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0069",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0070",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0071",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0072",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0073",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0074",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0075",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0076",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0077",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0078",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0079",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0080",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0081",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0082",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0083",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0084",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0085",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0086",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0087",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0088",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0089",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0090",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0091",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0092",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0093",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0094",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0095",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0096",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0097",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0098",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0099",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0100",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0101",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0102",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0103",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0104",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0105",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0106",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0107",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0108",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0109",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0110",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0111",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0112",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0113",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0114",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0115",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0116",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0117",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0118",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0119",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0120",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0121",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0122",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0123",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0124",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0125",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0126",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0127",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0128",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0129",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0130",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0131",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0132",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0133",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0134",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0135",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0136",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0137",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0138",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0139",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0140",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0141",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0142",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0143",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0144",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0145",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0146",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0147",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0148",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0149",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0150",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0151",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0152",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0153",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0154",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0155",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0156",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0157",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0158",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0159",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0160",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0161",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0162",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0163",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0164",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0165",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0166",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0167",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0168",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0169",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0170",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0171",
+      "sku": "SKU000",
+      "qty": 3,
+      "price": 100,
+      "amount": 300,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0172",
+      "sku": "SKU001",
+      "qty": 1,
+      "price": 105,
+      "amount": 105,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0173",
+      "sku": "SKU002",
+      "qty": 2,
+      "price": 110,
+      "amount": 220,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0174",
+      "sku": "SKU003",
+      "qty": 3,
+      "price": 115,
+      "amount": 345,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0175",
+      "sku": "SKU004",
+      "qty": 1,
+      "price": 120,
+      "amount": 120,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0176",
+      "sku": "SKU005",
+      "qty": 2,
+      "price": 125,
+      "amount": 250,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0177",
+      "sku": "SKU006",
+      "qty": 3,
+      "price": 130,
+      "amount": 390,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0178",
+      "sku": "SKU007",
+      "qty": 1,
+      "price": 135,
+      "amount": 135,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0179",
+      "sku": "SKU008",
+      "qty": 2,
+      "price": 140,
+      "amount": 280,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0180",
+      "sku": "SKU009",
+      "qty": 3,
+      "price": 145,
+      "amount": 435,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0181",
+      "sku": "SKU000",
+      "qty": 1,
+      "price": 100,
+      "amount": 100,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0182",
+      "sku": "SKU001",
+      "qty": 2,
+      "price": 105,
+      "amount": 210,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0183",
+      "sku": "SKU002",
+      "qty": 3,
+      "price": 110,
+      "amount": 330,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0184",
+      "sku": "SKU003",
+      "qty": 1,
+      "price": 115,
+      "amount": 115,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0185",
+      "sku": "SKU004",
+      "qty": 2,
+      "price": 120,
+      "amount": 240,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0186",
+      "sku": "SKU005",
+      "qty": 3,
+      "price": 125,
+      "amount": 375,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0187",
+      "sku": "SKU006",
+      "qty": 1,
+      "price": 130,
+      "amount": 130,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0188",
+      "sku": "SKU007",
+      "qty": 2,
+      "price": 135,
+      "amount": 270,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0189",
+      "sku": "SKU008",
+      "qty": 3,
+      "price": 140,
+      "amount": 420,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0190",
+      "sku": "SKU009",
+      "qty": 1,
+      "price": 145,
+      "amount": 145,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0191",
+      "sku": "SKU000",
+      "qty": 2,
+      "price": 100,
+      "amount": 200,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0192",
+      "sku": "SKU001",
+      "qty": 3,
+      "price": 105,
+      "amount": 315,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0193",
+      "sku": "SKU002",
+      "qty": 1,
+      "price": 110,
+      "amount": 110,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0194",
+      "sku": "SKU003",
+      "qty": 2,
+      "price": 115,
+      "amount": 230,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0195",
+      "sku": "SKU004",
+      "qty": 3,
+      "price": 120,
+      "amount": 360,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0196",
+      "sku": "SKU005",
+      "qty": 1,
+      "price": 125,
+      "amount": 125,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0197",
+      "sku": "SKU006",
+      "qty": 2,
+      "price": 130,
+      "amount": 260,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0198",
+      "sku": "SKU007",
+      "qty": 3,
+      "price": 135,
+      "amount": 405,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0199",
+      "sku": "SKU008",
+      "qty": 1,
+      "price": 140,
+      "amount": 140,
+      "catalog_revision": "sc01-catalog-v1"
+    },
+    {
+      "order_id": "ORDER0200",
+      "sku": "SKU009",
+      "qty": 2,
+      "price": 145,
+      "amount": 290,
+      "catalog_revision": "sc01-catalog-v1"
+    }
+  ],
+  "result_rows_sha256": "d9d11355ea8f3a3785e0c9badbb579f7d7a78b677ac07f511e1659dd0d2dc048",
+  "result_projection_format": "UTF-8: order_id TAB sku TAB qty TAB price TAB amount TAB catalog_revision LF; XML numeric text; sorted by order_id",
+  "input_sha256_after": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8"
+}

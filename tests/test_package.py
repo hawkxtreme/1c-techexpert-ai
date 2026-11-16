@@ -61,6 +61,26 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(linked_report['job_correlation']['native_link']['status'],'established')
             self.assertEqual(linked_report['job_correlation']['native_link']['linked_count'],4)
             self.assertEqual(linked_report['durations_seconds'],dict(queue=None,execution=2,total=None))
+            receipt=json.loads((packaged/'examples/sc01/order-load-probe/verification.json').read_text(encoding='utf-8'))
+            for name,digest in receipt['configuration_source_sha256'].items():
+                self.assertEqual(hashlib.sha256((packaged/'examples/sc01/order-load-probe'/name).read_bytes()).hexdigest(),digest)
+            cases=[]
+            for variant,count in (('baseline',200),('cached',10)):
+                process=subprocess.run([sys.executable,str(packaged/'techexpert.py'),'--state-dir',str(folder/'state'),
+                    'analyze',str(packaged/'tests/fixtures/order-load'/(variant+'.json'))],cwd=folder,
+                    capture_output=True,encoding='utf-8',timeout=20)
+                self.assertEqual(process.returncode,0,process.stdout+process.stderr)
+                item=json.loads(process.stdout);cases.append(item['case_id'])
+                self.assertEqual(item['order_load']['status'],'observed')
+                self.assertEqual(item['order_load']['external_calls']['count'],count)
+                self.assertEqual(item['order_load']['result_validation']['actual_count'],200)
+            comparison=subprocess.run([sys.executable,str(packaged/'techexpert.py'),'--state-dir',str(folder/'state'),
+                'compare','--before',cases[0],'--after',cases[1]],cwd=folder,capture_output=True,encoding='utf-8',timeout=20)
+            self.assertEqual(comparison.returncode,0,comparison.stdout+comparison.stderr)
+            result=json.loads(comparison.stdout)
+            self.assertEqual(result['status'],'not_verified')  # one public pair is not five independent repeats
+            self.assertEqual(result['performance']['status'],'inconclusive')
+            self.assertEqual(result['result_correctness']['status'],'matches_expected')
 
 
 if __name__ == '__main__':

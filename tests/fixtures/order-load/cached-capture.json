@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "origin": "controlled_isolated_1c_runner",
+  "job_uuid": "dacf30db-2511-4acd-ba00-4836b5019448",
+  "nonce": "088c425b-e26d-4174-9bd6-330deb2eb80d",
+  "batch_id": "1200db2a-2209-46d0-a249-9c6156d07397",
+  "platform_version": "8.3.27.1989",
+  "database_file": "C:\\controlled\\order-ib",
+  "database_seed_sha256": "05001b90b35c67ea7f4e173592906ea499d4eddb5c8a9e9a3a842e35abee8946",
+  "database_before_sha256": "05001b90b35c67ea7f4e173592906ea499d4eddb5c8a9e9a3a842e35abee8946",
+  "module_sha256": "48a6b0dc20eaefa144917426bb1b1b3a0aa8dda6603eaee3720610bc92dcb5e0",
+  "input_sha256": "7567e0106e4477d791d5b7ff75658984947fb08338d372f6b44f2d0e9ca65dd8",
+  "service_module_sha256": "4173089c9af039e2252db82867930144275d0b2c9eea2dab9bb300386b3869c8",
+  "process_exit_code": 0,
+  "natural_exit": true,
+  "process_id": 58132,
+  "service_instance": "947f71e5-3952-4f6c-883a-5c5972e0f390",
+  "logcfg_sha256": "7b0fc89a133a439651b6c61472af294acd45f63ab98aa075157dce5810df23f1"
+}

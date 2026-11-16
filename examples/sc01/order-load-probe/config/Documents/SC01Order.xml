@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses"
+                xmlns:v8="http://v8.1c.ru/8.1/data/core"
+                xmlns:xr="http://v8.1c.ru/8.3/xcf/readable"
+                xmlns:xs="http://www.w3.org/2001/XMLSchema" version="2.20">
+  <Document uuid="c14c5bb1-7835-4433-a355-125bd1567859">
+    <InternalInfo>
+      <xr:GeneratedType name="DocumentObject.SC01Order" category="Object">
+        <xr:TypeId>bef6f543-68e0-4bf3-a4b5-706f05425c77</xr:TypeId>
+        <xr:ValueId>ea8118f7-43ef-4a80-8d28-637fa22ce6a5</xr:ValueId>
+      </xr:GeneratedType>
+      <xr:GeneratedType name="DocumentRef.SC01Order" category="Ref">
+        <xr:TypeId>0bceaa96-31af-47d6-90bf-72ad980d82b3</xr:TypeId>
+        <xr:ValueId>3d74c118-7c94-4e97-b4fb-d32e5b5ae092</xr:ValueId>
+      </xr:GeneratedType>
+      <xr:GeneratedType name="DocumentSelection.SC01Order" category="Selection">
+        <xr:TypeId>85d7ce87-f253-4adf-99bd-99ebdb1014ab</xr:TypeId>
+        <xr:ValueId>9b2cf776-05c7-43e3-9d5b-16d4114e8ccb</xr:ValueId>
+      </xr:GeneratedType>
+      <xr:GeneratedType name="DocumentList.SC01Order" category="List">
+        <xr:TypeId>06ff157b-04c5-4674-9fe1-e49269e07ab4</xr:TypeId>
+        <xr:ValueId>7d563255-7235-475a-86c4-71e78ec95c4c</xr:ValueId>
+      </xr:GeneratedType>
+      <xr:GeneratedType name="DocumentManager.SC01Order" category="Manager">
+        <xr:TypeId>1cfe24a2-e6f5-4ae3-b862-14c03087b667</xr:TypeId>
+        <xr:ValueId>e2da6802-fe74-42d5-96e5-36423ef03128</xr:ValueId>
+      </xr:GeneratedType>
+    </InternalInfo>
+    <Properties>
+      <Name>SC01Order</Name><Synonym/>
+      <Comment>Disposable controlled order-load experiment; never use production data.</Comment>
+      <NumberType>String</NumberType>
+      <NumberLength>11</NumberLength>
+      <NumberAllowedLength>Variable</NumberAllowedLength>
+      <NumberPeriodicity>Nonperiodical</NumberPeriodicity>
+      <CheckUnique>true</CheckUnique>
+      <Autonumbering>true</Autonumbering>
+      <Posting>Deny</Posting>
+    </Properties>
+    <ChildObjects>
+      <Attribute uuid="40ec0dad-8db3-469f-8858-d6de6932c3d1">
+        <Properties>
+          <Name>BatchID</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>36</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="08c23ba8-823a-4681-9622-586cf032fdbc">
+        <Properties>
+          <Name>JobUUID</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>36</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="a9590380-3813-4112-b834-7d3c20314fda">
+        <Properties>
+          <Name>Mode</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>8</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="48c316f9-d7d1-4322-8eb5-0ba379b4c669">
+        <Properties>
+          <Name>SourceOrderID</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>40</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="837573de-1370-4942-9bc1-c372fd4e29e2">
+        <Properties>
+          <Name>ItemCode</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>6</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="09c2aa55-e2a8-4b8a-8f73-35d80fc5c61a">
+        <Properties>
+          <Name>Quantity</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:decimal</v8:Type>
+            <v8:NumberQualifiers><v8:Digits>15</v8:Digits><v8:FractionDigits>0</v8:FractionDigits><v8:AllowedSign>Any</v8:AllowedSign></v8:NumberQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="29a57be5-bb07-4350-86d7-713b2b0b7fa2">
+        <Properties>
+          <Name>Price</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:decimal</v8:Type>
+            <v8:NumberQualifiers><v8:Digits>15</v8:Digits><v8:FractionDigits>0</v8:FractionDigits><v8:AllowedSign>Any</v8:AllowedSign></v8:NumberQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="b2eb7e68-556f-45e9-aad4-62663fa7a1ef">
+        <Properties>
+          <Name>Amount</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:decimal</v8:Type>
+            <v8:NumberQualifiers><v8:Digits>15</v8:Digits><v8:FractionDigits>0</v8:FractionDigits><v8:AllowedSign>Any</v8:AllowedSign></v8:NumberQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+      <Attribute uuid="462ecfd1-e633-42a3-bcfb-d25da29ea2a2">
+        <Properties>
+          <Name>CatalogRevision</Name><Synonym/><Comment/>
+          <Type>
+            <v8:Type>xs:string</v8:Type>
+            <v8:StringQualifiers><v8:Length>64</v8:Length><v8:AllowedLength>Variable</v8:AllowedLength></v8:StringQualifiers>
+          </Type>
+        </Properties>
+      </Attribute>
+    </ChildObjects>
+  </Document>
+</MetaDataObject>

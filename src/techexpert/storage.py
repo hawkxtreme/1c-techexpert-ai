@@ -11,10 +11,12 @@ from pathlib import Path
 
 from . import __version__
 from .analysis import analyze_events
-from .inputs import InputError, load_manifest, read_snapshot, json_value
+from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS
 from .native_tj import parse_tj
 from .observations import summarize_native, preview_record
 from .job_correlation import correlate_job, record_matches_link
+from .order_load import analyze_order_load
+from .comparison import compare_reports
 
 ROOT = Path(__file__).resolve().parents[2]
 MAX_REPORT_BYTES = 16 * 1024 * 1024
@@ -58,8 +60,12 @@ def job_report(bundle):
         # An unreadable session switch could invalidate ownership of later
         # records. Only located errors wholly outside the session are harmless.
         start, finish = link['session']['evidence']
+        def only_retained_ambiguity(issue):
+            return (issue['code']=='ambiguous_property' or
+                    (issue['code']=='additional_limitations' and type(issue.get('count')) is int and issue['count']>0
+                     and issue.get('counts_by_code')=={'ambiguous_property':issue['count']}))
         gaps = [issue for issue in bundle['limitations']
-                if issue.get('source')==link['identity']['source'] and issue['code']!='ambiguous_property'
+                if issue.get('source')==link['identity']['source'] and not only_retained_ambiguity(issue)
                 and (issue.get('byte_start', -1)<finish['byte_end']
                      and issue.get('byte_end', finish['byte_end'])>start['byte_start'])]
         if gaps:
@@ -97,6 +103,8 @@ def investigate(manifest_path, state_dir):
     bundle = load_manifest(manifest_path)
     has_correlation = bundle['manifest'].get('correlation_profile') == '1c-file-job-markers-v1'
     result = job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])
+    if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
+        result['order_load']=analyze_order_load(bundle,result)
     native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']
     formats = {s['format'] for s in bundle['manifest']['sources']}
     contract = next(iter(formats)) if len(formats) == 1 else 'mixed-v1'
@@ -149,7 +157,7 @@ def case_folder(state_dir, case_id):
     return Path(state_dir) / 'cases' / case_id
 
 
-def load_case(state_dir, case_id):
+def load_case(state_dir, case_id, *, with_digest=False):
     folder = case_folder(state_dir, case_id)
     try:
         report_data = read_snapshot(folder / 'report.json', MAX_REPORT_BYTES)
@@ -161,7 +169,7 @@ def load_case(state_dir, case_id):
         report = json_value(report_data.decode('utf-8'))
         if report.get('schema_version') != 1 or report.get('case_id') != case_id:
             raise InputError('unsupported saved case schema')
-        return report
+        return (report, hashlib.sha256(report_data).hexdigest()) if with_digest else report
     except (OSError, KeyError, ValueError, TypeError) as exc:
         raise InputError(f'Cannot resume case: {exc}') from exc
 
@@ -178,7 +186,7 @@ def read_evidence(state_dir, case_id, evidence_id):
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise InputError('evidence snapshot integrity mismatch')
     number = int(match[2])
-    if source['format'] == '1c-job-runtime-v1':
+    if source['format'] in WHOLE_JSON_FORMATS:
         if number != 1:
             raise InputError('runtime evidence id must refer to the whole document at line 1')
         text = data.decode('utf-8-sig', errors='replace')
@@ -253,3 +261,77 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
                 source_statuses=statuses,integrity_verified=True,untrusted_source_content=True,
                 job_correlation=link.get('status','not_established') if linked_run else 'not_established',
                 selection_basis='verified_marker_window_only_not_full_job' if linked_run else 'exact_properties_only_not_job_identity')
+
+
+def verified_case(state_dir, case_id, *, with_digest=False):
+    report,digest=load_case(state_dir,case_id,with_digest=True)
+    for source in report['sources']:
+        if not re.fullmatch(r's[1-9][0-9]*',source['id']):
+            raise InputError('invalid saved evidence source')
+        data=read_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'))
+        if hashlib.sha256(data).hexdigest()!=source['sha256']:
+            raise InputError('evidence snapshot integrity mismatch')
+    return (report,digest) if with_digest else report
+
+
+def comparison_folder(state_dir, comparison_id):
+    if not re.fullmatch(r'[a-f0-9]{32}',comparison_id):
+        raise InputError('invalid comparison identifier')
+    return Path(state_dir)/'comparisons'/comparison_id
+
+
+def comparison_markdown(report):
+    lines=['# SC-01: проверка исправления','',
+        f"Сравнение: `{report['comparison_id']}`. Итог: **{report['status']}**.",
+        f"Скорость: **{report['performance']['status']}**. Данные: **{report['result_correctness']['status']}**.",'',
+        f"Происхождение входов: {report.get('provenance',{}).get('overall','unknown')}. Область проверки: {report.get('verification_scope','unknown')}.",
+        'Происхождение declared provided само по себе не удостоверяет подлинность. Причину интерпретирует агент; название варианта не доказывает её.',
+        'Секундные границы учитываются отдельно от замеров тела и сервиса. Очередь не измерена.','',
+        '| Пара | До, случай | После, случай | Выполнение до, с | После, с | Границы не пересекаются |',
+        '| --- | --- | --- | --- | --- | --- |']
+    for pair in report['pairs']:
+        lines.append(f"| {pair['index']} | {pair['before_case_id']} | {pair['after_case_id']} | "
+                     f"{pair['before_seconds']} | {pair['after_seconds']} | {pair['strictly_faster_with_precision']} |")
+    lines+=['',f"HTTP-запросы до: {report['external_calls']['before_counts']}; после: {report['external_calls']['after_counts']}.",
+            '', 'Полные границы, контроль результата, хэши, ограничения и ссылки на свидетельства — в report.json.',
+            'Продолжение: `comparison ID`; исходный случай: `show CASE_ID`; доказательство: `evidence CASE_ID SOURCE:LINE`.','']
+    return '\n'.join(lines)
+
+
+def compare_cases(state_dir, before_ids, after_ids):
+    if any(not isinstance(ids,list) or not 1<=len(ids)<=20 for ids in (before_ids,after_ids)):
+        raise InputError('compare requires 1..20 case ids in each group')
+    before_inputs=[verified_case(state_dir,case_id,with_digest=True) for case_id in before_ids]
+    after_inputs=[verified_case(state_dir,case_id,with_digest=True) for case_id in after_ids]
+    before=[item[0] for item in before_inputs]
+    after=[item[0] for item in after_inputs]
+    report=compare_reports(before,after)
+    report.update(comparison_id=uuid.uuid4().hex,product_version=__version__,
+                  created_at=datetime.now(timezone.utc).isoformat(),before_case_ids=before_ids,after_case_ids=after_ids)
+    report['input_reports']=[dict(case_id=item['case_id'],sha256=digest) for item,digest in before_inputs+after_inputs]
+    if len(json.dumps(report,ensure_ascii=False,allow_nan=False).encode('utf-8'))>MAX_REPORT_BYTES:
+        raise InputError('comparison report exceeds size limit')
+    folder=comparison_folder(state_dir,report['comparison_id']);folder.mkdir(parents=True,exist_ok=False)
+    write_json(folder/'report.json',report)
+    (folder/'report.md').write_text(comparison_markdown(report),encoding='utf-8',newline='\n')
+    write_json(folder/'receipt.json',dict(schema_version=1,
+        report_sha256=hashlib.sha256((folder/'report.json').read_bytes()).hexdigest(),
+        markdown_sha256=hashlib.sha256((folder/'report.md').read_bytes()).hexdigest()))
+    return report
+
+
+def load_comparison(state_dir, comparison_id):
+    folder=comparison_folder(state_dir,comparison_id)
+    receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'))
+    data=read_snapshot(folder/'report.json',MAX_REPORT_BYTES)
+    if (hashlib.sha256(data).hexdigest()!=receipt['report_sha256'] or
+            hashlib.sha256(read_snapshot(folder/'report.md',MAX_REPORT_BYTES)).hexdigest()!=receipt['markdown_sha256']):
+        raise InputError('saved comparison integrity mismatch')
+    report=json_value(data.decode('utf-8'))
+    if report.get('schema_version')!=1 or report.get('comparison_id')!=comparison_id:
+        raise InputError('unsupported saved comparison')
+    for item in report['input_reports']:
+        _,digest=verified_case(state_dir,item['case_id'],with_digest=True)
+        if digest!=item['sha256']:
+            raise InputError('comparison input report integrity mismatch')
+    return report
