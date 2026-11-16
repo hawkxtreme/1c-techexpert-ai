@@ -4,8 +4,9 @@ from pathlib import Path
 
 from .inputs import InputError,json_value,read_snapshot
 
-def catalogue():
-    data=read_snapshot(Path(__file__).parent/'assets/incident-templates.json',256*1024)
+def catalogue(*,root=None):
+    path=Path(root)/'src/techexpert/assets/incident-templates.json' if root is not None else Path(__file__).parent/'assets/incident-templates.json'
+    data=read_snapshot(path,256*1024)
     value=json_value(data.decode('utf-8'),reject_duplicates=True)
     expected={'TPL-'+str(i).zfill(2) for i in range(1,11)}
     if value.get('schema_version')!=1 or not isinstance(value.get('templates'),list):raise InputError('unsupported template catalogue')

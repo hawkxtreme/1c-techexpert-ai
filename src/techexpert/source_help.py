@@ -3,8 +3,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from .inputs import InputError,json_value,read_snapshot
 
-def catalogue():
-    result=json_value(read_snapshot(Path(__file__).parent/'assets/source-help.json',128*1024).decode('utf-8'),reject_duplicates=True)
+def catalogue(*,root=None):
+    path=Path(root)/'src/techexpert/assets/source-help.json' if root is not None else Path(__file__).parent/'assets/source-help.json'
+    result=json_value(read_snapshot(path,128*1024).decode('utf-8'),reject_duplicates=True)
     if result.get('schema_version')!=1 or set(result.get('sources',{}))!={'tj','jr','source','sql','rac','os'}:raise InputError('unsupported source-help catalogue')
     for item in result['sources'].values():
         if 'export_help' in item:

@@ -69,6 +69,15 @@
       <button type="button" data-step="review">3 · Проверить и сохранить</button>
     </nav>
     <p id="notice" role="status" aria-live="polite" hidden></p>
+    <details id="readiness-panel" class="box" open>
+      <summary id="readiness-title">Проверка готовности комплекта</summary>
+      <div class="stack">
+        <div id="readiness-results" role="status" aria-live="polite"><p class="note">Проверяется установленный комплект. Подключения к источникам и сбор не запускаются.</p></div>
+        <div><button type="button" id="run-demo" disabled>Проверить на примере</button></div>
+        <p class="note">Комплектный синтетический SC-01. Рабочая база не открывается; профиль и текущее расследование не изменяются. Результат доступен агенту в этом же чате.</p>
+        <p id="demo-result" role="status" aria-live="polite" class="note"></p>
+      </div>
+    </details>
     <details id="investigation-context" class="box" hidden open>
       <summary>Контекст из текущего чата</summary>
       <div class="stack">
@@ -133,6 +142,7 @@
       let templateBook = null;
       let sourceHelp = null;
       let profileEtag = null;
+      let readinessState = null;
       let busy = false;
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
@@ -190,7 +200,24 @@
         busy = true; root.querySelectorAll('button').forEach(button => { button.disabled = true; });
         try { await action(); }
         catch (error) { message(error.message, true); }
-        finally { busy = false; root.querySelectorAll('button').forEach(button => { button.disabled = false; }); }
+        finally { busy = false; root.querySelectorAll('button').forEach(button => { button.disabled = false; }); syncDemoButton(); }
+      }
+      function syncDemoButton(){q('#run-demo').disabled=busy || !readinessState?.capabilities.run_synthetic_demo || ['completed','damaged'].includes(readinessState?.demonstration.status);}
+      function renderReadiness(data){
+        readinessState=data;
+        const title=q('#readiness-title');title.textContent=data.status==='blocked'?'Комплект требует восстановления':data.status==='needs_harness_confirmation'?'Комплект проверен · подтверждение агента требуется':'Комплект готов к анализу файлов';
+        const box=q('#readiness-results');box.replaceChildren();
+        const names={runtime:'Локальные инструменты',instructions:'Инструкции и навыки',catalogues:'Шаблоны и справка',knowledge:'База знаний',demo:'Комплектный пример',bundle:'Поставка'};
+        data.checks.forEach(item=>box.append(element('p',(names[item.id] || 'Компонент')+': '+(item.status==='ready'?'готово':'требуется восстановление полной совместимой поставки'),'note')));
+        if(data.knowledge.status==='ready')box.append(element('p','База знаний: '+data.knowledge.cards+' карточек, ревизия '+data.knowledge.revision+'. Локальный поиск проверен.','note'));
+        if(data.status==='blocked')box.append(element('p',data.actions.restore_complete_bundle,'hint'));
+        if(data.harness.status!=='caller_reported_loaded')box.append(element('p','Точку входа подтверждает агент текущего чата. Отдельная модель и ключ ИИ не нужны.','note'));
+        box.append(element('p',data.specialized.sql==='not_applicable'?'SQL и RAC неприменимы к выбранным файловым базам.':'SQL и RAC не проверялись; для анализа предоставленных файлов они не обязательны.','note'));
+        if(data.profile.status==='invalid')box.append(element('p','Сохранённые настройки повреждены или недоступны. Вернитесь к агенту для разбора; прежние данные сохраняются.','hint'));
+        const demo=data.demonstration;
+        q('#demo-result').textContent=demo.status==='completed'?'Синтетический SC-01 проверен: очередь '+demo.durations_seconds.queue+' с, выполнение '+demo.durations_seconds.execution+' с. Случай '+demo.case_id+'. Причину по этим отметкам установить нельзя; продолжите с агентом.':demo.status==='damaged'?'Сохранённый результат примера повреждён. Агенту нужно проверить свидетельства; автоматического повторного запуска нет.':'';
+        q('#run-demo').textContent=demo.status==='completed'?'Пример проверен':'Проверить на примере';
+        syncDemoButton();
       }
       function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
       function field(labelText, value, onInput, placeholder='') {
@@ -376,8 +403,14 @@
         renderReview();message(investigation?'Профиль и контекст сохранены. Можно продолжить в текущем чате.':'Профиль сохранён. Можно продолжить в текущем чате.');
       }));
       q('#close-helper').addEventListener('click', () => { window.close(); message('Если вкладка не закрылась, закройте её вручную и вернитесь в текущий чат.'); });
+      q('#run-demo').addEventListener('click',()=>perform(async()=>{
+        if(!readinessState?.capabilities.run_synthetic_demo)throw new Error('Сначала проверьте готовность комплекта.');
+        await api('/api/demo',{});renderReadiness(await api('/api/readiness'));
+        message('Синтетический пример сохранён. Вернитесь в текущий чат; агент прочитает результат проверки.');
+      }));
       renderBases(); renderStep();
       perform(async () => {
+        renderReadiness(await api('/api/readiness'));
         [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);renderContext();
         const profile = await api('/api/profile');
         if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids],settings:{...defaults(source.type),...source.settings}}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }

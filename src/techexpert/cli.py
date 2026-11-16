@@ -21,6 +21,9 @@ def main(argv=None):
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)
     commands.add_parser('doctor')
+    readiness=commands.add_parser('readiness')
+    readiness.add_argument('--entrypoint-sha256')
+    readiness.add_argument('--investigation')
     commands.add_parser('profile')
     profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
     commands.add_parser('demo')
@@ -48,6 +51,7 @@ def main(argv=None):
     init.add_argument('--open-browser', action='store_true')
     init.add_argument('--ttl', type=int, default=900)
     init.add_argument('--investigation')
+    init.add_argument('--entrypoint-sha256')
     knowledge = commands.add_parser('knowledge')
     knowledge.add_argument('query')
     apdex = commands.add_parser('apdex')
@@ -135,6 +139,9 @@ def main(argv=None):
     try:
         if args.command == 'doctor':
             result = doctor(args.state_dir)
+        elif args.command == 'readiness':
+            from .readiness import check
+            result=check(args.state_dir,entrypoint_sha256=args.entrypoint_sha256,investigation_id=args.investigation)
         elif args.command == 'profile-save':
             from .profiles import save_profile
             from .inputs import read_snapshot,json_value
@@ -142,7 +149,10 @@ def main(argv=None):
         elif args.command == 'profile':
             result = load_profile(args.state_dir) or dict(status='not_configured', next_step='init')
         elif args.command in ('demo','analyze'):
-            result = investigate(ROOT / 'examples/sc01/case.json' if args.command=='demo' else args.manifest, args.state_dir)
+            if args.command=='demo':
+                from .readiness import run_demo
+                result=run_demo(args.state_dir)
+            else:result=investigate(args.manifest,args.state_dir)
         elif args.command == 'show':
             result = load_case(args.state_dir, args.case_id)
         elif args.command == 'compare':
@@ -162,7 +172,7 @@ def main(argv=None):
                                         properties=filters, offset=args.offset, limit=args.limit, linked_run=args.linked_run)
         elif args.command == 'init':
             from .gui import run_gui
-            run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,investigation_id=args.investigation)
+            run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,investigation_id=args.investigation,entrypoint_sha256=args.entrypoint_sha256)
             return 0
         elif args.command == 'apdex':
             from .artifacts import import_apdex
@@ -265,7 +275,7 @@ def main(argv=None):
             from .knowledge import search
             result=search(args.query)
         emit(result)
-        return 0
+        return 2 if args.command=='readiness' and result['status']=='blocked' else 0
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         emit(dict(status='error', code='input_or_state_error', message=str(exc)))
         return 2

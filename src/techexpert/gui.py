@@ -23,7 +23,7 @@ class InitServer(ThreadingHTTPServer):
     block_on_close = False
     allow_reuse_address = False
 
-    def __init__(self, state_dir, ttl, investigation_id=None):
+    def __init__(self, state_dir, ttl, investigation_id=None,entrypoint_sha256=None):
         if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
             raise ValueError('TTL must be a positive finite number of seconds')
         self.state_dir = Path(state_dir)
@@ -31,6 +31,8 @@ class InitServer(ThreadingHTTPServer):
             from .investigations import load
             load(self.state_dir,investigation_id)
         self.investigation_id=investigation_id
+        self.entrypoint_sha256=entrypoint_sha256
+        self.demo_lock=threading.Lock()
         self.deadline = time.monotonic() + ttl
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
@@ -181,6 +183,9 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._json(200, result,etag=self._profile_etag(result))
             elif self.path == '/api/doctor':
                 self._json(200, profiles.doctor(self.server.state_dir))
+            elif self.path == '/api/readiness':
+                from .readiness import check
+                self._json(200,check(self.server.state_dir,entrypoint_sha256=self.server.entrypoint_sha256,investigation_id=self.server.investigation_id))
             elif self.path == '/api/templates':
                 from .incident_templates import catalogue
                 self._json(200,catalogue())
@@ -200,14 +205,23 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
         if data is None or not self._guard(write=True, api=True):
             return
         try:
-            if self.path=='/api/context':
+            if self.path=='/api/demo':
+                if data:raise ValueError('Демонстрация использует только комплектный синтетический SC-01, без параметров источников.')
+                from .readiness import check,read_demo,run_demo
+                with self.server.demo_lock:
+                    report=check(self.server.state_dir)
+                    if not report['capabilities']['run_synthetic_demo']:raise ValueError('Восстановите полный совместимый комплект перед проверкой на примере.')
+                    previous=read_demo(self.server.state_dir)
+                    if previous['status']!='completed':run_demo(self.server.state_dir)
+                    result=read_demo(self.server.state_dir)
+            elif self.path=='/api/context':
                 from .investigations import revise
                 if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
                 if set(data)-{'expected_revision','template_id','variant','time_mode','scale','profile_revision'}:raise ValueError('Недопустимое поле контекста.')
@@ -238,14 +252,16 @@ class InitHandler(BaseHTTPRequestHandler):
             self._error(400, 'Не удалось прочитать файл или сохранить профиль. Проверьте путь и права.')
 
 
-def create_server(state_dir, ttl=900, investigation_id=None):
+def create_server(state_dir, ttl=900, investigation_id=None,entrypoint_sha256=None):
     """Bind only to loopback; no browser, sources or remote services are opened."""
-    return InitServer(state_dir, ttl,investigation_id=investigation_id)
+    return InitServer(state_dir, ttl,investigation_id=investigation_id,entrypoint_sha256=entrypoint_sha256)
 
 
-def run_gui(state_dir, open_browser=False, ttl=900, investigation_id=None):
-    server = create_server(state_dir, ttl=ttl,investigation_id=investigation_id)
-    print(json.dumps({'url': server.url}), flush=True)
+def run_gui(state_dir, open_browser=False, ttl=900, investigation_id=None,entrypoint_sha256=None):
+    from .readiness import check
+    report=check(state_dir,entrypoint_sha256=entrypoint_sha256,investigation_id=investigation_id)
+    server = create_server(state_dir, ttl=ttl,investigation_id=investigation_id,entrypoint_sha256=entrypoint_sha256)
+    print(json.dumps({'url': server.url,'readiness':report},ensure_ascii=False), flush=True)
     try:
         if open_browser:
             webbrowser.open(server.url)

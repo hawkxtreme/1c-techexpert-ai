@@ -10,6 +10,40 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_readiness_is_protected_read_only_and_has_separate_demo_action(self):
+        self.assertEqual(self.request('GET','/api/readiness',token=False)[0],401)
+        status,_,body=self.request('GET','/api/readiness');self.assertEqual(status,200)
+        report=json.loads(body);self.assertTrue(report['capabilities']['run_synthetic_demo'])
+        self.assertFalse(self.state_dir.exists())
+        self.assertEqual(self.request('GET','/api/demo')[0],404)
+        self.assertEqual(self.request('POST','/api/demo',{},token=False)[0],401)
+        self.assertEqual(self.request('POST','/api/demo',{},origin=False)[0],403)
+        self.assertEqual(self.request('POST','/api/demo',{'path':'//private/source'})[0],400)
+        self.assertFalse(self.state_dir.exists())
+
+    def test_explicit_gui_demo_is_synthetic_reused_and_keeps_case_profile(self):
+        from src.techexpert.investigations import create,load
+        from src.techexpert.profiles import save_profile,load_profile
+        original=save_profile(self.state_dir,self.profile)
+        case=create(self.state_dir,dict(task='Existing SC01',template_id='TPL-02',time_mode='past',scale='background'))
+        self.server.investigation_id=case['investigation_id']
+        status,_,body=self.request('POST','/api/demo',{});self.assertEqual(status,200)
+        result=json.loads(body);self.assertEqual(result['origin'],'synthetic')
+        self.assertEqual(result['durations_seconds']['execution'],2460)
+        again=json.loads(self.request('POST','/api/demo',{})[2]);self.assertEqual(again['case_id'],result['case_id'])
+        report=json.loads(self.request('GET','/api/readiness')[2]);self.assertEqual(report['demonstration']['case_id'],result['case_id'])
+        self.assertEqual(load_profile(self.state_dir),original)
+        self.assertEqual(load(self.state_dir,case['investigation_id'])['revision'],case['revision'])
+        broken=self.state_dir/'cases'/result['case_id']/'sources/s1.bin';broken.write_bytes(b'changed')
+        self.assertEqual(self.request('POST','/api/demo',{})[0],400)
+        self.assertEqual(len(list((self.state_dir/'cases').iterdir())),1)
+
+    def test_gui_shows_readiness_without_requiring_a_profile(self):
+        status,_,body=self.request('GET','/');self.assertEqual(status,200)
+        html=body.decode('utf-8')
+        self.assertTrue('id="readiness-panel"' in html,'readiness view is missing')
+        self.assertTrue('id="run-demo"' in html,'separate safe demo action is missing')
+
     def test_stale_gui_does_not_remove_a_source_added_by_the_cli_writer(self):
         from src.techexpert.profiles import save_profile,load_profile
         first=save_profile(self.state_dir,self.profile)
