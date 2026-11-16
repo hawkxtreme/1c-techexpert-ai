@@ -24,6 +24,7 @@ description: Подготовить локальный 1C TechExpert AI, отк�
 - **СУБД и код.** [postgresql](../postgresql/SKILL.md), [sql-server](../sql-server/SKILL.md), [onec-source](../onec-source/SKILL.md).
 - **Нагрузка и клиент.** [os-metrics](../os-metrics/SKILL.md), [client-ui-performance](../client-ui-performance/SKILL.md).
 - **Цель, исправление, отчёт.** [apdex-and-observation](../apdex-and-observation/SKILL.md), [verify-improvement](../verify-improvement/SKILL.md), [report-and-evidence](../report-and-evidence/SKILL.md).
+- **Предложить случай в базу знаний.** [Предпросмотр и экспорт](references/incident-drafts.md): подготовь очищенный локальный черновик, покажи человеку полный текст и состав, внеси исправления. Отправляй в конкретный GitHub-репозиторий только по явному поручению отправить этот просмотренный результат.
 - **Обработка и исследование.** [code-mode-analysis](../code-mode-analysis/SKILL.md), [external-research](../external-research/SKILL.md).
 
 Загружай только нужный навык. Не запускай все проверки и демонстрацию при каждом обращении. Если инструмент отсутствует, объясни точную недостающую предпосылку и доступный путь продолжения, не заявляя успешное выполнение. `doctor` проверяет локальный комплект; он не доказывает, что модель harness получила доступ к произвольной инфраструктуре.

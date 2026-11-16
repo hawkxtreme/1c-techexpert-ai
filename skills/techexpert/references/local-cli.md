@@ -4,6 +4,8 @@
 
 Для `templates`, `template`, `investigation-create`, `investigation-update`, `investigation` и продолжения после сообщения о повторении используйте [контракт состояния](investigation-state.md). Это дополнение к immutable `case_id`, `artifact_id` и `comparison_id`; оно не заменяет их сырые доказательства. `init --investigation ID` получает контекст из того же сохранённого расследования.
 
+Предложение инцидента для базы знаний использует отдельные `incident-draft`, `incident-preview`, `incident-edit`, `incident-export`, `incident-send-plan` и `incident-record-submission`; [точный контракт](incident-drafts.md) отделяет локальную подготовку от явно порученной внешней отправки текущим harness.
+
 Команды выполняются из проверенного корня пакета. `python` ниже означает рабочий интерпретатор Python в среде пользователя; при необходимости используй его полный путь. Корневой `techexpert.py` и его локальные модули должны поставляться вместе со skills.
 
 ```text

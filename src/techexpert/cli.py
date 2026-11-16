@@ -114,6 +114,19 @@ def main(argv=None):
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
     investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
     investigation_update.add_argument('patch',type=Path);investigation_update.add_argument('--expected-revision',type=int,required=True)
+    incident=commands.add_parser('incident-draft');incident.add_argument('investigation_id');incident.add_argument('--revision',type=int)
+    incident.add_argument('--include-versions',action='store_true');incident.add_argument('--summary',action='store_true')
+    incident.add_argument('--exclude-section',action='append',default=[]);incident.add_argument('--public-url',action='append',default=[])
+    incident.add_argument('--evidence',action='append',default=[])
+    incident_preview=commands.add_parser('incident-preview');incident_preview.add_argument('draft_id');incident_preview.add_argument('--summary',action='store_true')
+    incident_edit=commands.add_parser('incident-edit');incident_edit.add_argument('draft_id');incident_edit.add_argument('document',type=Path)
+    incident_edit.add_argument('--expected-sha256',required=True);incident_edit.add_argument('--summary',action='store_true')
+    incident_export=commands.add_parser('incident-export');incident_export.add_argument('draft_id');incident_export.add_argument('output',type=Path)
+    incident_export.add_argument('--expected-sha256',required=True)
+    incident_send=commands.add_parser('incident-send-plan');incident_send.add_argument('draft_id');incident_send.add_argument('--repository',required=True)
+    incident_send.add_argument('--expected-sha256',required=True)
+    incident_record=commands.add_parser('incident-record-submission');incident_record.add_argument('draft_id');incident_record.add_argument('response',type=Path)
+    incident_record.add_argument('--repository',required=True);incident_record.add_argument('--expected-sha256',required=True);incident_record.add_argument('--expected-action-sha256',required=True)
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':
@@ -206,6 +219,27 @@ def main(argv=None):
             else:result=load(args.state_dir,args.investigation_id,revision=args.revision)
             folder=revision_folder(args.state_dir,result['investigation_id'],result['revision']).absolute()
             result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
+        elif args.command in ('incident-draft','incident-preview','incident-edit','incident-export','incident-send-plan','incident-record-submission'):
+            from . import incident_drafts as drafts
+            if args.command=='incident-draft':
+                result=drafts.prepare(args.state_dir,args.investigation_id,revision=args.revision,include_versions=args.include_versions,
+                    exclude_sections=args.exclude_section,public_urls=args.public_url,evidence_ids=args.evidence)
+            elif args.command=='incident-preview':result=drafts.preview(args.state_dir,args.draft_id)
+            elif args.command=='incident-edit':
+                from .inputs import read_snapshot,json_value
+                document=json_value(read_snapshot(args.document,256*1024).decode('utf-8-sig'),reject_duplicates=True)
+                if not isinstance(document,dict) or set(document)-{'title','body','exclude_evidence_ids'} or not {'title','body'}<=set(document):raise InputError('invalid incident edit properties')
+                result=drafts.edit(args.state_dir,args.draft_id,expected_sha256=args.expected_sha256,**document)
+            elif args.command=='incident-export':result=drafts.export(args.state_dir,args.draft_id,args.output,expected_sha256=args.expected_sha256)
+            elif args.command=='incident-record-submission':
+                from .inputs import read_snapshot,json_value
+                result=drafts.record_submission(args.state_dir,args.draft_id,args.repository,
+                    json_value(read_snapshot(args.response,512*1024).decode('utf-8-sig'),reject_duplicates=True),
+                    expected_sha256=args.expected_sha256,expected_action_sha256=args.expected_action_sha256)
+            else:result=drafts.send_plan(args.state_dir,args.draft_id,args.repository,expected_sha256=args.expected_sha256)
+            if getattr(args,'summary',False):
+                result.pop('body',None)
+                if 'files' in result:result['files']=[{k:v for k,v in item.items() if k!='text'} for item in result['files']]
         elif args.command=='source-search':
             from .source_code import search_source
             result=search_source(args.state_dir,args.artifact_id,args.query,limit=args.limit)
