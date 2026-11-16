@@ -96,6 +96,28 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.doc['cards'][1]['depends_on']=['missing'];self.save()
         with self.assertRaises(ValueError):knowledge.load_library(self.library)
 
+    def test_linked_catalogue_root_and_ancestor_are_rejected_before_content_read(self):
+        from src.techexpert.inputs import InputError
+        target=self.root/'outside';target.mkdir();(target/'nested').mkdir()
+        marker=target/'nested/index.json';marker.write_bytes(b'must not be read through a link')
+        before=marker.read_bytes()
+        script=self.root/'junction.ps1'
+        script.write_text("param([string]$LeafPath,[string]$TargetPath)\n$ErrorActionPreference='Stop'\nNew-Item -ItemType Junction -Path $LeafPath -Target $TargetPath -ErrorAction Stop | Out-Null\n",encoding='utf-8-sig')
+        for name,destination,nested in [('root-link',target/'nested',False),('parent-link',target,True)]:
+            with self.subTest(name=name):
+                leaf=self.root/name
+                if os.name=='nt':
+                    run=subprocess.run(['C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script),str(leaf),str(destination)],capture_output=True,timeout=15)
+                    self.assertEqual(run.returncode,0,run.stderr)
+                else:os.symlink(destination,leaf,target_is_directory=True)
+                try:
+                    with patch.object(knowledge,'read_snapshot',side_effect=AssertionError('linked catalogue bytes opened')):
+                        with self.assertRaises(InputError):knowledge.load_library(leaf/'nested' if nested else leaf)
+                finally:
+                    if os.name=='nt':os.rmdir(leaf)
+                    else:leaf.unlink()
+                self.assertEqual(marker.read_bytes(),before)
+
     def test_unknown_lifecycle_state_and_original_storage_are_rejected(self):
         self.doc['sources'][0]['lifecycle']=dict(state='automatically_verified');self.save()
         with self.assertRaises(ValueError):knowledge.load_library(self.library)
@@ -192,6 +214,28 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertEqual(result['status'],'review_required')
         self.assertEqual(result['recommendations_requiring_review'],[])
         self.assertFalse(result['stored_assessment_changed'])
+
+    def test_one_tracked_recommendation_does_not_hide_an_untracked_basis(self):
+        from src.techexpert.investigations import create,revise
+        from src.techexpert.artifacts import save_artifact
+        pinned=self.pin('A')
+        observed=save_artifact(self.state,'observation',{},[('fixture.txt',b'Own synthetic observation')],{})
+        with patch('src.techexpert.investigations.knowledge_revision',return_value=knowledge.load_library(self.library)['legacy_digest']):
+            doc=create(self.state,dict(task='SC01 mixed recommendation basis',template_id='TPL-02',time_mode='past',scale='background'))
+        doc=revise(self.state,doc['investigation_id'],dict(
+            attachments=[dict(id='A-KB',kind='artifact',target_id=pinned['artifact_id']),dict(id='A-OBS',kind='artifact',target_id=observed['artifact_id'])],
+            evidence=[dict(id='E-KB',attachment='A-KB',record='s1'),dict(id='E-OBS',attachment='A-OBS',record='s1')],
+            assessment=dict(summary='Synthetic only',cause_state='insufficient_data',evidence=[],limitations=['Fixture'],references=[],
+                recommendations=[dict(id=rid,kind='diagnostic',basis=[basis],goal='Measure',prerequisites='Fixture',expected_effect='Evidence',verification='Compare',limitations='Fixture')
+                    for rid,basis in [('R-1','E-KB'),('R-2','E-OBS')]])),expected_revision=1)
+        self.assertEqual(self.api.review_investigation(self.state,doc,root=self.library)['status'],'unchanged')
+        self.doc['sources'][1]['lifecycle']=dict(state='withdrawn',reason='Synthetic unrelated source withdrawal');self.save()
+        result=self.api.review_investigation(self.state,doc,root=self.library)
+        self.assertEqual(result['status'],'review_required')
+        self.assertEqual(result['recommendations_requiring_review'],[])
+        self.assertEqual(result['untracked_recommendation_ids'],['R-2'])
+        self.assertEqual(result['legacy_warning']['code'],'knowledge_revision_changed_usage_untracked')
+        self.assertEqual(result['usages'][0]['review']['status'],'unchanged')
 
     def test_cli_pins_reviews_and_reads_bounded_card_without_model_or_network(self):
         from src.techexpert.storage import ROOT

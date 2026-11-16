@@ -82,7 +82,14 @@ def _rights(value):
     return dict(value)
 
 def load_library(root=None):
-    root=Path(ROOT/'knowledge' if root is None else root).resolve()
+    root=Path(ROOT/'knowledge' if root is None else root).absolute()
+    if '..' in root.parts:raise InputError('knowledge root must not contain parent traversal')
+    # Preserve the selected boundary until every ancestor has been inspected.
+    for component in (root,*root.parents):
+        info=component.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:
+            raise InputError('linked knowledge root or ancestor rejected')
+    root=root.resolve()
     metadata=read_snapshot(_member(root,'index.json'),1024*1024)
     index=json_value(metadata.decode('utf-8'),reject_duplicates=True)
     if not isinstance(index,dict) or type(index.get('schema_version')) is not int or index['schema_version'] not in (1,2):raise InputError('unsupported knowledge index')

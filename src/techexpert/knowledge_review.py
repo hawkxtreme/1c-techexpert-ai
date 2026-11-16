@@ -132,7 +132,7 @@ def review_use(state_dir,artifact_id,*,root=None,environment=None):
 
 def review_investigation(state_dir,doc,*,root=None,environment=None):
     from .artifacts import load_artifact
-    usages=[];affected=set()
+    usages=[];affected=set();knowledge_evidence=set()
     for attachment in doc['attachments']:
         if attachment['kind']!='artifact':continue
         report=load_artifact(state_dir,attachment['target_id'])
@@ -140,17 +140,21 @@ def review_investigation(state_dir,doc,*,root=None,environment=None):
         review=review_use(state_dir,report['artifact_id'],root=root,environment=environment)
         usages.append(dict(attachment=attachment['id'],review=review))
         bad_sources={card['source_id'] for card in review['cards'] if card['review_required']}
+        known_sources={card['source_id'] for card in review['cards']}
         for evidence in doc['evidence']:
-            if evidence['attachment']==attachment['id'] and evidence['record'] in bad_sources:affected.add(evidence['id'])
+            if evidence['attachment']==attachment['id']:
+                if evidence['record'] in known_sources:knowledge_evidence.add(evidence['id'])
+                if evidence['record'] in bad_sources:affected.add(evidence['id'])
     hypotheses={h['id']:h['evidence'] for h in doc['hypotheses']}
     recommendations=doc['assessment']['recommendations'] if doc['assessment'] else []
-    changed=[]
+    changed=[];untracked=[]
     for recommendation in recommendations:
         evidence=set()
         for basis in recommendation['basis']:evidence.update(hypotheses.get(basis,[basis]))
         if evidence&affected:changed.append(recommendation['id'])
+        if not evidence&knowledge_evidence:untracked.append(recommendation['id'])
     legacy=None
-    if not usages:
+    if not usages or untracked:
         try:
             library=load_library(root)
             if doc['versions']['knowledge']!=library['legacy_digest']:
@@ -159,7 +163,7 @@ def review_investigation(state_dir,doc,*,root=None,environment=None):
     review_required=bool(changed or legacy or any(u['review']['status']!='unchanged' for u in usages))
     return dict(status='review_required' if review_required else 'unchanged',investigation_id=doc['investigation_id'],revision=doc['revision'],
         usages=usages,recommendations_requiring_review=changed,legacy_warning=legacy,
-        untracked_recommendation_ids=[r['id'] for r in recommendations] if legacy else [],
+        untracked_recommendation_ids=untracked if legacy else [],
         stored_assessment_changed=False,stored_cause_state=doc['cause_state'],technical_truth_judged=False,
         scope='Explicit knowledge artifact evidence and hypothesis basis; implicit knowledge use remains unknown.')
 
