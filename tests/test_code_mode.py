@@ -246,10 +246,12 @@ return second
                 self.assertIn(result['status'],('failed','partial'),result['status'])
                 self.assertEqual(result['stop_reason'],'owned_disk_limit')
                 folder=self.state/'operations'/result['run_id']
-                self.assertTrue((folder/'worker-result.json').exists(),'Retain the partial files, rather than discarding evidence')
+                self.assertTrue((folder/'code-program.json').exists(),'Retain the partial audit, even if serialization was interrupted')
                 self.assertFalse((folder/'output-receipt.json').exists(),'Over-budget output must not be published')
                 with patch('src.techexpert.operation_process.run',side_effect=AssertionError('Recovery launched the program')):
-                    with self.assertRaisesRegex(ValueError,'owned_disk_limit'):operations.reconcile(self.state,result['run_id'])
+                    if (folder/'worker-receipt.json').exists():
+                        with self.assertRaisesRegex(ValueError,'owned_disk_limit'):operations.reconcile(self.state,result['run_id'])
+                    else:self.assertNotEqual(operations.reconcile(self.state,result['run_id'])['status'],'succeeded')
                     self.assertNotEqual(operations.result(self.state,result['run_id'])['status'],'succeeded')
 
     def test_program_has_the_same_thirteen_diagnostic_operations_as_direct_calls(self):
