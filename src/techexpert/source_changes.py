@@ -86,7 +86,7 @@ def _context(folder, kind):
     else:
         # Import staging paths differ between captures; actual parameters such
         # as APDEX target, version, time and filters remain interpretation.
-        context = {key: value for key, value in request.items() if key not in ('path', 'measurements', 'input_plan', 'members')} if type(request) is dict else request
+        context = {key: value for key, value in request.items() if key not in ('path', 'import_path', 'measurements', 'input_plan', 'members')} if type(request) is dict else request
     return fs.digest(context), fs.digest(receipt)
 
 

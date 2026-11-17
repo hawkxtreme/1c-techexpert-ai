@@ -269,7 +269,7 @@ class SourceChangeTests(unittest.TestCase):
         self.assertIn('record_budget', value['interpretation']['changed_fields'])
         self.assertEqual(value['suggested_after_range']['byte_start'], 0)
 
-    def test_metric_artifact_catalogue_bindings_are_also_verified(self):
+    def test_same_metric_catalogue_member_ignores_its_temporary_import_path(self):
         from src.techexpert.input_adapters import import_selected
         from test_input_adapter_intake import os_document
         archive = self.root / 'metrics.zip'
@@ -286,6 +286,9 @@ class SourceChangeTests(unittest.TestCase):
         self.assertTrue(value['input_duplicate']['duplicate'])
         self.assertEqual(value['observation']['relation'], 'same_catalogue_member')
         self.assertEqual(value['framing']['before']['status'], 'not_applicable')
+        self.assertTrue(value['interpretation']['same'])
+        self.assertEqual(value['interpretation']['changed_fields'], [])
+        self.assertIsNone(value['suggested_after_range'])
 
     def test_bad_refs_and_unknown_source_are_rejected_without_original_path_access(self):
         good = self.case()
