@@ -41,7 +41,7 @@ def route(arguments,required,source,impact,fields,*,timeout=60):
         impact=impact,data_schema=data_schema,output_schema=response_schema(data_schema))
 
 ROUTES={
- 'case.analyze':route(dict(manifest=FILE,input_plan=CASE),['manifest'],['selected manifest and declared stable files or approved input catalogue members'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
+ 'case.analyze':route(dict(manifest=FILE,input_plan=CASE),['manifest'],['selected manifest and stable files, explicit bounded TJ prefixes or approved catalogue members'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
  'case.show':route(dict(case_id=CASE),['case_id'],['verified saved case'],'read retained case; no original-path access',['case_id','sources']),
  'case.coverage':route(dict(case_id=CASE,**COVERAGE),['case_id'],['verified saved TJ'],'derive coverage from retained bytes',['sources','limitations']),
  'case.events':route(dict(case_id=CASE,source_id=string(16,pattern='s[1-9][0-9]*'),event=string(64),

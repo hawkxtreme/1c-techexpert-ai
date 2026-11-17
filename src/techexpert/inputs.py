@@ -182,6 +182,9 @@ def load_manifest(path,*,tolerant_sources=False):
             profile = validate_profile(spec, source_path) if spec['format'] == '1c-tj-text-v1' else None
             job_profile=runtime_profile(spec) if is_runtime else None
             collection=validate_collection(spec.get('collection'))
+            read_mode=spec.get('read_mode','stable')
+            if (not isinstance(read_mode,str) or read_mode not in ('stable','tj-prefix-v1')
+                or read_mode=='tj-prefix-v1' and profile is None):raise InputError('unsupported source read mode')
         except ValueError:
             if not tolerant_sources:raise
             attempt['availability']='unsupported_profile'
@@ -193,13 +196,13 @@ def load_manifest(path,*,tolerant_sources=False):
                 attempt['availability']='unsupported_profile'
                 continue
             raise InputError('source context supports bounded node, process and epoch labels')
-        try:source_path=source_path.resolve()
+        try:source_path=source_path.absolute() if read_mode=='tj-prefix-v1' else source_path.resolve()
         except (OSError,ValueError) as exc:
             attempt['availability']='access_denied' if isinstance(exc,PermissionError) else 'read_error'
             limits.append(dict(code='source_unavailable',source=source_id,detail=str(exc)))
             continue
         identity = os.path.normcase(str(source_path))
-        interpretation = (spec['format'], profile, job_profile, context,collection)
+        interpretation = (spec['format'], profile, job_profile, context,collection,read_mode)
         if identity in seen:
             if seen[identity] != interpretation:
                 if tolerant_sources:
@@ -211,7 +214,12 @@ def load_manifest(path,*,tolerant_sources=False):
         seen[identity] = interpretation
         seen_ids[identity]=source_id
         try:
-            data = read_snapshot(source_path, min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total))
+            acquisition=None
+            maximum=min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total)
+            if read_mode=='tj-prefix-v1':
+                from .tj_capture import read_prefix
+                data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen))
+            else:data = read_snapshot(source_path,maximum)
             total += len(data)
         except (OSError, InputError) as exc:
             attempt['availability']=('not_found' if isinstance(exc,FileNotFoundError) else 'access_denied' if isinstance(exc,PermissionError)
@@ -222,6 +230,7 @@ def load_manifest(path,*,tolerant_sources=False):
         digest = hashlib.sha256(data).hexdigest()
         source = dict(id=source_id, path=str(source_path), sha256=digest, size=len(data),
                       format=spec['format'], data=data,collection=collection)
+        if acquisition is not None:source['acquisition']=acquisition
         sources.append(source)
         if is_runtime or is_auxiliary:
             source['evidence']=dict(id=f'{source_id}:1',source=source_id,sha256=digest,line=1,

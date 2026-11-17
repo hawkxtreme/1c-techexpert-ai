@@ -89,6 +89,7 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
                     continuity='unknown',clock_alignment='not_verified')
         if not source or attempt['availability']!='captured':results.append(result);continue
         result.update(sha256=source['sha256'],bytes=source['size'],parse_status=source.get('parse_status','unknown'))
+        if 'acquisition' in source:result['acquisition']=source['acquisition']
         if not native:results.append(result);continue
         observed=records[attempt['id']]
         period,selected=_period(observed,request['window'])
