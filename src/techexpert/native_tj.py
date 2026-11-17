@@ -81,57 +81,6 @@ def validate_profile(spec, path):
     return result
 
 
-def _frames(data, offset, stop):
-    """Yield byte ranges; a newline inside a quoted name/value is never a header.
-
-    Quote recognition is limited to token starts. In particular O'Brien and
-    Windows backslashes do not change state. The same scan continues through
-    oversized records, so apparent headers inside an open quote stay data.
-    """
-    start, start_line, line = offset, 1, 1
-    position, prefix_commas = offset, 0
-    section, token_start, quote = 'prefix', True, None
-    while position < stop:
-        char = data[position]
-        if quote is not None:
-            if char == quote:
-                if position + 1 < stop and data[position + 1] == quote:
-                    position += 2
-                    continue
-                quote = None
-            elif char == 10:
-                line += 1
-        elif char == 10:
-            yield start, position + 1, start_line, line, True, False
-            start, start_line = position + 1, line + 1
-            line += 1
-            section, token_start, quote, prefix_commas = 'prefix', True, None, 0
-        elif token_start and char in (34, 39):
-            quote, token_start = char, False
-        elif section == 'prefix':
-            if char == 44:
-                prefix_commas += 1
-                token_start = True
-                if prefix_commas == 3:
-                    section = 'name'
-            else:
-                token_start = False
-        elif section == 'name':
-            if char == 61:
-                section, token_start = 'value', True
-            elif char == 44:
-                token_start = True
-            else:
-                token_start = False
-        elif char == 44:
-            section, token_start = 'name', True
-        else:
-            token_start = False
-        position += 1
-    if start < stop:
-        yield start, stop, start_line, line, False, quote is not None
-
-
 def _token(text, position, delimiter):
     if position >= len(text):
         return '', position
@@ -201,85 +150,78 @@ def _record(text, profile):
                 start_timestamp_utc=None)
 
 
-def parse_tj(data, profile, max_records=100000, max_record_bytes=262144):
-    """Return observations and bounded limitations, preserving source byte ranges.
+class _TJScan:
+    def __init__(self,stream,profile,max_records,max_record_bytes,chunk_size):
+        from .native_tj_stream import Frames,MAX_CHUNK_BYTES
+        if type(max_records) is not int or not 0<=max_records<=MAX_RECORDS:raise ValueError('max_records must be an integer from 0 through 100000')
+        if type(max_record_bytes) is not int or not 1<=max_record_bytes<=MAX_RECORD_BYTES:raise ValueError('max_record_bytes must be an integer from 1 through 16777216')
+        if type(chunk_size) is not int or not 1<=chunk_size<=MAX_CHUNK_BYTES:raise ValueError('chunk_size must be an integer from 1 through 65536')
+        if not callable(getattr(stream,'read',None)):raise ValueError('TJ input requires a binary stream')
+        self.profile=validate_profile(profile,'');self.max_records=max_records;self.max_record_bytes=max_record_bytes
+        self.frames=Frames(stream,chunk_size=chunk_size,max_input_bytes=MAX_INPUT_BYTES,max_record_bytes=max_record_bytes)
+        self.records_seen=0;self.accepted=0;self.limitations=[];self.omitted=0;self.omitted_by_code={}
+        self.raw_record=None;self._summary=None;self._iterator=self._scan()
 
-    Evidence byte_end includes a record's LF/CRLF terminator and is exclusive.
-    Unterminated tails are conservatively withheld, even when syntactically
-    plausible. No full-data decoding or unbounded record buffering is used.
+    def __iter__(self):return self
+    def __next__(self):return next(self._iterator)
+
+    @property
+    def summary(self):
+        if self._summary is None:raise ValueError('TJ scan has not completed')
+        return self._summary
+
+    def limited(self,code,message,**location):
+        if len(self.limitations)<199:self.limitations.append(dict(code=code,message=message,**location))
+        else:self.omitted+=1;self.omitted_by_code[code]=self.omitted_by_code.get(code,0)+1
+
+    def _scan(self):
+        self.frames.initialize();cursor=self.frames.start;frames=iter(self.frames)
+        try:
+            while self.records_seen<self.max_records:
+                try:frame=next(frames)
+                except StopIteration:break
+                cursor=frame['byte_end'];self.records_seen+=1;self.raw_record=None
+                location={key:frame[key] for key in ('line','end_line','byte_start','byte_end')}
+                if frame['raw'] is None:
+                    self.limited('record_too_large','Record exceeded the byte limit and was not decoded.',**location)
+                    if frame['open_quote']:self.limited('ambiguous_record_boundary','An open quote prevents safe recovery before the end of input.',**location)
+                    continue
+                try:text=frame['raw'].decode('utf-8',errors='strict')
+                except UnicodeDecodeError:
+                    self.limited('invalid_utf8','Record does not satisfy the declared strict UTF-8 profile.',**location);continue
+                if '\ufeff' in text:
+                    self.limited('unexpected_bom','A BOM is only accepted at byte zero of the file.',**location);continue
+                if not frame['terminated']:
+                    self.limited('ambiguous_record_boundary' if frame['open_quote'] else 'truncated_record','Final record is incomplete or lacks a terminating newline; it was not accepted.',**location);continue
+                text=text[:-2] if text.endswith('\r\n') else text[:-1]
+                try:record=_record(text,self.profile)
+                except (ValueError,OverflowError):
+                    self.limited('invalid_record','Record header, time or property grammar is invalid.',**location);continue
+                record.update(location)
+                if record['ambiguous_properties']:self.limited('ambiguous_property','Repeated properties retained separately; no value selected.',**location)
+                self.accepted+=1;self.raw_record=frame['raw'];yield record
+        finally:frames.close()
+        self.frames.finish();self.raw_record=None
+        if cursor<self.frames.scan_size:self.limited('record_limit','Record-attempt budget reached; remaining bytes were not parsed.',byte_start=cursor)
+        if self.frames.seen>MAX_INPUT_BYTES:self.limited('input_byte_limit','Input exceeds the 16 MiB adapter scan limit.',byte_start=MAX_INPUT_BYTES)
+        if self.omitted:self.limitations.append(dict(code='additional_limitations',count=self.omitted,counts_by_code=self.omitted_by_code,message='Additional limitation details were omitted.'))
+        status=('empty' if self.frames.seen==self.frames.start else 'not_parsed' if not self.records_seen else 'invalid' if not self.accepted else 'partial' if self.limitations else 'parsed')
+        self._summary=dict(limitations=self.limitations,records_seen=self.records_seen,status=status)
+
+
+def iter_tj(stream,profile,max_records=100000,max_record_bytes=262144,*,chunk_size=65536):
+    """Yield bounded native observations; summary is final only after exhaustion.
+
+    The caller owns the binary stream and source integrity verification. A scan
+    reads at most the existing16MiB input budget plus one lookahead byte. Raw
+    evidence for the current accepted record is available as raw_record.
     """
-    if not isinstance(data, bytes):
-        raise ValueError('TJ input must be immutable bytes')
-    if type(max_records) is not int or not 0 <= max_records <= MAX_RECORDS:
-        raise ValueError('max_records must be an integer from 0 through 100000')
-    if type(max_record_bytes) is not int or not 1 <= max_record_bytes <= MAX_RECORD_BYTES:
-        raise ValueError('max_record_bytes must be an integer from 1 through 16777216')
-    profile = validate_profile(profile, '')
-    records, limitations = [], []
-    omitted, records_seen = 0, 0
-    omitted_by_code = {}
+    return _TJScan(stream,profile,max_records,max_record_bytes,chunk_size)
 
-    def limited(code, message, **location):
-        nonlocal omitted
-        if len(limitations) < 199:
-            limitations.append(dict(code=code, message=message, **location))
-        else:
-            omitted += 1
-            omitted_by_code[code] = omitted_by_code.get(code, 0) + 1
 
-    start = 3 if data.startswith(BOM) else 0
-    stop = min(len(data), MAX_INPUT_BYTES)
-    cursor = start
-    frames = _frames(data, start, stop)
-    while records_seen < max_records:
-        try:
-            begin, end, first_line, last_line, terminated, open_quote = next(frames)
-        except StopIteration:
-            break
-        cursor = end
-        records_seen += 1
-        location = dict(line=first_line, end_line=last_line, byte_start=begin, byte_end=end)
-        if end - begin > max_record_bytes:
-            limited('record_too_large', 'Record exceeded the byte limit and was not decoded.', **location)
-            if open_quote:
-                limited('ambiguous_record_boundary', 'An open quote prevents safe recovery before the end of input.', **location)
-            continue
-        raw = data[begin:end]
-        try:
-            text = raw.decode('utf-8', errors='strict')
-        except UnicodeDecodeError:
-            limited('invalid_utf8', 'Record does not satisfy the declared strict UTF-8 profile.', **location)
-            continue
-        if '\ufeff' in text:
-            limited('unexpected_bom', 'A BOM is only accepted at byte zero of the file.', **location)
-            continue
-        if not terminated:
-            limited('ambiguous_record_boundary' if open_quote else 'truncated_record',
-                    'Final record is incomplete or lacks a terminating newline; it was not accepted.', **location)
-            continue
-        text = text[:-2] if text.endswith('\r\n') else text[:-1]
-        try:
-            record = _record(text, profile)
-        except (ValueError, OverflowError):
-            limited('invalid_record', 'Record header, time or property grammar is invalid.', **location)
-            continue
-        record.update(location)
-        if record['ambiguous_properties']:
-            limited('ambiguous_property', 'Repeated properties retained separately; no value selected.', **location)
-        records.append(record)
-    if cursor < stop:
-        limited('record_limit', 'Record-attempt budget reached; remaining bytes were not parsed.', byte_start=cursor)
-    if len(data) > MAX_INPUT_BYTES:
-        limited('input_byte_limit', 'Input exceeds the 16 MiB adapter scan limit.', byte_start=stop)
-    if omitted:
-        limitations.append(dict(code='additional_limitations', count=omitted, counts_by_code=omitted_by_code,
-                                message='Additional limitation details were omitted.'))
-    if len(data) == start:
-        status = 'empty'
-    elif records_seen == 0:
-        status = 'not_parsed'
-    elif not records:
-        status = 'invalid'
-    else:
-        status = 'partial' if limitations else 'parsed'
-    return dict(records=records, limitations=limitations, records_seen=records_seen, status=status)
+def parse_tj(data,profile,max_records=100000,max_record_bytes=262144):
+    """Compatibility collector over the same incremental strict UTF-8 parser."""
+    import io
+    if not isinstance(data,bytes):raise ValueError('TJ input must be immutable bytes')
+    scan=iter_tj(io.BytesIO(data),profile,max_records,max_record_bytes)
+    return dict(records=list(scan),**scan.summary)

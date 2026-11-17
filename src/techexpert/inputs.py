@@ -4,6 +4,8 @@ import io
 import json
 import os
 import re
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 from .analysis import SCOPE_KEYS
@@ -38,13 +40,54 @@ def read_snapshot(path, max_bytes=MAX_FILE_BYTES, *, share_delete=False):
         before = os.fstat(stream.fileno())
         if before.st_size > max_bytes:
             raise SnapshotReadError('input exceeds byte limit','byte_limit')
-        data = stream.read(max_bytes + 1)
+        data = stream.read(min(max_bytes+1,before.st_size+1))
         after = os.fstat(stream.fileno())
     if len(data) > max_bytes:
         raise SnapshotReadError('input exceeds byte limit','byte_limit')
     if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns) or len(data) != before.st_size:
         raise SnapshotReadError('input changed while reading; provide a stable snapshot','changed_during_read')
     return data
+
+
+class _VerifiedSnapshotRead:
+    def __init__(self,stream,digest,size,max_bytes):
+        self.stream=stream;self.digest=digest;self.max_bytes=max_bytes;self.before=os.fstat(stream.fileno())
+        self.count=0;self.hash=hashlib.sha256();self.eof=False
+        if (not stat.S_ISREG(self.before.st_mode) or self.before.st_size>max_bytes
+            or size is not None and self.before.st_size!=size):raise InputError('evidence snapshot integrity mismatch')
+
+    def read(self,size):
+        if type(size) is not int or not 1<=size<=65536:raise InputError('snapshot reads require a bounded positive size')
+        if self.eof:return b''
+        data=self.stream.read(size)
+        if not isinstance(data,bytes) or len(data)>size:raise InputError('evidence snapshot integrity mismatch')
+        self.count+=len(data)
+        if self.count>self.max_bytes:raise InputError('evidence snapshot integrity mismatch')
+        self.hash.update(data);self.eof=not data
+        return data
+
+    def verify(self):
+        while not self.eof:self.read(65536)
+        after=os.fstat(self.stream.fileno())
+        if ((self.before.st_size,self.before.st_mtime_ns)!=(after.st_size,after.st_mtime_ns)
+            or self.count!=self.before.st_size or self.hash.hexdigest()!=self.digest):raise InputError('evidence snapshot integrity mismatch')
+
+
+@contextmanager
+def open_verified_snapshot(path,expected_sha256,*,expected_size=None,max_bytes=MAX_FILE_BYTES):
+    """Read the whole retained snapshot digest without materializing its bytes.
+
+    Consumers may stop early, but the context drains and verifies all remaining
+    bytes before returning their result. This does not make a live source stable.
+    """
+    if (not isinstance(expected_sha256,str) or not re.fullmatch('[a-f0-9]{64}',expected_sha256)
+        or type(max_bytes) is not int or not 0<=max_bytes<=MAX_FILE_BYTES
+        or expected_size is not None and (type(expected_size) is not int or not 0<=expected_size<=max_bytes)):
+        raise InputError('invalid verified snapshot limits or identity')
+    with Path(path).open('rb') as stream:
+        reader=_VerifiedSnapshotRead(stream,expected_sha256,expected_size,max_bytes)
+        try:yield reader
+        finally:reader.verify()
 
 
 def json_value(data, *, reject_duplicates=False):

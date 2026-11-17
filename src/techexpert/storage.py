@@ -11,8 +11,8 @@ from pathlib import Path
 
 from . import __version__
 from .analysis import analyze_events
-from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS
-from .native_tj import parse_tj
+from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS,open_verified_snapshot
+from .native_tj import iter_tj
 from .observations import summarize_native, preview_record
 from .job_correlation import correlate_job, record_matches_link
 from .order_load import analyze_order_load
@@ -183,6 +183,15 @@ def read_evidence(state_dir, case_id, evidence_id):
     source = next((s for s in report['sources'] if s['id'] == match[1]), None)
     if source is None:
         raise InputError('unknown evidence source')
+    if source['format']=='1c-tj-text-v1':
+        found=None
+        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(match[1]+'.bin'),source['sha256'],expected_size=source.get('size')) as stream:
+            scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
+            for record in scan:
+                if record['line']==int(match[2]):found=(record,scan.raw_record)
+        if found is None:raise InputError('evidence id is not the start of a parsed native record')
+        record,raw=found;text=raw.decode('utf-8-sig').rstrip('\r\n')
+        return dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True,text=text[:4096],truncated=len(text)>4096)
     data = read_snapshot(case_folder(state_dir, case_id) / 'sources' / (match[1] + '.bin'))
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise InputError('evidence snapshot integrity mismatch')
@@ -193,16 +202,6 @@ def read_evidence(state_dir, case_id, evidence_id):
         text = data.decode('utf-8-sig', errors='replace')
         return dict(case_id=case_id, evidence_id=evidence_id, sha256=source['sha256'],
                     line=1, end_line=max(1,len(data.splitlines())), byte_start=0, byte_end=len(data),
-                    integrity_verified=True, untrusted_source_content=True,
-                    text=text[:4096], truncated=len(text)>4096)
-    if source['format'] == '1c-tj-text-v1':
-        parsed = parse_tj(data, source['profile'], max_records=source['record_budget'])
-        record = next((r for r in parsed['records'] if r['line'] == number), None)
-        if record is None:
-            raise InputError('evidence id is not the start of a parsed native record')
-        text = data[record['byte_start']:record['byte_end']].decode('utf-8-sig').rstrip('\r\n')
-        return dict(case_id=case_id, evidence_id=evidence_id, sha256=source['sha256'],
-                    **{k: record[k] for k in ('line','end_line','byte_start','byte_end')},
                     integrity_verified=True, untrusted_source_content=True,
                     text=text[:4096], truncated=len(text)>4096)
     line = next(itertools.islice(io.BytesIO(data), number-1, number), None)
@@ -230,9 +229,8 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
     if linked_run:
         for source in report['sources']:
             if source['format']=='1c-job-runtime-v1':
-                data = read_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'))
-                if hashlib.sha256(data).hexdigest()!=source['sha256']:
-                    raise InputError('runtime evidence snapshot integrity mismatch')
+                if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
+                with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')):pass
     sources = [s for s in report['sources'] if s['format']=='1c-tj-text-v1']
     if source_id is not None:
         sources = [s for s in sources if s['id']==source_id]
@@ -240,23 +238,17 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
             raise InputError('unknown native evidence source')
     matched, page, statuses = 0, [], []
     for source in sources:
-        data = read_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'))
-        if hashlib.sha256(data).hexdigest()!=source['sha256']:
-            raise InputError('evidence snapshot integrity mismatch')
-        parsed = parse_tj(data,source['profile'],max_records=source['record_budget'])
-        statuses.append(dict(source=source['id'],status=parsed['status']))
-        for record in parsed['records']:
-            record['evidence']=dict(id=f"{source['id']}:{record['line']}", source=source['id'],
-                sha256=source['sha256'], **{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
-            if linked_run and not record_matches_link(record, link):
-                continue
-            if event is not None and record['event']!=event:
-                continue
-            if any(record['properties'].get(k)!=v for k,v in properties.items()):
-                continue
-            if offset<=matched<offset+limit:
-                page.append(preview_record(record))
-            matched+=1
+        if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
+        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')) as stream:
+            scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
+            for record in scan:
+                record['evidence']=dict(id=f"{source['id']}:{record['line']}",source=source['id'],sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
+                if linked_run and not record_matches_link(record,link):continue
+                if event is not None and record['event']!=event:continue
+                if any(record['properties'].get(k)!=v for k,v in properties.items()):continue
+                if offset<=matched<offset+limit:page.append(preview_record(record))
+                matched+=1
+            statuses.append(dict(source=source['id'],status=scan.summary['status']))
     return dict(case_id=case_id,matched_count=matched,offset=offset,limit=limit,
                 next_offset=offset+limit if offset+limit<matched else None,records=page,
                 source_statuses=statuses,integrity_verified=True,untrusted_source_content=True,
@@ -269,9 +261,7 @@ def verified_case(state_dir, case_id, *, with_digest=False):
     for source in report['sources']:
         if not re.fullmatch(r's[1-9][0-9]*',source['id']):
             raise InputError('invalid saved evidence source')
-        data=read_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'))
-        if hashlib.sha256(data).hexdigest()!=source['sha256']:
-            raise InputError('evidence snapshot integrity mismatch')
+        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')):pass
     return (report,digest) if with_digest else report
 
 
