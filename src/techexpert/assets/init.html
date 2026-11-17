@@ -284,7 +284,7 @@
         const groups=new Map();
         const add=(id,bids,sid)=>{if(!id)return;const group=groups.get(id) || {bases:new Set(),sources:new Set()};bids.forEach(b=>group.bases.add(b));if(sid)group.sources.add(sid);groups.set(id,group);};
         activeSources().filter(s=>['sql','rac','os'].includes(s.type)).forEach(source=>add(sourceConnectionId(source),source.base_ids.filter(id=>selected.has(id)),source.id));
-        (editorProfile?.bases || []).filter(base=>selected.has(base.id)).forEach(base=>add(base.connection_id,[base.id],null));
+        (editorProfile?.bases || []).filter(base=>selected.has(base.id) && !Object.hasOwn(base.connection_parameters,'file_path') && connectionDraft(base.connection_id)?.address).forEach(base=>add(base.connection_id,[base.id],null));
         const box=q('#shared-connections');box.replaceChildren();const visible=new Set();
         groups.forEach((group,id)=>{if(group.bases.size<2 && group.sources.size<2)return;const connection=connectionDraft(id);if(!connection)return;
           visible.add(id);const panel=element('details',undefined,'box');panel.dataset.connectionId=id;panel.append(element('summary','Общее подключение · '+connection.name));

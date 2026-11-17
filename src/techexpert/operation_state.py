@@ -158,7 +158,7 @@ def inspect_group(identity):
     if members and all(m['state'] in ('Z','X') for m in members):return dict(state='stopped',basis='only_observed_dead_members',members=members)
     return dict(state='running' if members else 'unknown',basis='observed_group_members' if members else 'group_exists_no_visible_members',members=members)
 
-def inventory(root):
+def _inventory_once(root):
     count=used=disappeared=0
     def failed(error):raise error
     for current,dirs,files in os.walk(safe(root),followlinks=False,onerror=failed):
@@ -168,8 +168,58 @@ def inventory(root):
             except FileNotFoundError:
                 if name in files and re.fullmatch(r'.+\.[a-f0-9]{32}\.tmp',name):disappeared+=1;continue
                 raise
+            if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('linked operation state rejected')
             count+=1
             if count>1000:raise InputError('owned operation file limit')
             if stat.S_ISREG(info.st_mode):used+=info.st_size
             elif not stat.S_ISDIR(info.st_mode):raise InputError('unsupported owned operation member')
     return dict(bytes=used,files=count,transient_files_disappeared=disappeared,measurement='non_atomic_live_inventory')
+
+
+def _promoted_member_missing(root,error):
+    """Recognize only a sealed owned product already at its verified destination."""
+    if not isinstance(error.filename,str):return False
+    try:parts=Path(error.filename).absolute().relative_to(root).parts
+    except ValueError:return False
+    if (len(parts)<3 or parts[0]!='work-state' or parts[1] not in ('cases','artifacts','comparisons')
+        or not re.fullmatch('[a-f0-9]{32}',parts[2]) or root.parent.name!='operations' or not re.fullmatch('[a-f0-9]{64}',root.name)):return False
+    source=safe(root.joinpath(*parts[:3]))
+    try:source.lstat()
+    except FileNotFoundError:pass
+    else:return False
+    plan(root)  # Ownership key and sealed admission must still agree.
+    from .operations import _worker
+    worker=_worker(root)
+    if len(worker['targets'])!=1 or worker['targets'][0].get('kind')!=parts[1] or worker['targets'][0].get('id')!=parts[2]:return False
+    destination=safe(root.parent.parent/parts[1]/parts[2]);info=destination.lstat()
+    if not stat.S_ISDIR(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('invalid promoted inventory product')
+    report=read(destination/'report.json')
+    key={'cases':'case_id','artifacts':'artifact_id','comparisons':'comparison_id'}[parts[1]]
+    if report.get(key)!=parts[2] or digest(report)!=digest(worker['data']):raise InputError('promoted inventory product disagrees with sealed output')
+    return True
+
+
+def inventory(root):
+    """Retry a complete live scan when an owned product moves during promotion.
+
+    Partial attempts never contribute totals. Permission, link and root-identity
+    failures remain unknown and fail closed; retries do not restart operations.
+    """
+    root=Path(root).absolute()
+    def identity():
+        info=safe(root).lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('linked operation state rejected')
+        if not stat.S_ISDIR(info.st_mode):raise InputError('owned inventory root is not a directory')
+        return info.st_dev,info.st_ino
+    original=identity();last=None
+    for attempt in range(3):
+        if attempt and (not original[1] or identity()!=original):raise InputError('owned inventory root identity changed or is unavailable')
+        try:
+            result=_inventory_once(root)
+            if identity()!=original:raise InputError('owned inventory root identity changed')
+        except FileNotFoundError as exc:
+            if not _promoted_member_missing(root,exc):raise
+            last=exc;continue
+        result['scan_retries']=attempt
+        return result
+    raise InputError('owned inventory unstable after three complete scan attempts') from last
