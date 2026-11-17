@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import uuid
@@ -37,14 +38,21 @@ def analyze(state,output,manifest,input_plan):
     saved=plan['result'];settings=files.normalize([{k:r[k] for k in ('path','kind')} for r in saved['roots']],saved['limits'])
     raw=read_snapshot(manifest,1024**2);requested=json_value(raw.decode('utf-8-sig'),reject_duplicates=True)
     if type(requested) is not dict or type(requested.get('sources')) is not list or not 1<=len(requested['sources'])<=32:raise InputError('selected case requires1..32 explicit member sources')
-    members={m['id']:m for m in saved['members']};selection=[];seen=set()
+    members={m['id']:m for m in saved['members']};selection=[];seen=set();locations=set()
     formats=set(AUXILIARY_FORMATS)|{'1c-tj-text-v1','1c-job-runtime-v1','normalized-events-v1'}
     for source in requested['sources']:
         if (type(source) is not dict or type(source.get('format')) is not str or source['format'] not in formats
             or type(source.get('path')) is not str):raise InputError('unsupported selected diagnostic format or member')
         member=members.get(source.get('path'))
         if member is None or member['id'] in seen or not member['importable']:raise InputError('select unique importable catalogue member IDs')
-        if saved['roots'][member['root']]['kind']=='zip' and source['format']=='1c-source-text-v1':raise InputError('source-code archives are excluded')
+        root=saved['roots'][member['root']]
+        if root['kind']=='zip':locator=('zip',os.path.normcase(root['path']),member['relative_path'])
+        else:
+            original=Path(root['path']) if root['kind']=='file' else Path(root['path']).joinpath(*member['relative_path'].split('/'))
+            locator=('file',os.path.normcase(str(original)))
+        if locator in locations:raise InputError('selected catalogue members refer to the same original input')
+        locations.add(locator)
+        if root['kind']=='zip' and source['format']=='1c-source-text-v1':raise InputError('source-code archives are excluded')
         try:
             if source['format']=='1c-tj-text-v1':
                 from .native_tj import validate_profile

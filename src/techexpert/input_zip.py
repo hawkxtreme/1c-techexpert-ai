@@ -22,6 +22,11 @@ def catalogue(stream,bound):
     if (disk or cd_disk or on_disk!=count or count>files.MAX_ENTRIES or cd_size>MAX_CENTRAL_BYTES
         or cd_offset+cd_size!=end or offset+22+comment!=len(tail)
         or count==0xffff or cd_offset==0xffffffff):raise InputError('unsupported or excessive ZIP directory')
+    # stdlib follows this locator even when all classic fields are ordinary,
+    # allowing an embedded ZIP64 record to replace the preflight size/offset.
+    if end>=20:
+        stream.seek(end-20)
+        if stream.read(4)==b'PK\x06\x07':raise InputError('ZIP64 locator is outside the supported bounded profile')
     stream.seek(0)
     try:
         with zipfile.ZipFile(stream) as archive:

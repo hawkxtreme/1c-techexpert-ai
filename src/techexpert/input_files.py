@@ -13,6 +13,8 @@ MAX_ENTRIES=256
 MAX_ARCHIVE_BYTES=65*MIB
 CODE_SUFFIXES={'.bsl','.os','.cf','.cfe','.dt','.1cd'}
 ARCHIVE_SUFFIXES=('.zip','.7z','.rar','.tar','.gz','.tgz','.bz2','.xz','.zst')
+RESERVED_NAMES={'con','prn','aux','nul','conin$','conout$',
+    *('com'+c for c in '123456789¹²³'),*('lpt'+c for c in '123456789¹²³')}
 
 
 def limits(value=None):
@@ -43,10 +45,9 @@ def normalize(inputs,chosen_limits=None):
 def name_parts(name):
     if type(name) is not str or not 1<=len(name.encode('utf-8'))<=512 or '\\' in name or any(ord(c)<32 or ord(c)==127 for c in name):raise InputError('unsafe or unsupported input member name')
     parts=name.split('/')
-    reserved={'con','prn','aux','nul',*[f'com{i}' for i in range(1,10)],*[f'lpt{i}' for i in range(1,10)]}
     for part in parts:
         if (not part or part in ('.','..') or len(part.encode('utf-8'))>240 or part[-1] in '. '
-            or any(c in part for c in ':<>"|?*') or part.split('.',1)[0].casefold() in reserved):raise InputError('unsafe or ambiguous input member name')
+            or any(c in part for c in ':<>"|?*') or part.split('.',1)[0].rstrip(' ').casefold() in RESERVED_NAMES):raise InputError('unsafe or ambiguous input member name')
     return parts
 
 

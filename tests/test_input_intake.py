@@ -113,6 +113,34 @@ class InputIntakeTests(unittest.TestCase):
                 path=self.zip([(name,ROW) for name in names])
                 with self.assertRaises(InputError):self.plan(path)
 
+    def test_overlapping_roots_cannot_count_the_same_local_file_twice(self):
+        folder=self.root/'logs';folder.mkdir();file=folder/'a.log';file.write_bytes(ROW)
+        plan=self.api.inspect(self.state,[dict(path=str(folder),kind='directory'),dict(path=str(file),kind='file')])
+        self.assertEqual(plan['result']['file_count'],2)
+        with self.assertRaises(InputError):self.api.analyze(self.state,self.output,self.manifest(['m1','m2']),plan['artifact_id'])
+        self.assertFalse((self.output/'cases').exists())
+        one=self.api.analyze(self.state,self.output,self.manifest(['m1']),plan['artifact_id'])
+        self.assertEqual(one['native_observations']['event_count'],1)
+
+    def test_console_superscript_and_spaced_device_aliases_are_portably_refused(self):
+        for name in ('CONIN$','conout$.log','COM¹.txt','LPT²','LPT³.log','NUL .txt','AUX  .json'):
+            with self.subTest(name=name),self.assertRaises(InputError):self.plan(self.zip([(name,ROW)]))
+
+    def test_zip64_trailer_cannot_override_preflight_central_directory_budget(self):
+        from src.techexpert import input_zip,input_files
+        buffer=io.BytesIO();entry=zipfile.ZipInfo('a.log');entry.comment=b'0'*76
+        with zipfile.ZipFile(buffer,'w',compression=zipfile.ZIP_STORED) as archive:archive.writestr(entry,b'x'*(1024**2))
+        raw=bytearray(buffer.getvalue());end=raw.rfind(b'PK\x05\x06')
+        fake=struct.pack('<4sQ2H2L4Q',b'PK\x06\x06',44,45,45,0,0,1,1,end-76,0)+struct.pack('<4sLQL',b'PK\x06\x07',0,end-76,1)
+        self.assertEqual(len(fake),76);raw[end-76:end]=fake
+        class Logged(io.BytesIO):
+            def __init__(self,data):super().__init__(data);self.reads=[]
+            def read(self,size=-1):
+                data=super().read(size);self.reads.append(len(data));return data
+        stream=Logged(raw)
+        with self.assertRaises(InputError):input_zip.catalogue(stream,input_files.limits())
+        self.assertLessEqual(max(stream.reads),256*1024,'ZIP64 overrode the checked classic metadata bounds')
+
     def test_nested_containers_and_special_zip_entries_are_not_admitted(self):
         for name in ('nested.zip','nested.tar.gz','nested.7z'):
             with self.subTest(name=name),self.assertRaises(InputError):self.plan(self.zip([(name,b'container')]))
