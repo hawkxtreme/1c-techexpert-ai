@@ -6,9 +6,9 @@ import math
 from .inputs import InputError
 
 MAX_INT=2**63-1
-MAX_STRING=65536
-MAX_ITEMS=10000
 MAX_VALUE_BYTES=16*1024**2
+MAX_STRING=MAX_VALUE_BYTES
+MAX_ITEMS=100000
 
 
 class CodeError(InputError):

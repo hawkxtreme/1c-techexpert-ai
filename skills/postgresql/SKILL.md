@@ -5,6 +5,8 @@ description: "Получить ограниченные наблюдения Pos
 
 # PostgreSQL
 
+Предпочитай управляемую postgresql.observe: схема — `python techexpert.py capabilities postgresql.observe`, выполнение — operation-run REQUEST.json с сохранённым operation_key. В MCP доступен techexpert_postgresql_observe, в CodeMode закрепи settings, queries и max_calls в scope.postgresql. Запрос готовит агент. Недоступные представления или права дают partial с rows: null и сохранённой диагностикой, а не нулевые значения. Повтор ключа проверяет снимок без нового SQL-запроса. Прямые команды ниже сохраняют более узкие гарантии.
+
 Проверьте профиль, имя SQL-базы и фактический psql через doctor. Пароль передаётся существующим механизмом libpq, не аргументом продукта или полем профиля.
 
 Пример: `python techexpert.py postgresql capabilities --database ИМЯ --host УЗЕЛ --user РОЛЬ`. Затем выбирайте activity, locks, database_stats или statements. В лабораторном Docker допустим явно выбранный --docker-container с установленным /opt/pgpro/1c-16/bin/psql. Это не установка и не создание сервиса.

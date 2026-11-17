@@ -4,7 +4,7 @@ import re
 
 from .artifacts import save_artifact
 from .inputs import InputError
-from .processes import run_bounded
+from .processes import run_bounded,CommandStopped
 
 CATALOGUE={'clusters':['cluster','list'], 'infobases':['infobase','summary','list'],
            'sessions':['session','list'], 'connections':['connection','list'],
@@ -17,7 +17,9 @@ def parse_rows(text):
     result=[];row={}
     for line in text.splitlines()+['']:
         if not line.strip():
-            if row:result.append(row);row={}
+            if row:
+                result.append(row);row={}
+                if len(result)>10000:raise InputError('RAC row budget exceeded')
             continue
         key,separator,value=line.partition(':');key=key.strip();value=value.strip()
         if not separator or not re.fullmatch('[a-z][a-z0-9-]*',key) or key in row:
@@ -36,6 +38,8 @@ class RacClient:
         if docker_container is not None and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{0,127}',docker_container):
             raise InputError('invalid Docker container')
         self.endpoint=endpoint
+        self.scope=dict(endpoint=endpoint,transport='docker_exec' if docker_container else 'local_process',
+            docker_container=docker_container,client_executable='/opt/1cv8/current/rac' if docker_container else str(executable),client_version=None)
         self.prefix=(['docker','exec',docker_container,'timeout','--kill-after=2','18','/opt/1cv8/current/rac']
                      if docker_container else [str(executable)])
 
@@ -48,20 +52,30 @@ class RacClient:
         elif cluster is not None:raise InputError('clusters operation does not accept cluster selection')
         return args+[self.endpoint]
 
-    def execute(self,operation,cluster=None):
-        code,raw,_stderr=run_bounded(self.command(operation,cluster=cluster),timeout=23)
+    def execute(self,operation,cluster=None,*,should_stop=None):
+        code,raw,_stderr=run_bounded(self.command(operation,cluster=cluster),timeout=23,should_stop=should_stop)
         if code:raise InputError('RAC observation failed; check endpoint, tool version and read permissions')
         try:return raw.decode('utf-8-sig')
         except UnicodeError as exc:raise InputError('RAC output is not UTF-8; use a supported locale/profile') from exc
 
 
-def collect_rac(state_dir,client,operation,*,cluster=None):
+def collect_rac(state_dir,client,operation,*,cluster=None,should_stop=None):
+    client.command(operation,cluster=cluster)
     started=datetime.now(timezone.utc).isoformat()
-    text=client.execute(operation,cluster=cluster)
-    rows=parse_rows(text)
-    return save_artifact(state_dir,'rac',dict(operation=operation,endpoint=client.endpoint,cluster=cluster),
-        [('rac-'+operation+'.txt',text.encode('utf-8'))],
-        dict(operation=operation,endpoint=client.endpoint,cluster=cluster,rows=rows,
+    status='observed';reason=None;rows=None
+    try:
+        text=(client.execute(operation,cluster=cluster,should_stop=should_stop) if should_stop is not None
+            else client.execute(operation,cluster=cluster))
+        rows=parse_rows(text);sources=[('rac-'+operation+'.txt',text.encode('utf-8'))]
+    except CommandStopped as exc:
+        status='cancelled' if exc.reason=='cancelled' else 'unavailable';reason='command_'+exc.reason
+        sources=[('rac-partial.txt',exc.stdout)]
+    except (OSError,ValueError,UnicodeError):
+        status='unavailable';reason='connection_tool_permission_or_format_error'
+        sources=[('rac-unavailable.txt',b'RAC observation unavailable; no complete rows were established.')]
+    return save_artifact(state_dir,'rac',dict(operation=operation,**client.scope,cluster=cluster),
+        sources,
+        dict(operation=operation,endpoint=client.endpoint,connection_scope=client.scope,cluster=cluster,rows=rows,status=status,reason=reason,
              started_at=started,finished_at=datetime.now(timezone.utc).isoformat(),
              temporal_scope='current_snapshot_only',historical_identity_established=False,
              limitations=['Snapshot time is the capture interval, not a historical incident window.',

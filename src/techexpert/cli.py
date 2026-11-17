@@ -344,6 +344,12 @@ def main(argv=None):
             from .knowledge import search
             result=search(args.query)
         emit(result)
+        if args.command in ('rac','postgresql','apdex','jr-import','os-import','os-collect'):
+            from .capabilities import outcome
+            operation={'rac':'rac.observe','postgresql':'postgresql.observe','apdex':'apdex.import',
+                'jr-import':'jr.import','os-import':'os.import','os-collect':'os.collect'}[args.command]
+            status,_=outcome(operation,result)
+            return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status']=='blocked' else 0
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         emit(dict(status='error', code='input_or_state_error', message=str(exc)))

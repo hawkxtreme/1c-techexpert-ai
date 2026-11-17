@@ -83,10 +83,10 @@ class ManagedOperationTests(unittest.TestCase):
 
     def test_registered_routes_use_real_adapters_and_normal_saved_products(self):
         covered=set()
-        def call(operation,**arguments):
+        def call(operation,*,expected='succeeded',**arguments):
             request=self.request(operation,**arguments);request['operation_key']='route-'+str(len(covered))+'-'+operation
             result=self.run_request(request);covered.add(operation)
-            self.assertEqual(result['status'],'succeeded',result)
+            self.assertEqual(result['status'],expected,result)
             self.assertTrue(result['integrity_verified']);return result['data']
         before=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
         # A separate new key is an explicit second sample import, not a replay.
@@ -110,6 +110,18 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(program['value'],dict(unknown=None,total=5))
         inspected=call('code.inspect',run_id=program['audit']['run_id'])
         self.assertTrue(inspected['audit_available'])
+        call('artifact.evidence',artifact_id=artifact['artifact_id'],source_id='s1')
+        measurement=self.folder/'apdex.json';measurement.write_text(json.dumps([dict(id='1',operation='read',started_at='2026-11-17T09:00:00Z',duration_seconds=1,success=True)]),encoding='utf-8')
+        call('apdex.import',measurements=str(measurement),target_seconds=2)
+        journal=call('jr.import',path=str(ROOT/'tests/fixtures/native-jr'),platform_version='8.3.27.1989')
+        page=call('jr.events',artifact_id=journal['artifact_id'],limit=1)
+        call('jr.record',artifact_id=journal['artifact_id'],record_id=page['records'][0]['id'])
+        source=self.folder/'source';source.mkdir();(source/'Module.bsl').write_text('Процедура Проверить()\nКонецПроцедуры',encoding='utf-8')
+        snapshot=call('source.snapshot',path=str(source))
+        call('source.search',artifact_id=snapshot['artifact_id'],query='Проверить')
+        call('source.read',artifact_id=snapshot['artifact_id'],path='Module.bsl')
+        call('rac.observe',endpoint='localhost:1545',query='clusters',executable=str(self.folder/'missing-rac'),expected='partial')
+        call('postgresql.observe',database='test',query='activity',executable=str(self.folder/'missing-psql'),expected='partial')
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

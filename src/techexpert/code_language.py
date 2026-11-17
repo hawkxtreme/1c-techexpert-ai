@@ -258,7 +258,7 @@ class Machine:
         if kwargs and not (name=='sorted' and set(kwargs)<={'reverse'} or name=='round' and set(kwargs)<={'ndigits'}):
             raise CodeError('invalid_value','Unsupported function keywords.')
         try:
-            if name=='len' and len(args)==1:return len(self.iterable(args[0]))
+            if name=='len' and len(args)==1 and type(args[0]) in (list,dict,str):return len(args[0])
             if name=='get' and len(args) in (2,3) and type(args[0]) is dict and type(args[1]) is str:return args[0].get(args[1],args[2] if len(args)==3 else None)
             if name in ('keys','values') and len(args)==1 and type(args[0]) is dict:return list(args[0].keys() if name=='keys' else args[0].values())
             if name in ('sum','min','max','sorted') and len(args)==1:

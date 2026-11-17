@@ -58,9 +58,12 @@ ROUTES={
  'artifact.show':route(dict(artifact_id=CASE),['artifact_id'],['verified saved artifact'],'read saved evidence',['artifact_id','result','sources']),
 }
 
+BASE_API=tuple(ROUTES)
+from . import diagnostic_adapters as _diagnostics
+import sys as _sys
+ROUTES.update(_diagnostics.routes(_sys.modules[__name__]))
 CODE_API=tuple(ROUTES)
 from .code_policy import schemas as _code_schemas
-import sys as _sys
 _code_arguments=_code_schemas(_sys.modules[__name__],CODE_API)
 ROUTES['code.execute']=route(_code_arguments,['program'],['explicitly scoped inputs and saved evidence'],
     'bounded capability-language program; private facts and audited API calls',
@@ -119,7 +122,7 @@ def catalogue(operation=None):
             direct_internal_engine='worker bounds only; managed CLI controller boundary is not implicit for Python internals',
             disk_enforcement='monitored; bounded polling overshoot possible',model_harness_resources='not controlled or independently measured'),
         managed_transports=['CLI','MCP stdio'],mcp_protocol_versions=['2026-07-28','2025-11-25'],
-        not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts'])
+        not_yet_managed=['source export execution','investigation/profile mutations','knowledge-use','incident drafts'])
 
 def normalize_request(value):
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
@@ -146,6 +149,7 @@ def normalize_request(value):
     if operation=='code.execute':
         from .code_policy import normalize as code_request
         args=code_request(args)
+    if operation in _diagnostics.OPERATIONS:args=_diagnostics.normalize(operation,args)
     timeout=args.get('duration_seconds',0)+30 if operation=='os.collect' else ROUTES[operation].get('default_timeout_seconds',ROUTES[operation]['timeout_seconds'])
     budget=dict(timeout_seconds=timeout,max_result_bytes=MAX_RESULT)
     budget.update(result.get('budget',{}))
@@ -184,9 +188,20 @@ def execute(operation,args,state,output,*,stop=None):
         if data['kind']=='knowledge_use':
             from .knowledge_review import review_use
             data=dict(data,knowledge_review=review_use(state,args['artifact_id']))
+    elif operation in _diagnostics.OPERATIONS:
+        data,targets=_diagnostics.execute(operation,args,state,output,stop=stop)
     elif operation in ('code.execute','code.inspect'):
         from .code_runtime import run_program,inspect_program
         data=run_program(state,output,args,stop=stop) if operation=='code.execute' else inspect_program(state,args['run_id'])
     else:raise InputError('unknown executable operation')
     if not isinstance(data,dict) or set(ROUTES[operation]['data_schema']['required'])-data.keys():raise InputError('adapter output does not match registered schema')
     return data,targets
+
+
+def outcome(operation,data):
+    collection=data.get('result',{}).get('collection_status')
+    if operation=='os.collect':
+        if collection=='cancelled':return 'cancelled','cancelled'
+        if collection and collection!='completed':return 'partial',collection
+    if operation=='os.import' and collection and collection!='completed':return 'partial','imported_capture_'+collection
+    return _diagnostics.result_status(operation,data) if operation in _diagnostics.OPERATIONS else ('succeeded',None)

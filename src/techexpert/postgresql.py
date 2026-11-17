@@ -1,11 +1,12 @@
 """Bounded read-only PostgreSQL observations; no arbitrary SQL or historical fiction."""
 from datetime import datetime,timezone
+import json
 import os
 import re
 
 from .artifacts import save_artifact
 from .inputs import InputError,json_value
-from .processes import run_bounded
+from .processes import run_bounded,CommandStopped
 
 SELECTS={
  'capabilities':"""SELECT current_setting('server_version') AS version,
@@ -59,7 +60,8 @@ class PsqlClient:
         if docker_container is not None and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.-]{0,127}',docker_container):
             raise InputError('invalid Docker container')
         self.scope=dict(database=database,host=host or ('container_local_socket' if docker_container else 'libpq_default'),
-                        port=port,user=user or 'libpq_default')
+                        port=port,user=user or 'libpq_default',transport='docker_exec' if docker_container else 'local_process',
+                        docker_container=docker_container,client_executable='/opt/pgpro/1c-16/bin/psql' if docker_container else str(executable),client_version=None)
         self.prefix=(['docker','exec','-i','--env','PGCONNECT_TIMEOUT=5','--env','PGAPPNAME=1c-techexpert-ai',
                       docker_container,'timeout','--kill-after=2','9','/opt/pgpro/1c-16/bin/psql']
                      if docker_container else [str(executable)])
@@ -67,35 +69,70 @@ class PsqlClient:
         if host:self.options+=['--host='+host]
         if user:self.options+=['--username='+user]
 
-    def execute(self,operation):
+    def execute(self,operation,*,should_stop=None):
         environment=dict(os.environ,PGCONNECT_TIMEOUT='5',PGAPPNAME='1c-techexpert-ai')
         return run_bounded(self.prefix+self.options,input_data=query(operation).encode('utf-8'),timeout=13,
-                           max_bytes=2*1024*1024,env=environment)
+                           max_bytes=2*1024*1024,env=environment,should_stop=should_stop)
 
 
-def observe(state_dir,client,operation):
+def observe(state_dir,client,operation,*,should_stop=None):
     query(operation)
     started=datetime.now(timezone.utc).isoformat()
-    code,data,error=client.execute(operation)
+    # libpq credentials remain outside requests/argv. Never retain a reflected
+    # operator password in either structured rows or private driver diagnostics.
+    secret=os.environ.get('PGPASSWORD') or '';redacted=False
+    def clean(value):
+        nonlocal redacted
+        if isinstance(value,str) and secret and secret in value:
+            redacted=True;return value.replace(secret,'[redacted operator credential]')
+        if isinstance(value,list):return [clean(item) for item in value]
+        if isinstance(value,dict):return {key:clean(item) for key,item in value.items()}
+        return value
+    def clean_bytes(raw):
+        nonlocal redacted
+        if not secret:return raw
+        for value in sorted({secret,json.dumps(secret,ensure_ascii=False)[1:-1],json.dumps(secret,ensure_ascii=True)[1:-1]},key=len,reverse=True):
+            encoded=value.encode('utf-8')
+            if encoded and encoded in raw:redacted=True;raw=raw.replace(encoded,b'[redacted operator credential]')
+        return raw
+    stopped=None
+    try:
+        code,data,error=(client.execute(operation,should_stop=should_stop) if should_stop is not None else client.execute(operation))
+    except CommandStopped as exc:
+        code=1;data=exc.stdout;error=exc.stderr;stopped=exc.reason
+    except (OSError,ValueError):
+        code=1;data=b'';error=b'PostgreSQL client invocation unavailable.'
+    response=None;invalid_response=False
+    max_rows=100 if operation=='statements' else 1 if operation in ('capabilities','database_stats') else 200
+    if not code:
+        try:
+            response=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
+            if (not isinstance(response,dict) or not isinstance(response.get('rows'),list) or len(response['rows'])>max_rows
+                or any(not isinstance(row,dict) for row in response['rows'])):raise InputError('invalid PostgreSQL observation response')
+        except (ValueError,UnicodeError,RecursionError):code=1;invalid_response=True;response=None
+        if not code:
+            response=clean(response)
+            if redacted:data=json.dumps(response,ensure_ascii=False,allow_nan=False).encode('utf-8')
+    if code:data=clean_bytes(data)
+    error=clean_bytes(error)
     sources=[('postgresql-response.json' if not code else 'postgresql-response.txt',data)]
     if error:sources.append(('postgresql-diagnostics.txt',error))
     cumulative=operation in ('database_stats','statements')
-    result=dict(operation=operation,connection_scope=client.scope,status='unavailable' if code else 'observed',
+    result=dict(operation=operation,connection_scope=client.scope,status='cancelled' if stopped=='cancelled' else 'unavailable' if code else 'observed',
         rows=None,started_at=started,finished_at=datetime.now(timezone.utc).isoformat(),
         temporal_scope='cumulative_not_event_history' if cumulative else 'current_snapshot_only',
         historical_window_coverage=None,requires_ai_interpretation=True,
-        limits=dict(statement_timeout_ms=3000,lock_timeout_ms=500,max_rows=100 if operation=='statements' else 200),
+        limits=dict(statement_timeout_ms=3000,lock_timeout_ms=500,max_rows=max_rows),
         limitations=['Permission-limited fields can be NULL; invisible data is unknown, not zero.',
             'Current activity/locks do not reconstruct a past incident.',
             'Cumulative statistics span resets/restarts and cannot locate individual past events.',
             'Timing counters can be zero because timing was disabled; current configuration does not prove past configuration.',
             'Statements requires already enabled pg_stat_statements with public views. This adapter never enables it.',
-            'Only the fixed SELECT catalogue runs in a read-only transaction; query text may contain private application data.'])
+            'Only the fixed SELECT catalogue runs in a read-only transaction; query text may contain private application data.'],
+        operator_credential_redacted=redacted,
+        credential_filter_scope='Known PGPASSWORD values; other libpq credential profiles require separate verification.')
     if not code:
-        response=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
-        if not isinstance(response,dict) or not isinstance(response.get('rows'),list) or len(response['rows'])>200:
-            raise InputError('invalid PostgreSQL observation response')
         result.update(rows=response['rows'],database=response.get('database'),captured_at=response.get('captured_at'))
         result['rows_may_be_truncated']=len(response['rows'])>=result['limits']['max_rows']
-    else:result['reason']='connection_permission_or_capability_error; inspect private diagnostics'
+    else:result['reason']='command_'+stopped if stopped else 'invalid_or_unsupported_response' if invalid_response else 'connection_permission_or_capability_error; inspect private diagnostics'
     return save_artifact(state_dir,'postgresql',dict(operation=operation,**client.scope),sources,result)

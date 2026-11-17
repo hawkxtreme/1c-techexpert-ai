@@ -1,5 +1,8 @@
 import sys
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 from src.techexpert.processes import run_bounded
 
 
@@ -17,6 +20,23 @@ class ProcessBudgetTests(unittest.TestCase):
         self.assertEqual(err,b'')
         self.assertIn(b'a;$(whoami)',out)
         self.assertIn(b'bounded stdin',out)
+
+    def test_invalid_input_and_cancel_before_launch_never_start_a_process(self):
+        with patch('src.techexpert.processes.subprocess.Popen',side_effect=AssertionError('Invalid input launched a process')):
+            with self.assertRaises(ValueError):run_bounded([sys.executable],input_data='not bytes')
+            with self.assertRaisesRegex(ValueError,'cancelled'):run_bounded([sys.executable],should_stop=lambda:'cancelled')
+
+    def test_explicit_cancel_retains_bounded_partial_output_and_stops_owned_child(self):
+        with tempfile.TemporaryDirectory() as temp:
+            ready=Path(temp)/'ready'
+            source='import sys,time;from pathlib import Path;print("captured-before-cancel",flush=True);Path(sys.argv[1]).write_text("ready");time.sleep(30)'
+            with self.assertRaises(ValueError) as caught:
+                run_bounded([sys.executable,'-c',source,str(ready)],timeout=10,should_stop=lambda:'cancelled' if ready.exists() else None)
+            error=caught.exception
+            self.assertEqual(getattr(error,'reason',None),'cancelled')
+            self.assertIn(b'captured-before-cancel',error.stdout)
+            self.assertTrue(error.process_started)
+            self.assertIsNotNone(error.returncode)
 
 
 if __name__=='__main__':unittest.main()

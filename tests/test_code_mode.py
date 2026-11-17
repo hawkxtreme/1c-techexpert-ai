@@ -260,8 +260,8 @@ return second
                     else:self.assertNotEqual(operations.reconcile(self.state,result['run_id'])['status'],'succeeded')
                     self.assertNotEqual(operations.result(self.state,result['run_id'])['status'],'succeeded')
 
-    def test_program_has_the_same_thirteen_diagnostic_operations_as_direct_calls(self):
-        from src.techexpert.capabilities import CODE_API
+    def test_program_preserves_the_original_thirteen_diagnostic_operations(self):
+        from src.techexpert.capabilities import BASE_API
         measurement=self.folder/'measurement.json'
         measurement.write_text(json.dumps(dict(schema_version=1,profile='os-metrics-v1',node='test',role='onec',scope='host',
             plan=dict(duration_seconds=1,interval_seconds=1,max_bytes=8388608),status='completed',
@@ -284,10 +284,10 @@ other = api("os.import", {"measurements": measurement_path})
 return {"duration": report["data"]["durations_seconds"]["execution"], "excerpt": excerpt["data"]["evidence_id"], "imported_coverage": other["data"]["result"]["coverage_status"]}
 '''
         result=self.program(source,bindings=dict(input_path=manifest,fixed=self.after['case_id'],measurement_path=str(measurement)),
-            scope=dict(operations=list(CODE_API),cases=[self.after['case_id']],manifests=[manifest],measurements=[str(measurement)],
+            scope=dict(operations=list(BASE_API),cases=[self.after['case_id']],manifests=[manifest],measurements=[str(measurement)],
                 collectors=[dict(settings=dict(duration_seconds=1,interval_seconds=1))]))
         self.assertEqual(result['status'],'succeeded',result)
-        self.assertEqual({call['operation'] for call in result['data']['calls']},set(CODE_API))
+        self.assertEqual({call['operation'] for call in result['data']['calls']},set(BASE_API))
         self.assertEqual(result['data']['value']['duration'],14)
         self.assertEqual(result['data']['value']['imported_coverage'],'incomplete')
 

@@ -41,5 +41,10 @@ class ApdexTests(unittest.TestCase):
         for update in (dict(duration_seconds=-1),dict(duration_seconds=True),dict(success='yes'),dict(duration_seconds=float('inf'))):
             with self.assertRaises(ValueError):self.apdex([dict(sample,**update)],5)
 
+    def test_large_finite_integer_duration_is_classified_without_float_conversion_overflow(self):
+        result=self.apdex([self.sample(1,10**400)],5)
+        self.assertEqual(result['frustrated'],1);self.assertEqual(result['score'],0)
+        with self.assertRaises(ValueError):self.apdex([],10**400)
+
 
 if __name__=='__main__':unittest.main()

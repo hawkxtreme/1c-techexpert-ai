@@ -5,6 +5,8 @@ description: Получить ограниченные read-only снимки к
 
 # RAC/RAS
 
+Для работы агента используй управляемую rac.observe: подготовь частный запрос по `python techexpert.py capabilities rac.observe`, сохрани operation_key и выполни operation-run REQUEST.json. Через MCP имя — techexpert_rac_observe; через CodeMode заранее закрепи settings, queries, max_calls и допустимые clusters в scope.rac. Агент составляет запрос сам. Доступ к RAS выполняется только выбранным вызовом; unavailable остаётся partial с частным снимком, не пустым списком. Повтор прежнего ключа читает снимок, не опрашивает RAS заново. Прямые команды ниже остаются более узким вариантом.
+
 Для файловой ИБ этот источник не требуется. Установите endpoint RAS, фактическую версию RAC и разрешённую область. Адреса файлов, ОС и SQL проверяются отдельно.
 
 Из проверенного корня пакета выполните `python techexpert.py rac clusters --endpoint server:1545`. Каталог содержит только clusters, infobases, servers, processes, sessions и connections. Для всех операций кроме clusters передайте --cluster с фактическим UUID. --executable указывает установленный RAC; --docker-container использует /opt/1cv8/current/rac явно выбранного контейнера. Это не развёртывание сервера.

@@ -11,7 +11,7 @@ if __package__ in (None,''):
 
 from . import operation_state as state
 from . import __version__,kernel_context
-from .capabilities import execute
+from .capabilities import execute,outcome as output_status
 from .inputs import InputError
 from .storage import ROOT,knowledge_revision
 
@@ -57,13 +57,11 @@ def main(folder):
         kernel_context.install(dict(call_id=boundary.get('call_id',folder.name),deadline=deadline,
             parent=state.process_identity(os.getpid()),cancel_files=list(dict.fromkeys(markers)),
             limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
-    outcome='succeeded';data=None;targets=[];message=None
+    outcome='succeeded';data=None;targets=[];message=None;stop_reason=None
     try:
         data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',stop=stop)
         if request['operation']=='code.execute':outcome=data['result_status']
-        collection=data.get('result',{}).get('collection_status')
-        if collection=='cancelled':outcome='cancelled'
-        elif collection and collection!='completed':outcome='partial'
+        if request['operation']!='code.execute':outcome,stop_reason=output_status(request['operation'],data)
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
         outcome='invalid_input' if isinstance(exc,(InputError,ValueError)) else 'failed';message=str(exc)[:2048]
     metrics=dict(elapsed_seconds=time.monotonic()-started,model_tokens=None,harness_memory_bytes=None)
@@ -71,7 +69,7 @@ def main(folder):
         usage=resource.getrusage(resource.RUSAGE_SELF);children=resource.getrusage(resource.RUSAGE_CHILDREN)
         metrics.update(self_cpu_seconds=usage.ru_utime+usage.ru_stime,terminated_children_cpu_seconds=children.ru_utime+children.ru_stime,
             peak_self_rss_bytes=usage.ru_maxrss*1024,concurrent_tree_peak_rss_bytes=None,effective_address_space_limit_bytes=memory)
-    result=dict(schema_version=1,status=outcome,data=data,targets=targets,message=message,metrics=metrics)
+    result=dict(schema_version=1,status=outcome,data=data,targets=targets,message=message,metrics=metrics,stop_reason=stop_reason)
     if len(state.encode(result))>request['budget']['max_result_bytes']:
         result.update(status='failed',data=None,targets=[],stop_reason='output_limit',message='Operation output exceeds result byte limit; owned partial files retained privately.')
     state.write(folder/'worker-result.json',result);state.write(folder/'worker-receipt.json',dict(sha256=state.digest(result)))

@@ -14,7 +14,15 @@ TERMINAL={'succeeded','partial','invalid_input','failed','cancelled','interrupte
 FLOOR=10*1024**3
 DISK=256*1024**2
 
-def _semantic(request):return {k:v for k,v in request.items() if k!='executor_id'}
+def _semantic(request):
+    result={k:v for k,v in request.items() if k!='executor_id'}
+    if request['operation']=='code.execute':
+        # Additive empty source lists grant no access. They must not invalidate
+        # an old durable key or rewrite its original plan/audit on a new bundle.
+        args=dict(result['arguments']);scope=args.get('scope',{})
+        args['scope']={k:v for k,v in scope.items() if not (type(v) is list and not v)}
+        result['arguments']=args
+    return result
 def _space(path):
     for parent in (path,*path.parents):
         if parent.exists():
@@ -79,6 +87,8 @@ def _snapshots(state,operation,args,data,*,output=None):
         report=add('comparisons',data['comparison_id'])
         for item in report['input_reports']:add('cases',item['case_id'])
     elif operation in ('os.collect','os.import','artifact.show'):add('artifacts',data['artifact_id'])
+    elif operation in capabilities._diagnostics.CREATORS|capabilities._diagnostics.ARTIFACT_READS:
+        add('artifacts',data['artifact_id'])
     elif operation=='code.execute':
         for call in data['calls']:
             for reference in call.get('snapshots',[]):

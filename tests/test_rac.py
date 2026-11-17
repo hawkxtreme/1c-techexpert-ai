@@ -18,6 +18,15 @@ class RacTests(unittest.TestCase):
         with self.assertRaises(ValueError):self.api.parse_rows('name : A\nname : B\n')
         with self.assertRaises(ValueError):self.api.parse_rows('unparsed error\n')
 
+    def test_last_row_cannot_bypass_response_row_limit(self):
+        with self.assertRaisesRegex(ValueError,'row budget'):self.api.parse_rows('host : x\n\n'*10001)
+
+    def test_connection_namespace_is_retained_for_local_and_docker_clients(self):
+        self.assertEqual(self.api.RacClient('localhost:1545').scope['transport'],'local_process')
+        client=self.api.RacClient('localhost:1545',docker_container='test-rac')
+        self.assertEqual(client.scope['docker_container'],'test-rac')
+        self.assertEqual(client.scope['transport'],'docker_exec')
+
     def test_catalogue_cannot_execute_mutations_or_inject_options(self):
         client=self.api.RacClient('localhost:2545',docker_container='lab')
         cluster='01234567-1234-1234-1234-0123456789ab'
@@ -44,6 +53,19 @@ class RacTests(unittest.TestCase):
             self.assertFalse(report['result']['historical_identity_established'])
             from src.techexpert.artifacts import load_artifact
             self.assertEqual(load_artifact(Path(temp),report['artifact_id']),report)
+
+    def test_cancel_and_connection_failure_are_explicit_unavailable_observations(self):
+        from src.techexpert.processes import CommandStopped
+        from src.techexpert.inputs import InputError
+        class Cancelled(self.api.RacClient):
+            def execute(self,operation,cluster=None,**kwargs):raise CommandStopped('cancelled',stdout=b'cluster : ',returncode=-9,process_started=True)
+        class Denied(self.api.RacClient):
+            def execute(self,operation,cluster=None):raise InputError('connection failed')
+        with tempfile.TemporaryDirectory() as temp:
+            cancelled=self.api.collect_rac(temp,Cancelled('localhost:1545'),'clusters',should_stop=lambda:'cancelled')
+            self.assertEqual(cancelled['result']['status'],'cancelled');self.assertIsNone(cancelled['result']['rows'])
+            denied=self.api.collect_rac(temp,Denied('localhost:1545'),'clusters')
+            self.assertEqual(denied['result']['status'],'unavailable');self.assertIsNone(denied['result']['rows'])
 
 
 if __name__=='__main__':unittest.main()

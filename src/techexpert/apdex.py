@@ -11,7 +11,7 @@ def instant(value):
 
 
 def number(value,name,positive=False):
-    if type(value) not in (int,float) or not math.isfinite(value) or value<0 or (positive and not value):
+    if type(value) not in (int,float) or type(value) is float and not math.isfinite(value) or value<0 or (positive and not value):
         raise ValueError(name+' must be a finite '+('positive' if positive else 'nonnegative')+' number')
     return value
 

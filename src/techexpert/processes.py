@@ -7,10 +7,28 @@ import time
 from .inputs import InputError
 
 
-def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None):
+class CommandStopped(InputError):
+    def __init__(self,reason,*,stdout=b'',stderr=b'',returncode=None,process_started=False):
+        self.reason=reason;self.stdout=stdout;self.stderr=stderr
+        self.returncode=returncode;self.process_started=process_started
+        super().__init__('command stopped: '+reason)
+
+
+def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None,should_stop=None):
     if not isinstance(argv,list) or not argv or any(not isinstance(x,str) or '\0' in x for x in argv):
         raise InputError('explicit command arguments required')
-    if not 0<timeout<=3600 or not 0<max_bytes<=64*1024*1024:raise InputError('invalid command budget')
+    if (type(timeout) not in (int,float) or not 0<timeout<=3600
+        or type(max_bytes) is not int or not 0<max_bytes<=64*1024*1024):raise InputError('invalid command budget')
+    if input_data is not None and (not isinstance(input_data,bytes) or len(input_data)>16*1024*1024):
+        raise InputError('command input exceeds budget')
+    if should_stop is not None and not callable(should_stop):raise InputError('invalid command stop callback')
+    def stop():
+        reason=should_stop() if should_stop else None
+        if reason is True:reason='cancelled'
+        if reason and reason not in ('cancelled','timeout'):raise InputError('unsupported command stop reason')
+        return reason
+    reason=stop()
+    if reason:raise CommandStopped(reason)
     flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
     process=subprocess.Popen(argv,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
                              stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False,env=env,creationflags=flags)
@@ -30,21 +48,22 @@ def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None
         except (BrokenPipeError,OSError):pass
     writer=None
     if input_data is not None:
-        if not isinstance(input_data,bytes) or len(input_data)>16*1024*1024:
-            process.kill();process.wait();raise InputError('command input exceeds budget')
         writer=threading.Thread(target=send,daemon=True);writer.start()
     deadline=time.monotonic()+timeout;reason=None
     try:
         while process.poll() is None:
+            reason=stop()
+            if reason:break
             if overflow.is_set():reason='output_limit';break
             if time.monotonic()>=deadline:reason='timeout';break
             time.sleep(.02)
     finally:
         if process.poll() is None:process.kill()
         process.wait(timeout=5)
-        for worker in workers:worker.join(5)
-        if writer:writer.join(5)
+        cleanup_deadline=time.monotonic()+5
+        for worker in workers:worker.join(max(0,cleanup_deadline-time.monotonic()))
+        if writer:writer.join(max(0,cleanup_deadline-time.monotonic()))
     if overflow.is_set():reason='output_limit'
     if any(w.is_alive() for w in workers) or failures:raise InputError('command output could not be captured completely')
-    if reason:raise InputError('command stopped: '+reason)
+    if reason:raise CommandStopped(reason,stdout=bytes(output[0]),stderr=bytes(output[1]),returncode=process.returncode,process_started=True)
     return process.returncode,bytes(output[0]),bytes(output[1])
