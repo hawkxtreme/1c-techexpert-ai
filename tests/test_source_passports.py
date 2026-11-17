@@ -151,6 +151,37 @@ class SourcePassportTests(PassportFixtures,unittest.TestCase):
         different=self.api.normalize_links(bindings,[dict(id='L-2',left='S-1',right='S-3',claim='same_source_version')])[0]['check']
         self.assertEqual(different['status'],'conflict');self.assertFalse(different['exact_correlation_allowed'])
 
+    def test_partial_known_bounds_prove_disjointness_in_either_order(self):
+        from src.techexpert.storage import investigate
+        report=investigate(ROOT/'tests/fixtures/order-load/baseline.json',self.state)
+        before=dict(start=None,end='2026-11-17T11:00:00Z');after=dict(start='2026-11-17T12:00:00Z',end=None)
+        for left,right in [(before,after),(after,before)]:
+            with self.subTest(left=left):
+                bindings=self.bind(None,{'A-1':report},[dict(id='S-1',attachment='A-1',record_source='s1',applicability=left),dict(id='S-2',attachment='A-1',record_source='s1',applicability=right)])
+                check=self.api.normalize_links(bindings,[dict(id='L-1',left='S-1',right='S-2',claim='same_run')])[0]['check']
+                self.assertFalse(check['exact_correlation_allowed']);self.assertIn('applicability_disjoint',check['reasons'])
+
+    def test_selected_case_source_format_distinguishes_normalized_bsl_and_mixed_material(self):
+        from src.techexpert.storage import investigate
+        synthetic=investigate(ROOT/'examples/sc01/case.json',self.state)
+        normalized=self.bind(None,{'A-1':synthetic},[dict(id='S-1',attachment='A-1',record_source='s1')])[0]['passport']
+        self.assertEqual(normalized['type'],'normalized_events')
+        self.assertEqual(normalized['capabilities']['adapter_profiles'],['normalized-events-v1'])
+        report=investigate(ROOT/'tests/fixtures/order-load/baseline.json',self.state)
+        source_id=next(s['id'] for s in report['sources'] if s['format']=='1c-source-text-v1')
+        bsl=self.bind(self.profile('source'),{'A-1':report},[dict(id='S-1',attachment='A-1',profile_source_id='first',record_source=source_id)])[0]['passport']
+        self.assertEqual(bsl['type'],'source');self.assertEqual(bsl['capabilities']['adapter_profiles'],['1c-source-text-v1'])
+        self.assertEqual(bsl['facts']['recorded_run']['basis'],'unknown')
+        with self.assertRaises(ValueError):self.bind(self.profile('tj'),{'A-1':report},[dict(id='S-1',attachment='A-1',profile_source_id='first',record_source=source_id)])
+        tj=self.bind(self.profile('tj'),{'A-1':report},[dict(id='S-1',attachment='A-1',profile_source_id='first',record_source='s1')])[0]['passport']
+        self.assertEqual(tj['type'],'tj');self.assertEqual(tj['capabilities']['adapter_profiles'],['1c-tj-text-v1'])
+        self.assertEqual(tj['facts']['recorded_run']['basis'],'observed')
+        auxiliary=self.bind(None,{'A-1':report},[dict(id='S-1',attachment='A-1',record_source='s2')])[0]['passport']
+        self.assertEqual(auxiliary['type'],'auxiliary');self.assertEqual(auxiliary['capabilities']['adapter_profiles'],['1c-job-runtime-v1'])
+        self.assertEqual(auxiliary['facts']['recorded_run']['basis'],'unknown')
+        mixed=self.bind(None,{'A-1':report},[dict(id='S-1',attachment='A-1')])[0]['passport']
+        self.assertEqual(mixed['type'],'mixed');self.assertGreater(len(mixed['capabilities']['adapter_profiles']),1)
+
 
 class InvestigationSourceTests(PassportFixtures,unittest.TestCase):
     def managed(self,operation,key,**arguments):
@@ -295,17 +326,17 @@ class InvestigationSourceTests(PassportFixtures,unittest.TestCase):
         from src.techexpert import incident_drafts
         doc,_=self.prepare();iid=doc['investigation_id']
         bindings=json.loads(json.dumps(doc['source_bindings']))
-        bindings[0].pop('passport');bindings[0]['reported']=dict(infobase_identity='PRIVATE_PASSPORT_VALUE')
+        bindings[0].pop('passport');bindings[0]['reported']=dict(infobase_identity='PRIVATE_PASSPORT_VALUE',process_identity='PRIVATE_PROCESS_OWNER',session_identity='PRIVATE_SESSION_ALIAS')
         doc=self.inv.revise(self.state,iid,dict(source_bindings=bindings,
             hypotheses=[dict(id='H-1',text='Гипотеза текущего harness',status='supported',evidence=['E-1'],source_links=['L-1'])],
-            assessment=dict(summary='Объяснение harness для PRIVATE_PASSPORT_VALUE с зависимостью от связи',cause_state='confirmed',hypothesis_id='H-1',mechanism='Заявленный механизм',verification='Заявленная отдельная проверка',
+            assessment=dict(summary='Объяснение harness для PRIVATE_PASSPORT_VALUE PRIVATE_PROCESS_OWNER PRIVATE_SESSION_ALIAS с зависимостью от связи',cause_state='confirmed',hypothesis_id='H-1',mechanism='Заявленный механизм',verification='Заявленная отдельная проверка',
                 evidence=['E-1'],alternatives=['Другая гипотеза рассмотрена'],limitations=['Связь источников требует проверки'],references=[],
                 recommendations=[dict(id='R-1',kind='diagnostic',basis=['H-1'],goal='Проверить вывод',prerequisites='Доступ к выбранным данным',expected_effect='Уточнение принадлежности',verification='Проверить идентификаторы',limitations='Не менять систему')])),expected_revision=2)
         context=self.inv.source_context(self.state,iid)
         self.assertEqual({r['conclusion_id'] for r in context['dependencies']},{'F-1','H-1','assessment','R-1'})
         before=(self.inv.revision_folder(self.state,iid,3)/'report.json').read_bytes()
         preview=incident_drafts.prepare(self.state,iid)
-        self.assertNotIn('PRIVATE_PASSPORT_VALUE',json.dumps(preview,ensure_ascii=False))
+        for value in ('PRIVATE_PASSPORT_VALUE','PRIVATE_PROCESS_OWNER','PRIVATE_SESSION_ALIAS'):self.assertNotIn(value,json.dumps(preview,ensure_ascii=False))
         public=json.loads(next(f['text'] for f in preview['files'] if f['path']=='report.json'))
         self.assertEqual(public['source_review']['status'],'needs_clarification')
         self.assertEqual(public['source_review']['unresolved_link_count'],1)
@@ -314,3 +345,17 @@ class InvestigationSourceTests(PassportFixtures,unittest.TestCase):
         revised=self.inv.revise(self.state,iid,dict(source_bindings=bindings),expected_revision=3)
         self.assertEqual(revised['assessment_status'],'stale_due_to_revision');self.assertEqual(revised['cause_state'],'insufficient_data')
         self.assertEqual((self.inv.revision_folder(self.state,iid,3)/'report.json').read_bytes(),before)
+
+    def test_recorded_run_identifiers_are_private_even_when_mentioned_in_public_prose(self):
+        from src.techexpert import incident_drafts
+        from src.techexpert.storage import investigate
+        doc,_=self.prepare();case=investigate(ROOT/'tests/fixtures/order-load/baseline.json',self.state)
+        identity=case['job_correlation']['native_link']['identity'];nonce=identity['nonce'];thread=identity['os_thread']
+        doc=self.inv.revise(self.state,doc['investigation_id'],dict(
+            attachments=doc['attachments']+[dict(id='A-2',kind='case',target_id=case['case_id'])],
+            source_bindings=doc['source_bindings']+[dict(id='S-3',attachment='A-2',record_source='s1')],
+            assessment=dict(summary='Наблюдавшийся идентификатор '+nonce+' и поток '+thread+' процесса 1cv8',cause_state='insufficient_data',evidence=[],limitations=['Только контрольный набор'],recommendations=[],references=[])),expected_revision=2)
+        preview=incident_drafts.prepare(self.state,doc['investigation_id'])
+        self.assertNotIn(nonce,json.dumps(preview,ensure_ascii=False))
+        self.assertNotIn(thread,json.dumps(preview,ensure_ascii=False))
+        self.assertIn('процесса 1cv8',preview['body'])

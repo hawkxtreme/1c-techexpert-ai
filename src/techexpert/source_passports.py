@@ -17,6 +17,7 @@ FIELDS=('base_alias','node_alias','node_identity','cluster_identity','infobase_i
     'extensions','source_commit','journal_identity','process_identity','session_identity',
     'clock_alignment','recorded_run')
 KINDS={'native-jr':'jr','onec_source':'source','postgresql':'sql','rac':'rac','os_metrics':'os','apdex':'apdex'}
+CASE_KINDS={'1c-tj-text-v1':'tj','1c-source-text-v1':'source','normalized-events-v1':'normalized_events'}
 
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
@@ -100,15 +101,20 @@ def _passport(profile,binding,attachment,target):
         sql_names={source['settings'].get('databases',{}).get(bid,source['settings'].get('database')) for bid in declared}
         if len(sql_names)==1:claim('sql_database_name',next(iter(sql_names)),'reported',proof)
     elif binding.get('base_id') is not None:raise InputError('base selection requires a profile source')
-    kind='tj' if attachment['kind']=='case' else KINDS.get(target.get('kind'),target.get('kind'))
-    if source is not None and source['type']!=kind:raise InputError('source type disagrees with saved adapter report')
     sources=target.get('sources',[])
     selected=binding.get('record_source')
     if selected is not None:
         if not any(s.get('id')==selected for s in sources):raise InputError('source record selection is absent from the snapshot')
         sources=[s for s in sources if s['id']==selected]
-    content=[dict(id=s['id'],sha256=s['sha256'],bytes=s['size'] if attachment['kind']=='case' else s['bytes']) for s in sources]
     result=target.get('result',{})
+    if attachment['kind']=='case':
+        formats=sorted({s['format'] for s in sources})
+        kind=CASE_KINDS.get(formats[0],'auxiliary') if len(formats)==1 else 'mixed'
+    else:
+        kind=KINDS.get(target.get('kind'),target.get('kind'))
+        formats=[result['profile']] if result.get('profile') is not None else []
+    if source is not None and source['type']!=kind:raise InputError('source type disagrees with saved adapter report; select the matching source record')
+    content=[dict(id=s['id'],sha256=s['sha256'],bytes=s['size'] if attachment['kind']=='case' else s['bytes']) for s in sources]
     if kind=='jr':observed('journal_identity',result.get('journal_id'),'/result/journal_id')
     if kind=='source':
         origin=result.get('origin',{})
@@ -118,7 +124,7 @@ def _passport(profile,binding,attachment,target):
     if kind=='sql' and result.get('status')=='observed':observed('sql_database_name',result.get('database'),'/result/database')
     if attachment['kind']=='case':
         link=target.get('job_correlation',{}).get('native_link',{})
-        if link.get('status')=='established' and (selected is None or selected==link.get('identity',{}).get('source')):
+        if link.get('status')=='established' and any(s['id']==link.get('identity',{}).get('source') and s['format']=='1c-tj-text-v1' for s in sources):
             observed('recorded_run',link['identity'],'/job_correlation/native_link/identity')
     reported=_object(binding.get('reported',{}),FIELDS)
     for key,value in reported.items():
@@ -133,7 +139,7 @@ def _passport(profile,binding,attachment,target):
         declared_base_ids=declared,snapshot=snapshot,content=content,
         access_scope=dict(profile_revision=profile.get('revision') if profile else None,source_id=source['id'] if source else None,record_source=selected,
             connection_scope=deepcopy(result.get('connection_scope')),connection_scope_basis='client_settings_not_verified_server_identity'),
-        capabilities=dict(adapter_profile=result.get('profile'),observation_status=result.get('status'),
+        capabilities=dict(adapter_profile=formats[0] if len(formats)==1 else None,adapter_profiles=formats,observation_status=result.get('status'),
             historical_coverage='not_established_by_passport',untrusted_content_executed=False),
         applicability=interval(binding.get('applicability',{})),facts={key:_fact(value) for key,value in claims.items()},
         limitations=['Configured source/base membership and user confirmation remain reported evidence.',
@@ -166,8 +172,8 @@ def normalize_bindings(profile,attachments,targets,values,*,profiles=None):
 def _check(left,right,claim,reported):
     facts=[left['facts'],right['facts']];reasons=[];status='reported' if reported else 'unknown';exact=False;scope='independent_analysis_only'
     periods=[p['applicability'] for p in (left,right)]
-    if all(period['start'] and period['end'] for period in periods):
-        if max(datetime.fromisoformat(p['start']) for p in periods)>=min(datetime.fromisoformat(p['end']) for p in periods):reasons.append('applicability_disjoint')
+    if any(first['end'] and second['start'] and datetime.fromisoformat(first['end'])<=datetime.fromisoformat(second['start'])
+           for first,second in (periods,periods[::-1])):reasons.append('applicability_disjoint')
     if set(left['declared_base_ids']) and set(right['declared_base_ids']) and not set(left['declared_base_ids'])&set(right['declared_base_ids']):reasons.append('different_declared_bases')
     if any(f['basis']=='conflicting' for group in facts for f in group.values()):reasons.append('conflicting_source_facts')
     if claim=='same_snapshot' and left['content'] and left['content']==right['content']:

@@ -135,11 +135,22 @@ def _known(doc,state_dir):
         add('NODE',source.get('host'));add('PATH',source.get('path'));add('USER',source.get('settings',{}).get('user'))
         for value in source.get('settings',{}).get('databases',{}).values():add('DB',value)
     categories=dict(base_alias='DB',node_alias='NODE',node_identity='ID',cluster_identity='ID',infobase_identity='DB',
-        dbms_instance_identity='ID',sql_database_name='DB',dbms_database_identity='ID',source_commit='ID',journal_identity='ID')
+        dbms_instance_identity='ID',sql_database_name='DB',dbms_database_identity='ID',source_commit='ID',journal_identity='ID',
+        process_identity='ID',session_identity='ID')
+    run_categories=dict.fromkeys(('job_uuid','nonce','session_uuid','os_thread','process_id','epoch'),'ID')
+    run_categories.update(database_file='PATH',node='NODE')
     for binding in doc.get('source_bindings',[]):
         for key,fact in binding['passport']['facts'].items():
             if key in categories:
                 for claim in fact['claims']:add(categories[key],claim['value'])
+            elif key=='recorded_run':
+                for claim in fact['claims']:
+                    run=claim['value']
+                    if isinstance(run,str):add('ID',run)
+                    elif isinstance(run,dict):
+                        for field,category in run_categories.items():add(category,run.get(field))
+                        label=run.get('process_label')
+                        if isinstance(label,str) and not re.fullmatch(r'(?i)(?:1cv8c?|1cv8s|ragent|rmngr|rphost)(?:\.exe)?',label):add('ID',label)
     for evidence in doc['evidence']:values[evidence['id']]='EVIDENCE'
     fields=dict.fromkeys(('host','hostname','node','observed_hostname','requested_node_label','computer','computer_name'),'NODE')
     fields.update(dict.fromkeys(('database','database_name','datname','base_name'),'DB'))
