@@ -106,6 +106,10 @@ class ManagedOperationTests(unittest.TestCase):
         artifact=call('os.collect',duration_seconds=1,interval_seconds=1)
         call('artifact.show',artifact_id=artifact['artifact_id'])
         call('os.import',measurements=str(self.state/'artifacts'/artifact['artifact_id']/'sources/s1.bin'))
+        program=call('code.execute',program='return {"unknown": None, "total": sum([2, 3])}')
+        self.assertEqual(program['value'],dict(unknown=None,total=5))
+        inspected=call('code.inspect',run_id=program['audit']['run_id'])
+        self.assertTrue(inspected['audit_available'])
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

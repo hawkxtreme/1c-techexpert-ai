@@ -1,0 +1,91 @@
+"""Caller-selected capability scope. Program values never grant OS permissions."""
+from copy import deepcopy
+import os
+from pathlib import Path
+
+from .code_values import CodeError,bounded
+
+
+def schemas(cap,api_operations):
+    resources=cap.obj(dict(memory_bytes=cap.integer(64*1024**2,1024**3,256*1024**2),
+        max_calls=cap.integer(1,64,32),max_steps=cap.integer(1000,2000000,200000),
+        max_api_bytes=cap.integer(16384,64*1024**2,64*1024**2),
+        max_owned_bytes=cap.integer(1024**2,256*1024**2,256*1024**2),
+        max_value_bytes=cap.integer(16384,16*1024**2,16*1024**2)),[])
+    scope=cap.obj(dict(operations=cap.array(cap.string(64,enum=list(api_operations)),len(api_operations)),
+        cases=cap.array(cap.CASE,100),artifacts=cap.array(cap.CASE,100),comparisons=cap.array(cap.CASE,100),
+        manifests=cap.array(cap.FILE,64),measurements=cap.array(cap.FILE,64),
+        collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8)))
+    return dict(program=dict(type='string',minLength=1,maxLength=65536,x_multiline=True),
+        language=cap.string(32,enum=['bounded-python-v1'],default='bounded-python-v1'),
+        bindings=dict(type='object',maxProperties=64,additionalProperties=True,default={},x_bounded_json=16384),
+        scope=dict(scope,default={}),resources=dict(resources,default={}))
+
+
+def path_key(value):return os.path.normcase(os.path.normpath(str(Path(value).absolute())))
+
+
+def normalize(arguments):
+    from . import capabilities as cap
+    from .os_metrics import validate_request
+    result=deepcopy(arguments)
+    if len(result['program'].encode('utf-8'))>65536:raise CodeError('program_limit','Program exceeds 64 KiB UTF-8.')
+    bounded(result['bindings'],max_bytes=16384,max_depth=16)
+    if len(result['bindings'])>64:raise CodeError('invalid_program','At most64 bindings are supported.')
+    # Defaults on the optional objects need validation as objects, too.
+    properties=cap.ROUTES['code.execute']['input_schema']['properties']
+    for field in ('scope','resources'):result[field]=cap.validate(result[field],properties[field])
+    for field in ('manifests','measurements'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
+    for profile in result['scope']['collectors']:
+        settings=validate_request(profile['settings'])
+        for field in ('identity_file','known_hosts_file'):
+            if field in settings:settings[field]=str(Path(settings[field]).absolute())
+        profile['settings']={k:v for k,v in settings.items() if v is not None}
+    return result
+
+
+class Scope:
+    def __init__(self,value,api_operations):
+        self.value=deepcopy(value);self.operations=set(value['operations']);self.api_operations=set(api_operations)
+        self.ids={kind:set(value[kind]) for kind in ('cases','artifacts','comparisons')}
+        self.imported=set();self.collector_runs=[0]*len(value['collectors']);self.products=[]
+
+    def authorize(self,operation,arguments):
+        if operation not in self.api_operations or operation not in self.operations:raise CodeError('scope_denied','Operation is outside the caller-selected API scope.')
+        def target(kind,identifier):
+            if identifier not in self.ids[kind]:raise CodeError('scope_denied','Target is outside the caller-selected resource scope.')
+        if operation.startswith('case.') and operation not in ('case.analyze','case.compare'):target('cases',arguments['case_id'])
+        elif operation=='case.compare':
+            for identifier in arguments['before']+arguments['after']:target('cases',identifier)
+        elif operation=='comparison.show':target('comparisons',arguments['comparison_id'])
+        elif operation=='artifact.show':target('artifacts',arguments['artifact_id'])
+        elif operation in ('case.analyze','source.check','os.import'):
+            field='measurements' if operation=='os.import' else 'manifests'
+            key=path_key(arguments['measurements' if operation=='os.import' else 'manifest'])
+            if key not in {path_key(p) for p in self.value[field]}:raise CodeError('scope_denied','Input path is outside the caller-selected source scope.')
+            if operation!='source.check':
+                identity=(operation,key)
+                if identity in self.imported:raise CodeError('scope_denied','Repeated import requires a separately reviewed plan, not an automatic new run.')
+                self.imported.add(identity)
+        elif operation=='os.collect':
+            selected=None
+            for index,profile in enumerate(self.value['collectors']):
+                plan=profile['settings'];variable={'duration_seconds','interval_seconds','max_bytes'}
+                if {k:v for k,v in arguments.items() if k not in variable}!={k:v for k,v in plan.items() if k not in variable}:continue
+                if (arguments['duration_seconds']>plan['duration_seconds'] or arguments['interval_seconds']<plan['interval_seconds']
+                    or arguments['max_bytes']>plan['max_bytes']):continue
+                if self.collector_runs[index]<profile['max_runs']:selected=index;break
+            if selected is None:raise CodeError('scope_denied','Collector settings or repeat count exceed the approved plan.')
+            self.collector_runs[selected]+=1
+
+    def produced(self,operation,data):
+        if not isinstance(data,dict):return
+        field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
+            'os.collect':('artifact_id','artifacts'),'os.import':('artifact_id','artifacts')}.get(operation,(None,None))
+        if not field:return
+        identifier=data.get(field)
+        if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
+            raise CodeError('api_integrity','Created resource identity is invalid.')
+        self.ids[kind].add(identifier)
+        target=dict(kind=kind,id=identifier)
+        if target not in self.products:self.products.append(target)

@@ -138,7 +138,7 @@ class GuiHTTPTests(unittest.TestCase):
         context=json.loads(body);self.assertEqual(context['task'],investigation['task'])
         self.assertEqual(self.request('GET','/api/templates',token=False)[0],401)
         status,_,body=self.request('GET','/api/templates');self.assertEqual(status,200)
-        self.assertEqual(len(json.loads(body)['templates']),10)
+        self.assertEqual(len(json.loads(body)['templates']),11)
         body=dict(expected_revision=1,template_id='TPL-01',variant='document-posting',time_mode='current',scale='one')
         self.assertEqual(self.request('POST','/api/context',body,origin=False)[0],403)
         self.assertEqual(self.request('POST','/api/context',dict(body,investigation_id='other'))[0],400)

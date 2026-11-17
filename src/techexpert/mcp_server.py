@@ -11,11 +11,12 @@ from .inputs import InputError,json_value
 
 MAX_LINE=256*1024
 MAX_IN_FLIGHT=10
-INSTRUCTIONS=('Use this harness to interpret SC-01 evidence. Tools compute observations, not an independent diagnosis. '
-    'Select explicit source paths; keep queue, execution, observed calls and cause separate. '
+INSTRUCTIONS=('Use the current harness to interpret the selected technical incident. Tools compute observations, not an independent diagnosis. '
+    'Select explicit source paths; retain evidence, unknowns and adapter coverage limits. '
     'Use stable operation_key values; after uncertainty inspect/replay, never change keys just to retry. '
     'Collection requires an already authorized plan. Cancel request is not verified stop. '
-    'No server licensing, arbitrary code/SQL, source changes, publication or CodeMode is provided here.')
+    'Program tools use a bounded capability language with explicit scope and resource limits. '
+    'No server licensing, arbitrary Python/SQL, source changes or publication is provided here.')
 
 
 class RPCError(ValueError):
@@ -53,8 +54,9 @@ class _FramedOutput:
 
 
 class Server:
-    def __init__(self,state,input_stream,output_fd):
+    def __init__(self,state,input_stream,output_fd,*,profile='full'):
         self.state=state;self.input=input_stream;self.output_fd=output_fd
+        self.profile=profile;self.operations=tools.selected_operations(profile)
         self.closed=threading.Event();self.lock=threading.Lock();self.pending={}
         self.outgoing=queue.Queue(maxsize=16);self.pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='mcp-tool')
         self.incoming=queue.Queue(maxsize=2)
@@ -127,7 +129,7 @@ class Server:
     def launch(self,identifier,params,version):
         if set(params)-{'name','arguments','_meta'} or not isinstance(params.get('name'),str):raise RPCError(-32602,'Expected tools/call name and arguments.')
         name=params['name'];arguments=params.get('arguments',{})
-        if name not in tools.OPERATIONS and name not in {'techexpert_'+k for k in tools.CONTROLS}:raise RPCError(-32602,'Unknown tool; inspect tools/list.')
+        if name not in self.operations and name not in {'techexpert_'+k for k in tools.CONTROLS}:raise RPCError(-32602,'Unknown tool; inspect tools/list.')
         try:action,arguments,request=tools.prepare(name,arguments)
         except (ValueError,TypeError,KeyError):
             self.send(dict(jsonrpc='2.0',id=identifier,result=tools.small_error('Invalid tool arguments; inspect this tool inputSchema and use bounded values.',version)));return
@@ -176,7 +178,7 @@ class Server:
             elif method=='ping':self.complete(identifier,{},version)
             elif method=='tools/list':
                 if set(params)-{'_meta'}:raise RPCError(-32602,'This finite catalogue has no continuation cursor.')
-                self.complete(identifier,dict(tools=tools.tools()),version,cache=True)
+                self.complete(identifier,dict(tools=tools.tools(self.profile)),version,cache=True)
             elif method=='tools/call':self.launch(identifier,params,version)
             else:raise RPCError(-32601,'Method is not supported; only discovery, tools and ping are provided.')
         except RPCError as exc:self.error(identifier,exc.code,exc.message,exc.data)
@@ -220,7 +222,7 @@ class Server:
         return 0
 
 
-def serve(state):
-    try:return Server(state,sys.stdin.buffer,sys.stdout.fileno()).run()
+def serve(state,*,profile='full'):
+    try:return Server(state,sys.stdin.buffer,sys.stdout.fileno(),profile=profile).run()
     except (OSError,ValueError,KeyError,TypeError,RecursionError):
         print('MCP transport stopped; inspect retained operation state before retrying.',file=sys.stderr);return 2

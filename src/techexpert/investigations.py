@@ -111,7 +111,7 @@ def _verify_evidence(state_dir,doc):
 
 def _validate(state_dir,doc):
     encoded(doc,MAX_DOCUMENT)
-    if doc['time_mode'] not in ('past','current','reproduce') or doc['scale'] not in ('one','several','all','background','unknown'):raise InputError('invalid investigation time or scale')
+    if doc['time_mode'] not in ('unknown','past','current','reproduce') or doc['scale'] not in ('one','several','all','background','unknown'):raise InputError('invalid investigation time or scale')
     if doc['execution_status'] not in ('completed','partial','error','cancelled'):raise InputError('invalid execution status')
     _text(doc['task']);_object(doc['episode'],('description','start','end','utc_offset','database_mode','operation','user_reported_baseline','client_context','recurrence_seconds','requested_window_seconds'))
     for key,value in doc['episode'].items():
@@ -332,7 +332,8 @@ def load(state_dir,investigation_id,*,revision=None):
     return doc
 
 def create(state_dir,request):
-    _object(request,('task','template_id','variant','time_mode','scale','episode','harness'),('task','template_id','time_mode','scale'))
+    _object(request,('task','template_id','variant','time_mode','scale','episode','harness'),('task',))
+    request=dict(dict(template_id='TPL-00',time_mode='unknown',scale='unknown'),**request)
     _text(request['task']);book=templates()
     if request['time_mode'] not in book['time_modes'] or request['scale'] not in book['scales']:raise InputError('invalid investigation time or scale')
     selected=template_plan(request['template_id'],variant=request.get('variant'),time_mode=request['time_mode'])

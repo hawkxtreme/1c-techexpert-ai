@@ -1,6 +1,7 @@
 """Real stdio and managed-kernel contracts; no external server or model required."""
 import importlib
 import importlib.util
+import hashlib
 import io
 import json
 import os
@@ -29,9 +30,9 @@ class MCPTests(unittest.TestCase):
 
     def tools(self):return {tool['name']:tool for tool in self.api.tools()}
 
-    def start(self,reader_enabled=True):
+    def start(self,reader_enabled=True,profile='full'):
         errors=(self.folder/'stderr.txt').open('wb');self.addCleanup(errors.close)
-        p=subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'techexpert.py'),'--state-dir',str(self.state),'mcp-stdio'],
+        p=subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'techexpert.py'),'--state-dir',str(self.state),'mcp-stdio','--profile',profile],
             cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errors)
         replies=queue.Queue()
         def reader():
@@ -66,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),18)
+        tools=self.tools();self.assertEqual(len(tools),20)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -75,6 +76,27 @@ class MCPTests(unittest.TestCase):
             self.assertIn('data',tool['outputSchema']['required'])
         self.assertFalse(tools['techexpert_os_collect']['annotations']['readOnlyHint'])
         self.assertTrue(tools['techexpert_case_show']['annotations']['readOnlyHint'])
+
+    def test_program_and_direct_profiles_separate_composition_without_weakening_the_api(self):
+        for profile,count,allowed,hidden in [
+            ('program',7,'techexpert_code_execute','techexpert_knowledge_search'),
+            ('direct',18,'techexpert_knowledge_search','techexpert_code_execute')]:
+            with self.subTest(profile=profile):
+                before={str(f.relative_to(self.state)):hashlib.sha256(f.read_bytes()).hexdigest() for f in self.state.rglob('*') if f.is_file()}
+                p,q=self.start(profile=profile);self.send(p,'tools/list')
+                catalogue=self.receive(q)['result']['tools'];self.assertEqual(len(catalogue),count)
+                self.assertIn(allowed,{t['name'] for t in catalogue});self.assertNotIn(hidden,{t['name'] for t in catalogue})
+                self.send(p,'tools/call',dict(name=hidden,arguments={}),identifier=2)
+                self.assertEqual(self.receive(q,2)['error']['code'],-32602)
+                self.assertEqual(before,{str(f.relative_to(self.state)):hashlib.sha256(f.read_bytes()).hexdigest() for f in self.state.rglob('*') if f.is_file()})
+                arguments=self.args(key='profile-'+profile,query='очередь') if profile=='direct' else self.args(key='profile-'+profile,
+                    program='return api("knowledge.search", {"query": "очередь"})["data"]["knowledge_revision"]',
+                    scope=dict(operations=['knowledge.search']))
+                self.send(p,'tools/call',dict(name=allowed,arguments=arguments),identifier=3)
+                result=self.receive(q,3)['result']['structuredContent']
+                self.assertEqual(result['status'],'succeeded',result)
+                self.assertTrue(result['integrity_verified'])
+                p.stdin.close();self.assertEqual(p.wait(timeout=10),0)
 
     def test_modern_discovery_without_initialize_has_no_source_or_state_side_effect(self):
         p,q=self.start();self.send(p,'server/discover')
@@ -93,7 +115,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),18);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),20);self.assertFalse(self.state.exists())
 
     def test_modern_metadata_required_on_every_request_and_not_borrowed_from_previous(self):
         p,q=self.start();self.send(p,'server/discover');self.receive(q)

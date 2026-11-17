@@ -22,7 +22,8 @@ def main(folder):
     if os.name!='nt':
         import resource
         inherited=resource.getrlimit(resource.RLIMIT_AS)
-        memory=min([1024**3]+[n for n in inherited if n!=resource.RLIM_INFINITY])
+        requested=request['arguments']['resources']['memory_bytes'] if request['operation']=='code.execute' else 1024**3
+        memory=min([requested]+[n for n in inherited if n!=resource.RLIM_INFINITY])
         resource.setrlimit(resource.RLIMIT_AS,(memory,memory))
     def stop():
         if state.safe(folder/'cancel.json').exists():return 'cancelled'
@@ -49,9 +50,17 @@ def main(folder):
     if plan['versions']!=dict(product=__version__,rules_inventory_sha256=state.digest(state.read(ROOT/'src/techexpert/assets/bundle-manifest.json',1024**2)),knowledge=knowledge_revision()):
         raise InputError('worker versions/rules differ from the reviewed plan')
     state.write(folder/'worker-started.json',dict(plan_sha256=state.digest(plan),child=state.process_identity(os.getpid()),at=state.stamp()))
+    if request['operation']=='code.execute':
+        boundary=plan.get('kernel',{})
+        markers=list(boundary.get('cancel_files',[]))+[str(folder/'cancel.json')]
+        if boundary.get('cancel_file'):markers.append(boundary['cancel_file'])
+        kernel_context.install(dict(call_id=boundary.get('call_id',folder.name),deadline=deadline,
+            parent=state.process_identity(os.getpid()),cancel_files=list(dict.fromkeys(markers)),
+            limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
     outcome='succeeded';data=None;targets=[];message=None
     try:
         data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',stop=stop)
+        if request['operation']=='code.execute':outcome=data['result_status']
         collection=data.get('result',{}).get('collection_status')
         if collection=='cancelled':outcome='cancelled'
         elif collection and collection!='completed':outcome='partial'

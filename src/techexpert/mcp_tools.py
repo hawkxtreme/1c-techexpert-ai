@@ -20,6 +20,13 @@ CONTROLS={
     'kernel_call':('inspect',cap.obj(dict(call_id=CALL),['call_id']),'Inspect a checked controller receipt, resource scope and ownership; model counters remain unknown.'),
 }
 OPERATIONS={'techexpert_'+name.replace('.','_'):name for name in cap.ROUTES}
+PROFILES=('full','direct','program')
+
+
+def selected_operations(profile='full'):
+    if profile not in PROFILES:raise InputError('Unsupported fixed MCP catalogue profile')
+    return {name:operation for name,operation in OPERATIONS.items()
+        if profile=='full' or (operation.startswith('code.') if profile=='program' else not operation.startswith('code.'))}
 
 
 def input_schema(operation):
@@ -32,15 +39,15 @@ def input_schema(operation):
         ['operation_key','executor_id','arguments'])
 
 
-def tools():
+def tools(profile='full'):
     result=[]
-    for name,operation in OPERATIONS.items():
+    for name,operation in selected_operations(profile).items():
         route=cap.ROUTES[operation]
         result.append(dict(name=name,title=operation,description=f"{operation}: {route['impact']}. Sources: {'; '.join(route['required_sources'])}. "
             'Same managed CLI operation, private receipts, fixed budgets. Evidence needs interpretation by the current AI harness; partial coverage is not absence of cause.',
             inputSchema=input_schema(operation),outputSchema=deepcopy(route['output_schema']),
-            annotations=dict(readOnlyHint=operation not in ('case.analyze','case.compare','os.collect','os.import'),destructiveHint=False,
-                idempotentHint=True,openWorldHint=operation in ('source.check','case.analyze','os.collect','os.import'))))
+            annotations=dict(readOnlyHint=operation not in ('case.analyze','case.compare','os.collect','os.import','code.execute'),destructiveHint=False,
+                idempotentHint=True,openWorldHint=operation in ('source.check','case.analyze','os.collect','os.import','code.execute'))))
     for suffix,(action,args,description) in CONTROLS.items():
         result.append(dict(name='techexpert_'+suffix,title=suffix,description=description,inputSchema=deepcopy(args),outputSchema=responses.schema(),
             annotations=dict(readOnlyHint=action not in ('reconcile','cancel'),destructiveHint=False,idempotentHint=True,openWorldHint=False)))

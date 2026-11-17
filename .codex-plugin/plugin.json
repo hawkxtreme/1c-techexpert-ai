@@ -1,6 +1,6 @@
 {
   "name": "1c-techexpert-ai",
-  "version": "0.15.0",
+  "version": "0.16.0",
   "description": "Локальные доказательства для ИИ текущего harness: SC-01, ТЖ, последовательный ЖР, read-only RAC/PostgreSQL, метрики Windows/Linux, APDEX, снимки исходников и комплектная база знаний.",
   "author": {
     "name": "1C TechExpert AI contributors"

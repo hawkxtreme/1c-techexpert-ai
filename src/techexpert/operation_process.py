@@ -9,13 +9,13 @@ import time
 from .inputs import InputError
 from .storage import ROOT
 
-def run(folder,*,guard,on_started,timeout):
+def run(folder,*,guard,on_started,timeout,memory_bytes=1024**3):
     argv=[sys.executable,'-X','utf8','-m','src.techexpert.operation_worker',str(folder)]
     if os.name=='nt':
         from .windows_native import run as native_run
         # The native runner's cwd also owns its bounded stdout/stderr files.
         argv=[sys.executable,'-X','utf8',str(Path(__file__).with_name('operation_worker.py')),str(folder),str(ROOT)]
-        return native_run(argv,cwd=folder,guard=guard,on_started=on_started,timeout=timeout,memory_bytes=1024**3)
+        return native_run(argv,cwd=folder,guard=guard,on_started=on_started,timeout=timeout,memory_bytes=memory_bytes)
     started=time.monotonic();reason=None;error=None;tree_finished=False
     with (folder/'stdout.bin').open('xb') as output,(folder/'stderr.bin').open('xb') as diagnostics:
         process=subprocess.Popen(argv,cwd=ROOT,stdin=subprocess.DEVNULL,stdout=output,stderr=diagnostics,start_new_session=True)

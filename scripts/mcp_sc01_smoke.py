@@ -20,7 +20,7 @@ def run(state,version=MODERN):
     state=fs.private(state);private=fs.private(state/'mcp-smoke'/uuid.uuid4().hex)
     sequence=0;replies=queue.Queue(maxsize=2);observations=[];wire_bytes=0
     errors=(private/'stderr.log').open('wb')
-    process=subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'techexpert.py'),'--state-dir',str(state),'mcp-stdio'],
+    process=subprocess.Popen([sys.executable,'-X','utf8',str(ROOT/'techexpert.py'),'--state-dir',str(state),'mcp-stdio','--profile','direct'],
         cwd=ROOT,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errors)
     def reader():
         while True:
@@ -89,7 +89,7 @@ def run(state,version=MODERN):
             question=pair.find('question')
             question.text=question.text.replace('{BEFORE}',b).replace('{AFTER}',a).replace('{COMPARISON}',c)
         evaluated=private/'qa.xml';ET.ElementTree(evaluation).write(evaluated,encoding='utf-8',xml_declaration=True)
-        receipt=dict(product_version=__version__,protocol=version,tool_count=18,verified_answers=10,
+        receipt=dict(product_version=__version__,protocol=version,catalogue_profile='direct',tool_count=18,verified_answers=10,
             llm_evaluation_performed=False,token_advantage_verified=False,native_platform_started=False,server_license_used=False,
             fixture_scope='retained transformed laboratory excerpts; not new native capture or full SC01 acceptance',
             state_dir=str(state),before_case=b,after_case=a,comparison_id=c,evaluation=str(evaluated),

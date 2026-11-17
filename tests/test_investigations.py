@@ -16,9 +16,22 @@ class InvestigationTests(unittest.TestCase):
         return self.api.create(state,dict(task='Фоновая загрузка заказов стала медленной',template_id='TPL-02',
             time_mode='past',scale='background',**extra))
 
+    def test_task_alone_starts_an_unclassified_investigation_with_explicit_unknowns(self):
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp)
+            try:doc=self.api.create(state,dict(task='В 1С периодически не открывается отчёт'))
+            except ValueError as exc:self.fail('Task-only start must not require a scenario classification: '+str(exc))
+            self.assertEqual(doc['template']['id'],'TPL-00')
+            self.assertEqual(doc['time_mode'],'unknown');self.assertEqual(doc['scale'],'unknown')
+            self.assertEqual(doc['attachments'],[]);self.assertEqual(doc['cause_state'],'insufficient_data')
+            self.assertEqual(self.api.load(state,doc['investigation_id']),doc)
+            plan=self.api.template_plan('TPL-00',time_mode='unknown')
+            self.assertEqual(plan['sources'],[]);self.assertFalse(plan['cause_preassigned'])
+            self.assertFalse((state/'cases').exists());self.assertFalse((state/'artifacts').exists())
+
     def test_templates_keep_time_and_scale_independent_and_file_mode_excludes_sql(self):
         catalogue=self.api.templates()
-        self.assertEqual({t['id'] for t in catalogue['templates']},{'TPL-'+str(i).zfill(2) for i in range(1,11)})
+        self.assertEqual({t['id'] for t in catalogue['templates']},{'TPL-'+str(i).zfill(2) for i in range(0,11)})
         plan=self.api.template_plan('TPL-01',variant='document-posting',database_mode='file',time_mode='past')
         self.assertNotIn('sql',[s['type'] for s in plan['sources']])
         self.assertIn('client',[s['type'] for s in plan['sources']])
@@ -128,7 +141,7 @@ class InvestigationTests(unittest.TestCase):
                 result=subprocess.run([sys.executable,'-X','utf8',str(repo/'techexpert.py'),'--state-dir',str(state),*args],cwd=root,capture_output=True,timeout=10)
                 self.assertEqual(result.returncode,0,result.stderr.decode('utf-8',errors='replace')+result.stdout.decode('utf-8',errors='replace'))
                 return json.loads(result.stdout)
-            self.assertEqual(len(run('templates')['templates']),10)
+            self.assertEqual(len(run('templates')['templates']),11)
             created=run('investigation-create',str(request));iid=created['investigation_id']
             updated=run('investigation-update',iid,str(patch),'--expected-revision','1')
             self.assertEqual(updated['revision'],2)

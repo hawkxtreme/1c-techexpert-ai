@@ -79,6 +79,11 @@ def _snapshots(state,operation,args,data,*,output=None):
         report=add('comparisons',data['comparison_id'])
         for item in report['input_reports']:add('cases',item['case_id'])
     elif operation in ('os.collect','os.import','artifact.show'):add('artifacts',data['artifact_id'])
+    elif operation=='code.execute':
+        for call in data['calls']:
+            for reference in call.get('snapshots',[]):
+                add(reference['kind'],reference['id'])
+                if reference not in references:raise InputError('CodeMode retained snapshot identity mismatch')
     return references
 
 def _worker(folder):
@@ -130,8 +135,19 @@ def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
         view['recovery_previous_reason']=recovery_reason
     return _fit_view(view,request['budget']['max_result_bytes'],strict=strict)
 
-def _finish(state,folder,plan,current,worker,*,replayed=False):
+def _nested_stopped(state,folder,plan,current):
+    if plan['request']['operation']!='code.execute':return True
+    if current.get('process',{}).get('tree_finished') is True and os.name=='nt':return True
+    from .code_runtime import nested_observations
+    return nested_observations(state,folder.name)['stop_verified']
+
+
+def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None):
     request=plan['request'];data=worker['data']
+    if not _nested_stopped(state,folder,plan,current):raise InputError('nested program jobs are active or unknown; retain evidence')
+    if request['operation']=='code.execute' and data is not None:
+        from .code_runtime import verify_audit
+        verify_audit(state,folder.name,data)
     snapshots=_snapshots(state,request['operation'],request['arguments'],data,output=folder/'work-state')
     def truncated(value):
         if isinstance(value,dict):return any((v is True and (k=='truncated' or k.endswith('_truncated') or k=='preview_limited')) or (k=='next_offset' and v is not None) or truncated(v) for k,v in value.items())
@@ -175,7 +191,9 @@ def _finish(state,folder,plan,current,worker,*,replayed=False):
         presented=_present(state,plan,value,replayed=replayed,recovery_reason=recovery_reason)
     output=folder/'output.json'
     if output.exists() and fs.digest(fs.read(output))!=fs.digest(value):raise InputError('incomplete output disagrees with prepared output; refusing replacement')
+    if parent_guard:parent_guard(force=True)
     _promote(state,folder,worker)
+    if parent_guard:parent_guard(force=True)
     if _snapshots(state,request['operation'],request['arguments'],data)!=snapshots:raise InputError('promoted snapshot changed before result commit')
     if not output.exists():fs.write(output,value)
     fs.write(folder/'output-receipt.json',dict(sha256=fs.digest(value)))
@@ -188,6 +206,9 @@ def result(state,run_id):
     if not (folder/'output.json').exists() or not (folder/'output-receipt.json').exists():return status(state,run_id)
     value=fs.read(folder/'output.json');receipt=fs.read(folder/'output-receipt.json',8192)
     if value.get('run_id')!=run_id or fs.digest(value)!=receipt.get('sha256'):raise InputError('operation output integrity mismatch')
+    if plan['request']['operation']=='code.execute' and value['data'] is not None:
+        from .code_runtime import verify_audit
+        verify_audit(state,run_id,value['data'])
     for snapshot in value['snapshots']:
         report=_verify_target(state,snapshot['kind'],snapshot['id'])
         if fs.digest(report)!=snapshot['report_digest'] or fs.digest(fs.read(Path(state)/snapshot['kind']/snapshot['id']/'receipt.json',8192))!=snapshot['receipt_digest']:
@@ -217,7 +238,7 @@ def cancel(state,run_id,*,executor_id):
     if updated['status'] in TERMINAL:updated=dict(updated,cancel_too_late=True)
     return _fit_view(updated,updated['limits']['max_result_bytes'])
 
-def run(state,request):
+def run(state,request,*,parent_guard=None):
     original=request;state=fs.safe(state);request=capabilities.normalize_request(request)
     run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest();folder=fs.folder(state,run_id)
     if folder.exists():
@@ -230,7 +251,7 @@ def run(state,request):
     context=_context(state,request);_space(state);versions=_versions()
     fs.private(folder.parent)
     try:folder.mkdir()
-    except FileExistsError:return run(state,original)
+    except FileExistsError:return run(state,original,parent_guard=parent_guard)
     fs.private(folder)
     with fs.writer(folder):
         started=time.monotonic();plan=dict(schema_version=1,request=request,state_dir=str(state),context=context,versions=versions,
@@ -240,6 +261,8 @@ def run(state,request):
             plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])
             plan['kernel']=dict(call_id=boundary['call_id'],deadline=boundary['deadline'],parent=boundary['parent'])
             if boundary.get('cancel_file'):plan['kernel']['cancel_file']=boundary['cancel_file']
+            if boundary.get('cancel_files'):plan['kernel']['cancel_files']=boundary['cancel_files']
+            if boundary.get('limits'):plan['kernel']['limits']=boundary['limits']
         fs.write(folder/'plan.json',plan)
         current=dict(schema_version=1,run_id=run_id,status='preparing',owner=fs.process_identity(os.getpid()),child=None,
             executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=request['budget']['timeout_seconds'],stop_verified=False)
@@ -253,6 +276,7 @@ def run(state,request):
             if time.monotonic()>=plan['deadline_monotonic']:return 'timeout'
         def guard():
             nonlocal stopping,last_check,last_heartbeat
+            if parent_guard:parent_guard()
             now=time.monotonic();reason=stop_reason()
             if current['status']=='starting' and (folder/'worker-started.json').exists():
                 observed=fs.read(folder/'worker-started.json',8192)
@@ -283,14 +307,15 @@ def run(state,request):
             if reason:
                 current.update(status='cancelled' if reason=='cancelled' else 'failed',stop_verified=True,stop_reason=reason,finished_at=fs.stamp())
                 fs.record(folder,current,'not_started');return status(state,run_id)
-            process=operation_process.run(folder,guard=guard,on_started=on_started,timeout=request['budget']['timeout_seconds']+3)
-            current['process']=process;current['stop_verified']=process['tree_finished']
+            memory=request['arguments']['resources']['memory_bytes'] if request['operation']=='code.execute' else 1024**3
+            process=operation_process.run(folder,guard=guard,on_started=on_started,timeout=request['budget']['timeout_seconds']+3,memory_bytes=memory)
+            current['process']=process;current['stop_verified']=process['tree_finished'] and _nested_stopped(state,folder,plan,current)
             if not process['tree_finished']:raise InputError('owned process tree stop is unknown')
             current['stop_reason']=current.get('stop_reason') or process.get('guard_error') or process.get('stop_reason')
             # Recovery must retain the controller's observed process metrics as
             # well as the worker payload before any promotion can begin.
             fs.record(folder,current,'worker_stopped')
-            if process['exit_code']==0 and (folder/'worker-receipt.json').exists():return _finish(state,folder,plan,current,_worker(folder))
+            if process['exit_code']==0 and (folder/'worker-receipt.json').exists():return _finish(state,folder,plan,current,_worker(folder),parent_guard=parent_guard)
             reason=current['stop_reason'] or stop_reason() or 'worker_failed_before_sealed_result'
             current.update(status='cancelled' if reason=='cancelled' else 'failed',stop_reason=reason,finished_at=fs.stamp())
         except (OSError,ValueError,KeyError,TypeError) as exc:
@@ -312,6 +337,7 @@ def reconcile(state,run_id):
             if observed['state'] not in ('not_running','different_lifetime'):raise InputError('owner or child is active/unknown; no takeover')
         if os.name!='nt' and fs.inspect_group(current['child'])['state']!='stopped':
             raise InputError('worker group is active/unknown; leader exit does not verify tree stop')
+        if not _nested_stopped(state,folder,plan,current):raise InputError('nested program jobs are active or unknown; no reconciliation')
         if (folder/'worker-receipt.json').exists():
             current.update(stop_verified=True,stop_reason=current.get('stop_reason'))
             return _finish(state,folder,plan,current,_worker(folder),replayed=True)

@@ -20,7 +20,8 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description='1C TechExpert AI: local evidence tools for your AI harness')
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)
-    commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
+    mcp=commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
+    mcp.add_argument('--profile',choices=['full','direct','program'],default='full')
     catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
     operation_run=commands.add_parser('operation-run');operation_run.add_argument('request',type=Path)
     for name in ('operation-status','operation-result','operation-reconcile','operation-cancel'):
@@ -133,7 +134,7 @@ def main(argv=None):
     help_source=commands.add_parser('source-help');help_source.add_argument('type',choices=('tj','jr','source','sql','rac','os'))
     template=commands.add_parser('template');template.add_argument('template_id');template.add_argument('--variant')
     template.add_argument('--database-mode',choices=('file','server','unknown'),default='unknown')
-    template.add_argument('--time-mode',choices=('past','current','reproduce'),default='past')
+    template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'),default='unknown')
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
     investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
@@ -154,7 +155,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command=='mcp-stdio':
         from .mcp_server import serve
-        return serve(args.state_dir)
+        return serve(args.state_dir,profile=args.profile)
     try:
         if args.command=='capabilities':
             from .capabilities import catalogue

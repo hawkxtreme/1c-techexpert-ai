@@ -32,7 +32,7 @@ def route(arguments,required,source,impact,fields,*,timeout=60):
     data_schema=dict(type='object',required=fields,properties={key:dict(type='string' if key in strings else 'array' if key in arrays else
         ['integer','null'] if key=='next_offset' else 'integer' if key=='matched_count' else 'boolean' if key=='truncated' else 'object') for key in fields},additionalProperties=True)
     return dict(input_schema=obj(arguments,required),required_sources=source,rights=['read explicitly selected inputs','write private operation evidence'],
-        scope='SC01 supported file profiles and explicitly selected local state',timeout_seconds=timeout,max_result_bytes=MAX_RESULT,
+        scope='explicitly selected supported sources and retained local evidence',timeout_seconds=timeout,max_result_bytes=MAX_RESULT,
         impact=impact,data_schema=data_schema,output_schema=response_schema(data_schema))
 
 ROUTES={
@@ -58,7 +58,26 @@ ROUTES={
  'artifact.show':route(dict(artifact_id=CASE),['artifact_id'],['verified saved artifact'],'read saved evidence',['artifact_id','result','sources']),
 }
 
+CODE_API=tuple(ROUTES)
+from .code_policy import schemas as _code_schemas
+import sys as _sys
+_code_arguments=_code_schemas(_sys.modules[__name__],CODE_API)
+ROUTES['code.execute']=route(_code_arguments,['program'],['explicitly scoped inputs and saved evidence'],
+    'bounded capability-language program; private facts and audited API calls',
+    ['program_sha256','value','calls','metrics','audit'],timeout=1830)
+ROUTES['code.execute']['default_timeout_seconds']=60
+ROUTES['code.execute']['data_schema']['properties'].update(program_sha256=dict(type='string'),value={},calls=dict(type='array'))
+ROUTES['code.execute']['output_schema']=response_schema(ROUTES['code.execute']['data_schema'])
+ROUTES['code.inspect']=route(dict(run_id=string(64,pattern='[a-f0-9]{64}')),['run_id'],['checked saved program and API journal'],
+    'read saved program, trace and live nested ownership; never repeat execution',['program_sha256','program','calls'],timeout=30)
+ROUTES['code.inspect']['data_schema']['properties'].update(program=dict(type='string'),program_sha256=dict(type='string'),calls=dict(type=['array','null']))
+ROUTES['code.inspect']['output_schema']=response_schema(ROUTES['code.inspect']['data_schema'])
+
 def validate(value,schema):
+    if schema.get('x_bounded_json'):
+        from .code_values import copy_json
+        if type(value) is not dict:raise InputError('bounded bindings must be an object')
+        return copy_json(value,max_bytes=schema['x_bounded_json'],max_depth=16)
     kind=schema['type']
     correct={'object':type(value) is dict,'array':type(value) is list,'string':type(value) is str,
         'integer':type(value) is int,'number':type(value) in (int,float),'boolean':type(value) is bool}
@@ -78,7 +97,8 @@ def validate(value,schema):
         if not schema.get('minItems',0)<=len(value)<=schema.get('maxItems',64):raise InputError('operation argument list exceeds limits')
         return [validate(v,schema['items']) for v in value]
     if kind=='string':
-        if (not schema.get('minLength',0)<=len(value)<=schema.get('maxLength',2048) or any(ord(c)<32 for c in value)
+        if (not schema.get('minLength',0)<=len(value)<=schema.get('maxLength',2048)
+            or any(ord(c)<32 and not (schema.get('x_multiline') and c in '\n\r\t') for c in value)
             or 'pattern' in schema and not re.fullmatch(schema['pattern'],value)):
             raise InputError('invalid bounded operation text')
     if kind in ('number','integer'):
@@ -99,7 +119,7 @@ def catalogue(operation=None):
             direct_internal_engine='worker bounds only; managed CLI controller boundary is not implicit for Python internals',
             disk_enforcement='monitored; bounded polling overshoot possible',model_harness_resources='not controlled or independently measured'),
         managed_transports=['CLI','MCP stdio'],mcp_protocol_versions=['2026-07-28','2025-11-25'],
-        not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts','CodeMode'])
+        not_yet_managed=['RAC','PostgreSQL','native JR','source snapshots/export','APDEX','investigation/profile mutations','knowledge-use','incident drafts'])
 
 def normalize_request(value):
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
@@ -123,7 +143,10 @@ def normalize_request(value):
     if operation=='os.collect':
         from .os_metrics import validate_request as os_request
         args=os_request(args)
-    timeout=args.get('duration_seconds',0)+30 if operation=='os.collect' else ROUTES[operation]['timeout_seconds']
+    if operation=='code.execute':
+        from .code_policy import normalize as code_request
+        args=code_request(args)
+    timeout=args.get('duration_seconds',0)+30 if operation=='os.collect' else ROUTES[operation].get('default_timeout_seconds',ROUTES[operation]['timeout_seconds'])
     budget=dict(timeout_seconds=timeout,max_result_bytes=MAX_RESULT)
     budget.update(result.get('budget',{}))
     if budget['timeout_seconds']>ROUTES[operation]['timeout_seconds']:raise InputError('operation timeout exceeds catalogue')
@@ -161,6 +184,9 @@ def execute(operation,args,state,output,*,stop=None):
         if data['kind']=='knowledge_use':
             from .knowledge_review import review_use
             data=dict(data,knowledge_review=review_use(state,args['artifact_id']))
+    elif operation in ('code.execute','code.inspect'):
+        from .code_runtime import run_program,inspect_program
+        data=run_program(state,output,args,stop=stop) if operation=='code.execute' else inspect_program(state,args['run_id'])
     else:raise InputError('unknown executable operation')
     if not isinstance(data,dict) or set(ROUTES[operation]['data_schema']['required'])-data.keys():raise InputError('adapter output does not match registered schema')
     return data,targets

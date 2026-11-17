@@ -328,6 +328,7 @@ def run(argv,*,cwd,guard,timeout,on_started=None,memory_bytes=None):
             memory_known=kernel.QueryInformationJobObject(job,9,c.byref(memory),c.sizeof(memory),None)
             resource_usage=dict(user_cpu_seconds=accounting.user/10000000 if cpu_known else None,
                 kernel_cpu_seconds=accounting.kernel/10000000 if cpu_known else None,
+                enforced_job_memory_limit_bytes=memory.job_memory if memory_known and memory.basic.flags&0x200 else None,
                 peak_job_memory_bytes=memory.peak_job if memory_known else None,scope='owned Windows Job processes')
     finally:
         if process.process:

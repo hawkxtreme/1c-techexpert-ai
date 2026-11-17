@@ -2,7 +2,7 @@
 
 Агент готовит request/patch в частном временном каталоге из уже известного диалога. Пользователь не обязан писать JSON. Все команды выполняются с одним `--state-dir`, если его переопределили; аргумент располагается перед подкомандой. Идентификаторы случаев/артефактов/сравнений получают из реальных результатов CLI.
 
-`templates` возвращает один каталог TPL-01–TPL-10. `template TPL-01 --variant document-posting --database-mode file --time-mode past` выдаёт вопросы, источники, проверки и ограничения. SQL/RAC исключаются для file/unknown. Наличие шаблона не означает реализации всех сценариев и Testpilot.
+`templates` возвращает один каталог TPL-00–TPL-10. `template TPL-01 --variant document-posting --database-mode file --time-mode past` выдаёт вопросы, источники, проверки и ограничения. SQL/RAC исключаются для file/unknown. Наличие шаблона не означает реализации всех сценариев и Testpilot.
 
 ## Создание и контекст
 
@@ -19,7 +19,7 @@
 }
 ```
 
-Время: `past/current/reproduce`. Масштаб: `one/several/all/background/unknown`. Для TPL-01 есть необязательный `variant: document-posting`. Точные модель и версия остаются null, если harness их не сообщает. `episode` допускает description/start/end/utc_offset/database_mode/operation/user_reported_baseline/client_context; recurrence_seconds и requested_window_seconds задаются отдельно как положительные числа секунд либо null.
+Достаточно `{"task":"описание проблемы"}`: получатся TPL-00 и неизвестные время/масштаб. Время: `unknown/past/current/reproduce`. Масштаб: `one/several/all/background/unknown`. Для TPL-01 есть необязательный `variant: document-posting`. Точные модель и версия остаются null, если harness их не сообщает. `episode` допускает description/start/end/utc_offset/database_mode/operation/user_reported_baseline/client_context; recurrence_seconds и requested_window_seconds задаются отдельно как положительные числа секунд либо null.
 
 Вернувшийся `investigation_id` сохраняется в этом чате. `init --investigation ID` показывает уже полученное описание и сохраняет выбранный профиль/контекст новой ревизией. `investigation ID` загружает актуальную ревизию; `--revision N` — прежнюю. Ответ содержит пути `local_reports.json` и `local_reports.md`. Эти поля ответа не нужно помещать в patch.
 
