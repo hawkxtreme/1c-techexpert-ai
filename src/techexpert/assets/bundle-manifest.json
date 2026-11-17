@@ -187,7 +187,7 @@
     "src/techexpert/apdex.py": "6643b38abff71427fcd6194d686b04092ddeaaef0acd81472092889ab63c7a76",
     "src/techexpert/artifacts.py": "3e5a2d4ed41cad37ea0da634224a05902732e8fa6976745aca6b6c18884c6f05",
     "src/techexpert/assets/incident-templates.json": "00f7c76768f0111537a019c0e47f406b9f27f8e244c1c274dd7f383236495cd9",
-    "src/techexpert/assets/init.html": "9fb0fe4fbdd22302fbad50dd236794c77233bacdf531ce36353cfe5cfc2c3bb9",
+    "src/techexpert/assets/init.html": "f094eaabd6447447bf98a8627457166ec06c7c98d7aa073dfefbfd63b8873ffb",
     "src/techexpert/assets/source-help.json": "8ee6dd06b4d518339566f56da0054f9fce42a0c6efe033d8fd66fa7f6fccbcf2",
     "src/techexpert/capabilities.py": "18791a5eb21bdd3de27d148ac8203a3361c19f2777d594437d1b31cd42cf0151",
     "src/techexpert/catalog_probe.py": "4173089c9af039e2252db82867930144275d0b2c9eea2dab9bb300386b3869c8",
