@@ -206,7 +206,7 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo','/api/profile-editor','/api/profile-compose'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
@@ -232,6 +232,26 @@ class InitHandler(BaseHTTPRequestHandler):
                 if set(data)-{'endpoint','executable','docker_container','cluster'}:raise ValueError('Unsupported RAS parameter')
                 result=profiles.discover_ras(data.get('endpoint'),executable=data.get('executable','rac'),
                                             docker_container=data.get('docker_container') or None,cluster=data.get('cluster') or None)
+            elif self.path=='/api/profile-editor':
+                if set(data)!={'profile'}:raise ValueError('Требуется выбранный профиль.')
+                from .profile_resources import editor_context
+                result=editor_context(data['profile'])
+            elif self.path=='/api/profile-compose':
+                if set(data)-{'view','draft_profile','connection_bindings','connection_edits'} or 'view' not in data:raise ValueError('Недопустимое поле редактора профиля.')
+                expected=self._expected_profile_revision()
+                if expected is None:return
+                from .profile_resources import compose_profile,resource_impact,retain_editor_resources,editor_context
+                with self.server.profile_lock:
+                    current=profiles.load_profile(self.server.state_dir)
+                    if (current['revision'] if current else 0)!=expected:raise profiles.ProfileRevisionConflict('profile revision changed')
+                    if self.server.investigation_id:
+                        from .investigations import load
+                        if load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']!=current:raise profiles.ProfileRevisionConflict('pinned profile differs')
+                    draft=data.get('draft_profile')
+                    result=compose_profile(draft if draft is not None else current,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'))
+                    result['profile']=retain_editor_resources(result['profile'],current)
+                    result['editor']=editor_context(result['profile'])
+                    result['impact']=resource_impact(current,result['profile'])
             elif self.path=='/api/check':
                 result=profiles.check_profile(data)
             elif self.path == '/api/starter':

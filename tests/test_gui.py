@@ -10,6 +10,44 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_shared_profile_editor_is_protected_and_configuration_only(self):
+        from test_profile_resources import graph
+        from src.techexpert.profiles import save_profile,load_profile
+        value=save_profile(self.state_dir,graph(),expected_revision=0)
+        self.assertEqual(self.request('POST','/api/profile-editor',{'profile':value},token=False)[0],401)
+        self.assertEqual(self.request('POST','/api/profile-editor',{'profile':value},origin=False)[0],403)
+        status,_,raw=self.request('POST','/api/profile-editor',{'profile':value})
+        self.assertEqual(status,200);opened=json.loads(raw)
+        self.assertEqual(opened['view']['sources'][0]['host'],'db.internal')
+        self.assertEqual(opened['connection_bindings']['sql-a'],opened['connection_bindings']['sql-b'])
+        self.assertEqual(load_profile(self.state_dir),value)
+        self.assertFalse((self.state_dir/'artifacts').exists())
+
+    def test_shared_compose_previews_all_affected_bases_before_an_explicit_save(self):
+        from test_profile_resources import graph
+        from src.techexpert.profiles import save_profile,load_profile
+        from src.techexpert.profile_resources import effective_profile
+        value=save_profile(self.state_dir,graph(),expected_revision=0)
+        body=dict(view=effective_profile(value),draft_profile=value,connection_edits={'sql':dict(address='replacement')})
+        status,_,raw=self.request('POST','/api/profile-compose',body,headers={'If-Match':'"profile-1"'})
+        self.assertEqual(status,200);prepared=json.loads(raw)
+        self.assertFalse(prepared['saved']);self.assertEqual(prepared['impact']['affected_base_ids'],['a','b'])
+        self.assertEqual(load_profile(self.state_dir),value)
+        self.assertFalse((self.state_dir/'profiles/2.json').exists())
+        self.assertEqual(self.request('POST','/api/profile',prepared['profile'],headers={'If-Match':'"profile-1"'})[0],200)
+        self.assertEqual(load_profile(self.state_dir)['schema_version'],2)
+        self.assertEqual(load_profile(self.state_dir)['connections'][1]['address'],'replacement')
+
+    def test_shared_compose_rejects_missing_and_stale_profile_revisions(self):
+        from test_profile_resources import graph
+        from src.techexpert.profiles import save_profile,load_profile
+        from src.techexpert.profile_resources import effective_profile
+        value=save_profile(self.state_dir,graph(),expected_revision=0);body=dict(view=effective_profile(value))
+        self.assertEqual(self.request('POST','/api/profile-compose',body)[0],428)
+        second=save_profile(self.state_dir,dict(value,name='Different environment'),expected_revision=1)
+        self.assertEqual(self.request('POST','/api/profile-compose',body,headers={'If-Match':'"profile-1"'})[0],409)
+        self.assertEqual(load_profile(self.state_dir),second)
+
     def test_readiness_is_protected_read_only_and_has_separate_demo_action(self):
         self.assertEqual(self.request('GET','/api/readiness',token=False)[0],401)
         status,_,body=self.request('GET','/api/readiness');self.assertEqual(status,200)

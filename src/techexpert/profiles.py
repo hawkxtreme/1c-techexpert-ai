@@ -84,6 +84,13 @@ def read_starter(path):
 
 
 def validate_profile(value):
+    if isinstance(value,dict) and type(value.get('schema_version')) is int and value['schema_version']==2:
+        from .profile_resources import validate
+        return validate(value)
+    return _validate_legacy_profile(value)
+
+
+def _validate_legacy_profile(value):
     if not isinstance(value, dict) or value.get('schema_version') != 1:
         raise InputError('profile schema_version=1 required')
     # Never accept arbitrary persisted properties from an HTTP client.
@@ -194,7 +201,8 @@ def check_profile(value):
     Even filesystem metadata checks can contact UNC shares, mapped drives or remote
     targets behind local links. Actual access belongs to an explicit adapter run.
     """
-    clean=validate_profile(value);checks=[]
+    from .profile_resources import effective_profile
+    clean=effective_profile(value);checks=[]
     for source in clean['sources']:
         kind=source['type']
         if kind in ('tj','jr','source'):
@@ -224,9 +232,11 @@ def save_profile(state_dir, profile, *, expected_revision=None):
     except FileExistsError as exc:
         raise InputError('profile is being saved; retry after the current writer completes') from exc
     try:
+        current=load_profile(state_dir)
+        if current is not None and current['schema_version']==2 and clean['schema_version']==1:
+            raise ProfileRevisionConflict('profile schema downgrade is not allowed; preserve shared resources')
         if expected_revision is not None:
             if type(expected_revision) is not int or expected_revision<0:raise InputError('invalid expected profile revision')
-            current=load_profile(state_dir)
             if (current['revision'] if current else 0)!=expected_revision:raise ProfileRevisionConflict('profile revision changed; inspect the current profile before saving')
         revisions = [int(p.stem) for p in folder.glob('*.json') if p.stem.isdecimal()]
         clean['revision'] = max(revisions, default=0) + 1

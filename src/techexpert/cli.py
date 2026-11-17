@@ -32,7 +32,10 @@ def main(argv=None):
     readiness=commands.add_parser('readiness')
     readiness.add_argument('--entrypoint-sha256')
     readiness.add_argument('--investigation')
-    commands.add_parser('profile')
+    profile_command=commands.add_parser('profile');profile_command.add_argument('--resolved',action='store_true')
+    for name in ('profile-upgrade','profile-resolve'):
+        commands.add_parser(name).add_argument('document',type=Path)
+    profile_impact=commands.add_parser('profile-impact');profile_impact.add_argument('before',type=Path);profile_impact.add_argument('after',type=Path)
     profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
     commands.add_parser('demo')
     analyze = commands.add_parser('analyze')
@@ -184,6 +187,17 @@ def main(argv=None):
             result=save_profile(args.state_dir,json_value(read_snapshot(args.document,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
         elif args.command == 'profile':
             result = load_profile(args.state_dir) or dict(status='not_configured', next_step='init')
+            if args.resolved and result.get('schema_version'):
+                from .profile_resources import effective_profile
+                result=dict(canonical_schema_version=result['schema_version'],view=effective_profile(result),scope='ephemeral_adapter_configuration_not_runtime_ownership',saved=False,connected=False)
+        elif args.command in ('profile-upgrade','profile-resolve','profile-impact'):
+            from .inputs import read_snapshot,json_value
+            from .profile_resources import upgrade_profile,effective_profile,resource_impact
+            def document(path):return json_value(read_snapshot(path,1024*1024).decode('utf-8-sig'),reject_duplicates=True)
+            if args.command=='profile-upgrade':result=upgrade_profile(document(args.document))
+            elif args.command=='profile-resolve':
+                value=document(args.document);result=dict(canonical_schema_version=value.get('schema_version'),view=effective_profile(value),scope='ephemeral_adapter_configuration_not_runtime_ownership',saved=False,connected=False)
+            else:result=resource_impact(document(args.before),document(args.after))
         elif args.command in ('demo','analyze'):
             if args.command=='demo':
                 from .readiness import run_demo

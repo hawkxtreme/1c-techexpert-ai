@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=6
+SANITIZER_VERSION=7
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -127,6 +127,10 @@ def _public_urls(extra):
 def _known(doc,state_dir):
     values={}
     profile=doc.get('profile_snapshot') or {}
+    graph=profile if profile.get('schema_version')==2 else None
+    if graph:
+        from .profile_resources import effective_profile
+        profile=effective_profile(graph)
     def add(category,value):
         if isinstance(value,str) and 2<=len(value)<=4096 and not SECRET.search(value):values.setdefault(value,category)
     add('ENV',profile.get('name'))
@@ -134,6 +138,11 @@ def _known(doc,state_dir):
     for source in profile.get('sources',[]):
         add('NODE',source.get('host'));add('PATH',source.get('path'));add('USER',source.get('settings',{}).get('user'))
         for value in source.get('settings',{}).get('databases',{}).values():add('DB',value)
+    if graph:
+        for node in graph['nodes']:add('NODE',node['name']);add('ID',node['reported_identity'])
+        for kind in ('clusters','dbms_instances'):
+            for resource in graph[kind]:add('ID',resource['reported_identity'])
+        for connection in graph['connections']:add('CONNECTION',connection['address']);add('ID',connection['credential_ref'])
     categories=dict(base_alias='DB',node_alias='NODE',node_identity='ID',cluster_identity='ID',infobase_identity='DB',
         dbms_instance_identity='ID',sql_database_name='DB',dbms_database_identity='ID',source_commit='ID',journal_identity='ID',
         process_identity='ID',session_identity='ID')

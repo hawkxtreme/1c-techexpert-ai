@@ -113,6 +113,7 @@
       <p class="hint" id="source-context"></p>
       <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="rac">Кластер 1С · RAS/RAC</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
       <details class="box" id="source-export-help" hidden><summary>Помочь получить исходники</summary><div id="source-export-help-body" class="stack"></div></details>
+      <div id="shared-connections" class="stack"></div>
       <div id="source-list" class="stack"></div>
       <p id="empty-sources" class="note">Источников пока нет. Можно сохранить выбранные базы и вместе с агентом подготовить необходимые данные.</p>
       <p class="hint">Настройте только доступные источники. Сохранение не подключает системы и не запускает сбор. На следующем шаге можно отдельно проверить локальную готовность; подключение SQL и удалённый сбор выполняются агентом по разрешённому плану.</p>
@@ -121,6 +122,7 @@
     <section data-view="review" class="stack" hidden>
       <div><h1 id="review-title">Сохранить настройки</h1><p class="sub" id="review-sub">Проверьте состав профиля. Исходные данные останутся по указанным адресам.</p></div>
       <dl id="saved-list"></dl>
+      <div id="resource-impact" class="box stack" hidden></div>
       <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Проверяются поля и связи настроек. Доступность источников агент проверяет отдельным действием. Чтение журналов и сбор не запускаются.</p><div id="preflight-results" role="status" aria-live="polite"></div></div>
       <p class="hint" id="save-status">Сохранение не подтверждает доступность источников и не запускает расследование.</p>
       <footer><button type="button" data-back="sources">Вернуться к источникам</button><button type="button" class="primary" id="save-profile">Сохранить и вернуться к агенту</button><button type="button" class="primary" id="close-helper" hidden>Закрыть помощник</button></footer>
@@ -144,6 +146,11 @@
       let profileEtag = null;
       let readinessState = null;
       let busy = false;
+      let editorProfile = null;
+      let connectionEdits = {};
+      let bindingOverrides = {};
+      let preparedProfile = null;
+      let preparedImpact = null;
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
       const baseName = id => {
@@ -160,7 +167,7 @@
       function message(text, error=false) {
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
       }
-      function markChanged() { saved = null; message(''); }
+      function markChanged() { saved = null; preparedProfile = null; preparedImpact = null; message(''); }
       function renderVariant(selectedValue) {
         const template = templateBook.templates.find(item=>item.id===q('#incident-template').value);
         const select=q('#incident-variant');select.replaceChildren(new Option('Общий вариант',''));
@@ -183,7 +190,7 @@
         if (!token) throw new Error('Откройте актуальную ссылку init из текущего чата. В этой вкладке нет ключа доступа.');
         const options = {method:data === undefined ? 'GET' : 'POST', cache:'no-store', credentials:'omit', headers:{Authorization:'Bearer ' + token}};
         if (data !== undefined) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(data); }
-        if(route==='/api/profile' && data!==undefined){
+        if(['/api/profile','/api/profile-compose'].includes(route) && data!==undefined){
           if(profileEtag===null)throw new Error('Сначала загрузите профиль в актуальном окне init. Сохранение без ревизии не выполняется.');
           options.headers['If-Match']=profileEtag;
         }
@@ -201,10 +208,10 @@
       }
       async function perform(action) {
         if (busy) return;
-        busy = true; root.querySelectorAll('button').forEach(button => { button.disabled = true; });
+        busy = true; const locked=[...root.querySelectorAll('button,input,select,textarea')].map(node=>[node,node.disabled]);locked.forEach(([node])=>{node.disabled=true;});
         try { await action(); }
         catch (error) { message(error.message, true); }
-        finally { busy = false; root.querySelectorAll('button').forEach(button => { button.disabled = false; }); syncDemoButton(); }
+        finally { busy = false; locked.forEach(([node,disabled])=>{node.disabled=disabled;}); syncDemoButton(); }
       }
       function syncDemoButton(){q('#run-demo').disabled=busy || !readinessState?.capabilities.run_synthetic_demo || ['completed','damaged'].includes(readinessState?.demonstration.status);}
       function renderReadiness(data){
@@ -236,6 +243,63 @@
       }
       function numberField(labelText,value,onInput,min,max) {
         const label=field(labelText,String(value),text=>onInput(Number(text)));const input=label.querySelector('input');input.type='number';input.min=min;input.max=max;input.step='1';return label;
+      }
+      function sourceConnectionId(source) {
+        if(Object.hasOwn(bindingOverrides,source.id))return bindingOverrides[source.id];
+        const configured=editorProfile?.sources.find(item=>item.id===source.id);
+        if(!configured)return null;
+        if(source.type==='sql')return editorProfile.dbms_instances.find(item=>item.id===configured.dbms_instance_id)?.connection_id || null;
+        return configured.connection_id || null;
+      }
+      function connectionDraft(id) {
+        const original=editorProfile?.connections.find(item=>item.id===id);if(!original)return null;
+        const patch=connectionEdits[id] || {};return {...original,...patch,settings:{...original.settings,...patch.settings}};
+      }
+      function editConnection(id,patch) {
+        const previous=connectionEdits[id] || {};
+        connectionEdits[id]={...previous,...patch,settings:{...previous.settings,...patch.settings}};
+      }
+      function applyConnection(source,connection) {
+        const keys=source.type==='sql'?['engine','port','user','executable','docker_container','credential_ref']:source.type==='os'?['transport','port','python','use_ssl','identity_file','known_hosts_file']:['executable','docker_container','credential_ref'];
+        keys.forEach(key=>delete source.settings[key]);Object.assign(source.settings,connection.settings);
+        if(source.type==='rac')source.path=connection.address;else source.host=connection.address;
+        if(connection.credential_ref && source.type!=='os')source.settings.credential_ref=connection.credential_ref;
+      }
+      function commonFields(id) {
+        const connection=connectionDraft(id);const box=element('div',undefined,'stack');const settings=connection.settings;
+        const address=field(connection.kind==='sql'?'Сервер / экземпляр СУБД':connection.kind==='rac'?'Адрес RAS · узел:порт':connection.kind==='onec'?'Адрес сервера / публикации 1С':'Узел Windows / Linux',connection.address,value=>editConnection(id,{address:value}));
+        address.querySelector('input').dataset.commonField='address';if(connection.kind!=='os' || settings.transport!=='local')box.append(address);
+        if(connection.kind==='sql') {
+          box.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{editConnection(id,{settings:{engine:value,port:value==='postgresql'?5432:1433}});renderSources();}),numberField('Порт СУБД',settings.port,value=>editConnection(id,{settings:{port:value}}),1,65535),field('Пользователь СУБД · если задан отдельно',settings.user,value=>editConnection(id,{settings:{user:value}})));
+        } else if(connection.kind==='os') {
+          box.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{editConnection(id,{...(value==='local'?{address:''}:{}),settings:{transport:value,port:value==='ssh'?22:5985,python:value==='winrm'?'python':'python3'}});renderSources();}));
+          if(settings.transport!=='local')box.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>editConnection(id,{settings:{port:value}}),1,65535));
+        }
+        if(['sql','rac'].includes(connection.kind))box.append(field('Ссылка на существующий способ доступа · без пароля',connection.credential_ref,value=>editConnection(id,{credential_ref:value})));
+        box.append(element('p','Это общая настройка. Подключение и права агент проверит отдельным действием.','note'));return box;
+      }
+      function sharedPanels() {
+        const groups=new Map();
+        const add=(id,bids,sid)=>{if(!id)return;const group=groups.get(id) || {bases:new Set(),sources:new Set()};bids.forEach(b=>group.bases.add(b));if(sid)group.sources.add(sid);groups.set(id,group);};
+        activeSources().filter(s=>['sql','rac','os'].includes(s.type)).forEach(source=>add(sourceConnectionId(source),source.base_ids.filter(id=>selected.has(id)),source.id));
+        (editorProfile?.bases || []).filter(base=>selected.has(base.id)).forEach(base=>add(base.connection_id,[base.id],null));
+        const box=q('#shared-connections');box.replaceChildren();const visible=new Set();
+        groups.forEach((group,id)=>{if(group.bases.size<2 && group.sources.size<2)return;const connection=connectionDraft(id);if(!connection)return;
+          visible.add(id);const panel=element('details',undefined,'box');panel.dataset.connectionId=id;panel.append(element('summary','Общее подключение · '+connection.name));
+          const fields=element('div',undefined,'stack');fields.append(element('p','Затронутые базы: '+[...group.bases].map(baseName).join(', '),'note'),commonFields(id));panel.append(fields);box.append(panel);
+        });return visible;
+      }
+      function mergeEditor(profile) {
+        const previous=editorProfile;editorProfile={...profile};
+        if(previous)for(const key of ['nodes','connections','clusters','dbms_instances','database_bindings','bases','sources']){
+          const rows=new Map(previous[key].map(row=>[row.id,row]));profile[key].forEach(row=>rows.set(row.id,row));editorProfile[key]=[...rows.values()];
+        }
+      }
+      async function prepareProfile() {
+        const result=await api('/api/profile-compose',{view:payload(),draft_profile:editorProfile,connection_edits:connectionEdits,connection_bindings:bindingOverrides});
+        preparedProfile=result.profile;preparedImpact=result.impact;mergeEditor(result.profile);connectionEdits={};bindingOverrides={};
+        for(const key of ['bases','sources']){const rows=new Map(result.editor.view[key].map(row=>[row.id,row]));state[key]=state[key].map(row=>rows.get(row.id) || row);}
+        renderBases();return result;
       }
       function pruneBindings() {
         state.sources.forEach(source => { const ids = new Set(eligibleBases(source.type).map(base => base.id)); source.base_ids = source.base_ids.filter(id => ids.has(id)); });
@@ -276,11 +340,22 @@
         q('#source-context').textContent = (state.name.trim() || 'Окружение без названия') + ' · ' + bases.map(base => base.name).join(', ') + (serverCount ? '. Общие ресурсы связываются с нужными базами ниже.' : bases.every(base => base.mode === 'file') ? '. Для файловых баз SQL неприменим.' : '. Для неизвестного типа SQL пока недоступен; тип можно уточнить с агентом.');
         ['sql','rac'].forEach(type=>{ const option=q('#new-source-type option[value="'+type+'"]'); option.disabled=!serverCount;option.hidden=!serverCount; });
         if (!serverCount && serverOnly(q('#new-source-type').value)) q('#new-source-type').value = 'tj';
+        const commonPanels=sharedPanels();
         activeSources().forEach(source => {
           source.settings=Object.assign(defaults(source.type),source.settings || {}); const settings=source.settings;
           const card = element('details',undefined,'box'); card.dataset.sourceId = source.id; card.dataset.sourceType = source.type; card.open = source.id === openId || previousOpen.has(source.id);
           const summary = element('summary',typeNames[source.type]); card.append(summary);
           const fields = element('div',undefined,'stack');
+          const connectionId=['sql','os','rac'].includes(source.type)?sourceConnectionId(source):null;
+          const candidates=(editorProfile?.connections || []).filter(item=>item.kind===source.type);
+          if(candidates.length)fields.append(choice('Подключение',[['','Отдельное подключение'],...candidates.map(item=>[item.id,item.name+(item.address?' · '+item.address:'')])],connectionId || '',value=>{
+            if(!value && connectionId)applyConnection(source,connectionDraft(connectionId));
+            bindingOverrides[source.id]=value || null;if(value)applyConnection(source,connectionDraft(value));renderSources(source.id);
+          }));
+          if(connectionId){
+            if(commonPanels.has(connectionId))fields.append(element('p','Адрес и доступ задаются в общем подключении выше.','note'));
+            else fields.append(commonFields(connectionId));
+          }
           const help=sourceHelp?.sources[source.type];
           if(help)fields.append(element('p',help.purpose,'note'));
           const bindings = element('fieldset'); bindings.append(element('legend','Относится к базам'));
@@ -300,19 +375,21 @@
           const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
           if(help){pathField.append(element('small','Ожидается: '+help.expected_format,'note'),element('small','Пример: '+help.example,'note'));}
           const hostField = field(source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
-          fields.append(pathField,hostField);
+          if(!connectionId)fields.append(pathField,hostField);
+          else if(source.type==='os')fields.append(pathField);
+          else if(source.type==='rac')fields.append(hostField);
           if(source.type==='os') {
-            fields.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{settings.transport=value;settings.port=value==='ssh'?22:5985;delete settings.python;renderSources(source.id);}));
+            if(!connectionId)fields.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{settings.transport=value;settings.port=value==='ssh'?22:5985;delete settings.python;renderSources(source.id);}));
             const timing=element('div',undefined,'grid');
             const duration=numberField('Длительность одного запуска · секунды',settings.duration_seconds,value=>{settings.duration_seconds=value;},1,1800);duration.querySelector('input').dataset.setting='duration_seconds';
             const interval=numberField('Шаг измерения · секунды',settings.interval_seconds,value=>{settings.interval_seconds=value;},1,60);interval.querySelector('input').dataset.setting='interval_seconds';
             timing.append(duration,interval);fields.append(timing,choice('Роль узла',[['onec','Сервер 1С'],['sql','СУБД'],['storage','Файловое хранение'],['client','Клиент'],['terminal','Терминальный сервер'],['web','Веб-сервер'],['other','Другая']],settings.role,value=>{settings.role=value;}));
-            if(settings.transport!=='local')fields.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>{settings.port=value;},1,65535));
+            if(!connectionId && settings.transport!=='local')fields.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>{settings.port=value;},1,65535));
           } else if(source.type==='sql') {
-            fields.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{settings.engine=value;settings.port=value==='postgresql'?5432:1433;renderSources(source.id);}),numberField('Порт СУБД',settings.port,value=>{settings.port=value;},1,65535));
+            if(!connectionId)fields.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{settings.engine=value;settings.port=value==='postgresql'?5432:1433;renderSources(source.id);}),numberField('Порт СУБД',settings.port,value=>{settings.port=value;},1,65535));
             settings.databases=settings.databases || {};
-            selectedBases().filter(base=>source.base_ids.includes(base.id)).forEach(base=>fields.append(field('Имя SQL-базы для «'+base.name+'»',settings.databases[base.id] || settings.database || '',value=>{settings.databases[base.id]=value;})));
-            fields.append(field('Пользователь СУБД · если задан отдельно',settings.user,value=>{settings.user=value;}),field('Ссылка на существующий способ доступа · без пароля',settings.credential_ref,value=>{settings.credential_ref=value;},'Например, настроенный pgpass / служба libpq'));
+            selectedBases().filter(base=>source.base_ids.includes(base.id)).forEach(base=>fields.append(field('Имя SQL-базы для «'+baseName(base.id)+'»',settings.databases[base.id] || settings.database || '',value=>{settings.databases[base.id]=value;})));
+            if(!connectionId)fields.append(field('Пользователь СУБД · если задан отдельно',settings.user,value=>{settings.user=value;}),field('Ссылка на существующий способ доступа · без пароля',settings.credential_ref,value=>{settings.credential_ref=value;},'Например, настроенный pgpass / служба libpq'));
           } else if(source.type==='source') {
             fields.append(choice('Вид исходников',[['catalog','Локальный каталог'],['git','Git-репозиторий']],settings.kind,value=>{settings.kind=value;renderSources(source.id);}));
             if(exportHelp){const obtain=element('button','Помочь получить исходники');obtain.type='button';obtain.addEventListener('click',()=>{exportPanel.open=true;exportPanel.scrollIntoView({block:'nearest'});});fields.append(obtain);}
@@ -347,13 +424,20 @@
         activeSources().filter(source=>source.type==='os').forEach(source=>{const s=source.settings;if(!Number.isFinite(s.duration_seconds)||!Number.isFinite(s.interval_seconds)||s.interval_seconds<1||s.interval_seconds>60||s.duration_seconds<s.interval_seconds||s.duration_seconds>1800)throw new Error('Для сборщика задайте длительность от одного шага до 1800 секунд и шаг от 1 до 60 секунд.');});
       }
       function renderReview() {
-        const data = saved || payload(); const box = q('#saved-list'); box.replaceChildren();
+        const data = payload(); const box = q('#saved-list'); box.replaceChildren();
         const add = (title,text) => { const row = element('div'); row.append(element('dt',title),element('dd',text)); box.append(row); };
         add('Окружение',data.name); add('Базы',data.bases.map(base => base.name + ' · ' + modeNames[base.mode]).join('; '));
         data.sources.forEach(source => add(typeNames[source.type],[source.base_ids.map(baseName).join(', '),...([source.path,source.host].filter(Boolean)),source.type==='os' && source.settings.transport==='local' ? 'На этом компьютере' : '', 'Доступ и данные не подтверждены'].filter(Boolean).join(' · ')));
         data.sources.filter(source=>source.type==='os').forEach(source=>add('План сборщика',source.settings.duration_seconds+' с · шаг '+source.settings.interval_seconds+' с · '+({local:'На этом компьютере',ssh:'SSH',winrm:'WinRM'}[source.settings.transport])+' · один запуск, ещё не начат'));
         if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
         if (saved) add('Ревизия профиля',String(saved.revision));
+        const impact=q('#resource-impact');impact.replaceChildren();impact.hidden=!preparedImpact?.changed_resources.length;
+        if(!impact.hidden){
+          impact.append(element('strong','Изменения общих ресурсов'),element('p','Затронутые базы: '+preparedImpact.affected_base_ids.map(baseName).join(', ')));
+          const names=preparedImpact.affected_source_ids.map(id=>{const source=state.sources.find(item=>item.id===id);return source?typeNames[source.type]+' · '+source.base_ids.map(baseName).join(', '):'Удалённый источник';});
+          if(names.length)impact.append(element('p','Источники: '+names.join('; ')));
+          impact.append(element('p','Меняются настройки будущих проверок. Прежние расследования сохраняют свою ревизию профиля. Соответствие экземпляра и права после смены подключения требуют проверки.','note'));
+        }
         if (investigation) add('Контекст расследования',[q('#incident-template').selectedOptions[0]?.textContent,q('#incident-variant').value?q('#incident-variant').selectedOptions[0]?.textContent:'',q('#incident-time').selectedOptions[0]?.textContent,q('#incident-scale').selectedOptions[0]?.textContent].filter(Boolean).join(' · '));
         q('#review-title').textContent = saved ? 'Настройки сохранены' : 'Сохранить настройки';
         q('#review-sub').textContent = saved ? 'Вернитесь в текущий чат. Агент может прочитать сохранённый профиль и продолжить.' : 'Проверьте состав профиля. Исходные данные останутся по указанным адресам.';
@@ -361,9 +445,9 @@
         q('#save-profile').hidden = !!saved; q('#close-helper').hidden = !saved;
         q('#preflight-box').hidden=!!saved;
       }
-      function navigate(next) {
+      async function navigate(next) {
         if (next !== 'bases' && !selected.size) { step = 'bases'; renderStep(); throw new Error('Добавьте и выберите хотя бы одну базу. Если тип неизвестен, оставьте «Пока не знаю».'); }
-        if (next === 'review') { validateSources(); renderReview(); }
+        if (next === 'review') { validateSources(); await prepareProfile(); renderReview(); }
         if (next === 'sources') renderSources();
         step = next; renderStep(); message('');
       }
@@ -387,7 +471,7 @@
       q('#read-clusters').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',rasRequest());const select=q('#ras-cluster');select.replaceChildren();response.clusters.forEach(row=>{const option=element('option',(row.name || row.host || 'Кластер')+' · '+row.cluster);option.value=row.cluster;select.append(option);});q('#ras-cluster-choice').hidden=!response.clusters.length;message('Получено кластеров: '+response.clusters.length+'. Настройки не изменены.');}));
       q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();response.bases.forEach(base=>{if(!state.bases.some(item=>item.id===base.id))state.bases.push(base);selected.add(base.id);});renderBases();message('Из RAS прочитано серверных баз: '+response.bases.length+'. SQL и журналы подключаются отдельно.');}));
       q('#check-profile').addEventListener('click',()=>perform(async()=>{
-        validateSources();const result=await api('/api/check',payload());const box=q('#preflight-results');box.replaceChildren();
+        validateSources();if(!preparedProfile)await prepareProfile();const result=await api('/api/check',preparedProfile);const box=q('#preflight-results');box.replaceChildren();
         const labels={requires_explicit_path_check:'Путь указан; доступ и формат проверяются отдельным действием',local_collector_available:'План локального сборщика доступен; сбор не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_configured_not_checked:'Параметры СУБД указаны; инструмент и доступ проверяются отдельно',configured_not_connected:'Адрес указан; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};
         result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));
         if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));
@@ -396,15 +480,15 @@
         markChanged(); const type = q('#new-source-type').value; const eligible = eligibleBases(type); if (!eligible.length) { message('Для этого источника нет подходящих выбранных баз.',true); return; }
         const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : [],settings:defaults(type)}; state.sources.push(source); renderSources(source.id);
       });
-      root.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.step); } catch(error) { message(error.message,true); } }));
-      root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => { try { navigate(button.dataset.back); } catch(error) { message(error.message,true); } }));
-      q('#to-sources').addEventListener('click', () => { try { navigate('sources'); } catch(error) { message(error.message,true); } });
-      q('#to-review').addEventListener('click', () => { try { navigate('review'); } catch(error) { message(error.message,true); } });
-      function contextChanged(){markChanged();if(step==='review')renderReview();}
+      root.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => perform(()=>navigate(button.dataset.step))));
+      root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => perform(()=>navigate(button.dataset.back))));
+      q('#to-sources').addEventListener('click', () => perform(()=>navigate('sources')));
+      q('#to-review').addEventListener('click', () => perform(()=>navigate('review')));
+      function contextChanged(){saved=null;message('');if(step==='review')renderReview();}
       q('#incident-template').addEventListener('change',()=>{renderVariant(null);contextChanged();});
       ['#incident-variant','#incident-time','#incident-scale'].forEach(selector=>q(selector).addEventListener('change',contextChanged));
       q('#save-profile').addEventListener('click', () => perform(async () => {
-        validateSources(); saved = await api('/api/profile',payload());
+        validateSources();if(!preparedProfile){await prepareProfile();renderReview();message('Проверьте список изменений и сохраните настройки.');return;}saved = await api('/api/profile',preparedProfile);editorProfile=saved;
         if(investigation){
           try {investigation=await api('/api/context',{expected_revision:investigation.revision,template_id:q('#incident-template').value,variant:q('#incident-variant').value || null,time_mode:q('#incident-time').value,scale:q('#incident-scale').value,profile_revision:saved.revision});renderContext();}
           catch(error){const revision=saved.revision;saved=null;renderReview();throw new Error('Профиль '+revision+' сохранён. Контекст расследования не обновлён: '+error.message+' Перезагрузите помощник, чтобы прочитать актуальную ревизию.');}
@@ -422,7 +506,7 @@
         renderReadiness(await api('/api/readiness'));
         [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);renderContext();
         const profile = await api('/api/profile');
-        if (profile) { state = {schema_version:1,name:profile.name,bases:profile.bases.map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''})),sources:profile.sources.map(source => ({id:source.id,type:source.type,path:source.path || '',host:source.host || '',base_ids:[...source.base_ids],settings:{...defaults(source.type),...source.settings}}))}; selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
+        if (profile) {const opened=await api('/api/profile-editor',{profile});editorProfile=opened.profile;state=opened.view;selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
       });
     })();
   </script>

@@ -77,26 +77,43 @@ def _connection_method(base):
 def _passport(profile,binding,attachment,target):
     snapshot=dict(kind=attachment['kind'],target_id=attachment['target_id'],report_sha256=digest(target))
     if target.get('case_id' if attachment['kind']=='case' else 'artifact_id')!=attachment['target_id']:raise InputError('source snapshot identity mismatch')
-    claims={key:[] for key in FIELDS};declared=[];source=None
+    claims={key:[] for key in FIELDS};declared=[];source=None;resource_refs=None
     def claim(key,value,basis,proof):
         if value is not None and value!='':claims[key].append(dict(value=deepcopy(value),basis=basis,proof=proof))
     def observed(key,value,pointer):claim(key,value,'observed',dict(snapshot,pointer=pointer))
     if binding.get('profile_source_id') is not None:
         if profile is None:raise InputError('source profile membership is unavailable')
-        source=next((s for s in profile['sources'] if s['id']==binding['profile_source_id']),None)
+        from .profile_resources import effective_profile
+        configured=effective_profile(profile)
+        source=next((s for s in configured['sources'] if s['id']==binding['profile_source_id']),None)
         if source is None:raise InputError('source is absent from the pinned profile')
         declared=list(source['base_ids'])
         if binding.get('base_id') is not None:
             if binding['base_id'] not in declared:raise InputError('source does not declare this base')
             declared=[binding['base_id']]
-        bases=[b for b in profile['bases'] if b['id'] in declared]
+        bases=[b for b in configured['bases'] if b['id'] in declared]
         proof=dict(profile_revision=profile.get('revision'),profile_sha256=digest(profile),source_id=source['id'],basis='configured_association_not_runtime_ownership')
         for field,key in [('base_alias','name'),('database_mode','mode')]:
             values={b[key] for b in bases}
             if len(values)==1:
                 value=next(iter(values));claim(field,None if field=='database_mode' and value=='unknown' else value,'reported',proof)
-        claim('node_alias',source['host'],'reported',proof)
-        methods={_connection_method(base) for base in bases}
+        node_alias=source['host'];raw_bases=[]
+        if profile['schema_version']==2:
+            raw=next(s for s in profile['sources'] if s['id']==source['id']);raw_bases=[b for b in profile['bases'] if b['id'] in declared]
+            instance=next((r for r in profile['dbms_instances'] if r['id']==raw['dbms_instance_id']),None)
+            node_id=raw['node_id'] or (instance['node_id'] if instance else None)
+            cluster_ids={b['cluster_id'] for b in raw_bases}
+            cluster_id=raw['cluster_id'] or (next(iter(cluster_ids)) if len(cluster_ids)==1 else None)
+            node=next((r for r in profile['nodes'] if r['id']==node_id),None)
+            cluster=next((r for r in profile['clusters'] if r['id']==cluster_id),None)
+            if node:
+                node_alias=node['name'];claim('node_identity',node['reported_identity'],'reported',dict(proof,entity='nodes',entity_id=node_id))
+            if cluster:claim('cluster_identity',cluster['reported_identity'],'reported',dict(proof,entity='clusters',entity_id=cluster_id))
+            if instance:claim('dbms_instance_identity',instance['reported_identity'],'reported',dict(proof,entity='dbms_instances',entity_id=instance['id']))
+            for base in raw_bases:claim('infobase_identity',base['reported_identity'],'reported',dict(proof,entity='bases',entity_id=base['id']))
+            resource_refs=dict(node_id=node_id,cluster_id=cluster_id,dbms_instance_id=raw['dbms_instance_id'],connection_id=raw['connection_id'] or (instance['connection_id'] if instance else None),database_ids=list(raw['database_ids']))
+        claim('node_alias',node_alias,'reported',proof)
+        methods={None if b['connection_method']=='unknown' else b['connection_method'] for b in raw_bases} if raw_bases else {_connection_method(base) for base in bases}
         if len(methods)==1:claim('connection_method',next(iter(methods)),'reported',proof)
         sql_names={source['settings'].get('databases',{}).get(bid,source['settings'].get('database')) for bid in declared}
         if len(sql_names)==1:claim('sql_database_name',next(iter(sql_names)),'reported',proof)
@@ -135,7 +152,7 @@ def _passport(profile,binding,attachment,target):
                 if value not in choices:raise InputError('invalid reported source mode/method')
                 if value=='unknown':continue
             claim(key,value,'reported',dict(basis='caller_reported_not_independent_tool_confirmation'))
-    return dict(schema_version=1,type=kind,profile_source_id=binding.get('profile_source_id'),
+    passport=dict(schema_version=1,type=kind,profile_source_id=binding.get('profile_source_id'),
         declared_base_ids=declared,snapshot=snapshot,content=content,
         access_scope=dict(profile_revision=profile.get('revision') if profile else None,source_id=source['id'] if source else None,record_source=selected,
             connection_scope=deepcopy(result.get('connection_scope')),connection_scope_basis='client_settings_not_verified_server_identity'),
@@ -147,6 +164,8 @@ def _passport(profile,binding,attachment,target):
             'Journal UUID, SQL database name and session number do not establish infobase identity.',
             'Static source revision is separate from runtime configuration/extensions.',
             'Capture time does not establish applicability or cross-host clock alignment.'])
+    if resource_refs is not None:passport['access_scope']['configured_resource_refs']=resource_refs
+    return passport
 
 
 def normalize_bindings(profile,attachments,targets,values,*,profiles=None):
