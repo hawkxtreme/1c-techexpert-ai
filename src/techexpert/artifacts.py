@@ -23,7 +23,7 @@ def artifact_folder(state_dir, artifact_id):
     return Path(state_dir)/'artifacts'/artifact_id
 
 
-def save_artifact(state_dir, kind, request, sources, result):
+def save_artifact(state_dir, kind, request, sources, result, *, input_intake=None):
     if not isinstance(kind,str) or not re.fullmatch('[a-z][a-z0-9_-]{0,63}',kind):
         raise InputError('invalid artifact kind')
     if not isinstance(sources,list) or len(sources)>32:raise InputError('at most 32 evidence files allowed')
@@ -36,6 +36,11 @@ def save_artifact(state_dir, kind, request, sources, result):
         total+=len(data)
         if len(data)>MAX_FILE_BYTES or total>MAX_TOTAL_BYTES:raise InputError('evidence exceeds byte limit')
         evidence.append(dict(id=f's{i}',name=name,bytes=len(data),sha256=hashlib.sha256(data).hexdigest()))
+    if input_intake is not None:
+        from .input_intake import bind_sources
+        bound=bind_sources(input_intake,sources)
+        result=dict(result,input_intake=bound)
+        for metadata,capture in zip(evidence,bound['selected']):metadata['input_origin']=dict(capture['input_origin'])
     report=dict(schema_version=1,artifact_id=uuid.uuid4().hex,kind=kind,product_version=__version__,
                 created_at=datetime.now(timezone.utc).isoformat(),knowledge_revision=knowledge_revision(),
                 result=result,sources=evidence,requires_ai_interpretation=True)
@@ -87,10 +92,10 @@ def artifact_evidence(state_dir,artifact_id,source_id):
                 text=data[:8192].decode('utf-8-sig',errors='replace'),truncated=len(data)>8192)
 
 
-def import_apdex(state_dir,path,target_seconds,**selection):
+def import_apdex(state_dir,path,target_seconds,*,intake=None,**selection):
     from .apdex import calculate
     data=read_snapshot(path)
     records=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
     result=calculate(records,target_seconds,**selection)
     return save_artifact(state_dir,'apdex',dict(path=str(Path(path).resolve()),target_seconds=target_seconds,**selection),
-                         [(str(Path(path).resolve()),data)],result)
+                         [(str(Path(path).resolve()),data)],result,input_intake=intake)

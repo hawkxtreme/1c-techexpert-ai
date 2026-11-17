@@ -71,6 +71,10 @@ class Scope:
         if operation not in self.api_operations or operation not in self.operations:raise CodeError('scope_denied','Operation is outside the caller-selected API scope.')
         def target(kind,identifier):
             if identifier not in self.ids[kind]:raise CodeError('scope_denied','Target is outside the caller-selected resource scope.')
+        def import_key(path):
+            base=(operation,path_key(path))
+            return base+(arguments['input_plan'],tuple(sorted(arguments['members']))) if arguments.get('input_plan') else base
+        if operation in ('jr.import','os.import','apdex.import') and arguments.get('input_plan'):target('artifacts',arguments['input_plan'])
         if operation=='input.inspect':
             selected=next((i for i,p in enumerate(self.value['intakes']) if p['settings']==arguments and self.intake_runs[i]<p['max_runs']),None)
             if selected is None:raise CodeError('scope_denied','Input inspection is outside the exact approved paths, limits or repeat count.')
@@ -85,9 +89,9 @@ class Scope:
         elif operation in ('source.snapshot','jr.import'):
             field='source_snapshots' if operation=='source.snapshot' else 'journals'
             def same(plan):
-                return path_key(plan['path'])==path_key(arguments['path']) and {k:v for k,v in plan.items() if k!='path'}=={k:v for k,v in arguments.items() if k!='path'}
+                return path_key(plan['path'])==path_key(arguments['path']) and {k:v for k,v in plan.items() if k!='path'}=={k:v for k,v in arguments.items() if k not in ('path','input_plan','members')}
             if not any(same(plan) for plan in self.value[field]):raise CodeError('scope_denied','Source profile is outside the approved input plan.')
-            identity=(operation,path_key(arguments['path']))
+            identity=import_key(arguments['path'])
             if identity in self.imported:raise CodeError('scope_denied','Repeated source capture requires a separately reviewed plan.')
             self.imported.add(identity)
         elif operation in ('rac.observe','postgresql.observe'):
@@ -102,7 +106,7 @@ class Scope:
         elif operation=='apdex.import':
             key=path_key(arguments['measurements'])
             if key not in {path_key(p) for p in self.value['measurements']}:raise CodeError('scope_denied','Measurements are outside the approved input scope.')
-            identity=(operation,key)
+            identity=import_key(arguments['measurements'])
             if identity in self.imported:raise CodeError('scope_denied','Repeated measurements import requires a separately reviewed plan.')
             self.imported.add(identity)
         elif operation in ('case.analyze','source.check','os.import'):
@@ -111,7 +115,7 @@ class Scope:
             key=path_key(arguments['measurements' if operation=='os.import' else 'manifest'])
             if key not in {path_key(p) for p in self.value[field]}:raise CodeError('scope_denied','Input path is outside the caller-selected source scope.')
             if operation!='source.check':
-                identity=(operation,key)
+                identity=import_key(arguments['measurements']) if operation=='os.import' else (operation,key)
                 if identity in self.imported:raise CodeError('scope_denied','Repeated import requires a separately reviewed plan, not an automatic new run.')
                 self.imported.add(identity)
         elif operation=='os.collect':

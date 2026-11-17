@@ -137,7 +137,11 @@ def _snapshots(state,operation,args,data,*,output=None):
             for reference in call.get('snapshots',[]):
                 add(reference['kind'],reference['id'],reference.get('revision'))
                 if reference not in references:raise InputError('CodeMode retained snapshot identity mismatch')
-    if operation=='case.analyze' and args.get('input_plan'):add('artifacts',args['input_plan'])
+    if operation in ('case.analyze','jr.import','os.import','apdex.import') and args.get('input_plan'):
+        parent=add('artifacts',args['input_plan'])
+        intake=data.get('input_intake') if operation=='case.analyze' else data.get('result',{}).get('input_intake')
+        if (type(intake) is not dict or intake.get('artifact_id')!=args['input_plan']
+            or intake.get('plan_report_digest')!=fs.digest(parent)):raise InputError('captured input catalogue identity mismatch')
     return references
 
 def _worker(folder):

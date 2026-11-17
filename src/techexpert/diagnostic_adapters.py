@@ -37,6 +37,7 @@ def scope_schemas(cap):
 
 
 def routes(cap):
+    from .input_adapters import fields as input_fields
     def route(args,required,sources,impact,fields,types=None,timeout=60):
         value=cap.route(args,required,sources,impact,fields,timeout=timeout)
         value['data_schema']['properties'].update(types or {})
@@ -49,9 +50,9 @@ def routes(cap):
             ['verified saved artifact'],'read bounded private evidence; never publish',
             ['artifact_id','source_id','sha256','text','truncated'],dict(source_id=dict(type='string'),text=dict(type='string'))),
         'apdex.import':route(dict(measurements=cap.FILE,target_seconds=dict(type='number',minimum=0,maximum=31536000),
-            operation=cap.string(256),start=cap.string(80),end=cap.string(80)),['measurements','target_seconds'],
+            operation=cap.string(256),start=cap.string(80),end=cap.string(80),**input_fields(cap,single=True)),['measurements','target_seconds'],
             ['explicit normalized APDEX measurements and target'],'save measured APDEX; no BSP/native export compatibility claim',outputs),
-        'jr.import':route(journal_schema(cap)['properties'],['path','platform_version'],['selected sequential LGF/LGP directory'],
+        'jr.import':route(dict(journal_schema(cap)['properties'],**input_fields(cap)),['path','platform_version'],['selected sequential LGF/LGP directory or approved catalogue group'],
             'save bounded native journal snapshot; no database/run identity inference',outputs),
         'jr.events':route(dict(**artifact,event=cap.string(2000),offset=cap.integer(0,100000,0),limit=cap.integer(1,100,20)),['artifact_id'],
             ['verified native JR artifact'],'read bounded page from saved journal',
@@ -116,10 +117,14 @@ def normalize(operation,args):
         result['path']=safe_name(result['path'])
     elif operation=='jr.import':
         import re
+        from .input_adapters import normalize as normalize_intake
+        result=normalize_intake(result)
         if 'utc_offset' in result and (not re.fullmatch(r'[+-](?:[01]\d|2[0-3]):[0-5]\d',result['utc_offset']) or result['utc_offset']=='-00:00'):
             raise InputError('journal offset must be explicit and valid, or omitted as unknown')
         result['path']=str(Path(result['path']).absolute())
     elif operation=='apdex.import':
+        from .input_adapters import normalize as normalize_intake
+        result=normalize_intake(result,single=True)
         from .apdex import number,instant
         number(result['target_seconds'],'target_seconds',True)
         lower=instant(result['start']) if 'start' in result else None
@@ -136,6 +141,10 @@ def normalize(operation,args):
 
 
 def execute(operation,args,state,output,*,stop=None):
+    if operation in ('jr.import','apdex.import') and args.get('input_plan'):
+        from .input_adapters import import_selected
+        data=import_selected(operation,args,state,output)
+        return data,[dict(kind='artifacts',id=data['artifact_id'])]
     if operation=='artifact.evidence':
         from .artifacts import artifact_evidence
         return artifact_evidence(state,**args),[]

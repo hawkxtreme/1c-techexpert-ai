@@ -78,12 +78,12 @@ Invoke-Command -ComputerName '{r['host']}' -Port {r['port']} -Authentication Neg
 """
 
 
-def import_os(state_dir,path):
+def import_os(state_dir,path,*,intake=None):
     data=read_snapshot(path)
     document=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
     result=summarize(document)
     return save_artifact(state_dir,'os_metrics',dict(import_path=str(Path(path).resolve())),
-                         [(str(Path(path).resolve()),data)],result)
+                         [(str(Path(path).resolve()),data)],result,input_intake=intake)
 
 
 def collect_os(state_dir,request,*,should_stop=None):

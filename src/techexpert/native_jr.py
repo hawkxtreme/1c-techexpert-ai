@@ -163,7 +163,7 @@ def _inventory(path):
     if not 2<=len(entries)<=32 or not any(e[0].lower()=='1cv8.lgf' for e in entries):raise InputError('JR requires 1Cv8.lgf and 1..31 LGP parts')
     return entries
 
-def read_journal(state_dir,path,*,platform_version,utc_offset=None,consistency='unknown'):
+def read_journal(state_dir,path,*,platform_version,utc_offset=None,consistency='unknown',intake=None):
     if platform_version!='8.3.27.1989':raise InputError('JR profile currently requires platform 8.3.27.1989')
     if consistency not in ('unknown','stopped_writer','provided_snapshot'):raise InputError('invalid JR consistency declaration')
     path=Path(path);info=path.lstat()
@@ -176,7 +176,7 @@ def read_journal(state_dir,path,*,platform_version,utc_offset=None,consistency='
     result.update(consistency=consistency,consistency_basis='unknown' if consistency=='unknown' else 'user_declaration_only',
                   atomic_snapshot_verified=False)
     request=dict(path=str(path.absolute()),platform_version=platform_version,utc_offset=utc_offset,consistency=consistency)
-    return save_artifact(state_dir,'native-jr',request,sources,result)
+    return save_artifact(state_dir,'native-jr',request,sources,result,input_intake=intake)
 
 def _saved(state_dir,artifact_id):
     report=load_artifact(state_dir,artifact_id)

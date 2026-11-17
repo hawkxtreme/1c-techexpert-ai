@@ -3,6 +3,7 @@ from copy import deepcopy
 import math
 from pathlib import Path
 import re
+import sys as _sys
 
 from .inputs import InputError
 from .responses import schema as response_schema
@@ -26,6 +27,7 @@ OS=obj(dict(transport=string(8,enum=['local','ssh','winrm'],default='local'),hos
 OS['properties']['port'].pop('default')
 OS['properties']['max_bytes'].pop('default')
 from .input_files import LIMITS as _INPUT_LIMITS
+from .input_adapters import fields as _input_fields
 INPUTS=obj(dict(inputs=dict(type='array',minItems=1,maxItems=16,items=obj(dict(path=FILE,kind=string(16,enum=['file','directory','zip'])),['path','kind'])),
     limits=dict(obj({k:integer(0 if k=='max_depth' else 1,v,v) for k,v in _INPUT_LIMITS.items()}),default={})),['inputs'])
 
@@ -57,7 +59,7 @@ ROUTES={
      'bounded authored note; no independent diagnosis',['id','body','content_sha256']),
  'os.collect':dict(route(OS['properties'],[],['explicit node and existing local/SSH/WinRM access'],
      'bounded counter collection; no service setup or permission changes',['artifact_id','result','sources'],timeout=1830)),
- 'os.import':route(dict(measurements=FILE),['measurements'],['provided OS metrics JSON'],'private artifact snapshot',['artifact_id','result','sources']),
+ 'os.import':route(dict(measurements=FILE,**_input_fields(_sys.modules[__name__],single=True)),['measurements'],['provided OS metrics JSON or one approved catalogue member'],'private artifact snapshot',['artifact_id','result','sources']),
  'artifact.show':route(dict(artifact_id=CASE),['artifact_id'],['verified saved artifact'],'read saved evidence',['artifact_id','result','sources']),
 }
 
@@ -65,7 +67,6 @@ BASE_API=tuple(ROUTES)
 ROUTES['input.inspect']=route(INPUTS['properties'],['inputs'],['explicit files/directories/ZIP metadata'],
     'save private bounded catalogue; no member extraction or analysis',['artifact_id','result','sources'])
 from . import diagnostic_adapters as _diagnostics
-import sys as _sys
 ROUTES.update(_diagnostics.routes(_sys.modules[__name__]))
 ROUTES['investigation.sources']=route(dict(investigation_id=CASE,revision=integer(1,1000,1)),['investigation_id','revision'],
     ['explicit immutable investigation revision and its verified saved evidence'],'read bounded source ownership context; no original-source probes or causal certification',
@@ -157,6 +158,9 @@ def normalize_request(value):
     if operation=='input.inspect':
         from .input_files import normalize
         args=normalize(args['inputs'],args['limits'])
+    if operation=='os.import':
+        from .input_adapters import normalize
+        args=normalize(args,single=True)
     if operation=='os.collect':
         from .os_metrics import validate_request as os_request
         args=os_request(args)
@@ -202,7 +206,10 @@ def execute(operation,args,state,output,*,stop=None):
             data=dict(data,body=body[offset:offset+limit],body_truncated=offset>0 or offset+limit<len(body),body_total_characters=len(body),body_offset=offset)
     elif operation in ('os.collect','os.import'):
         from .os_metrics import collect_os,import_os
-        data=collect_os(output,args,should_stop=stop) if operation=='os.collect' else import_os(output,args['measurements'])
+        if operation=='os.import' and args.get('input_plan'):
+            from .input_adapters import import_selected
+            data=import_selected(operation,args,state,output)
+        else:data=collect_os(output,args,should_stop=stop) if operation=='os.collect' else import_os(output,args['measurements'])
         targets=[dict(kind='artifacts',id=data['artifact_id'])]
     elif operation=='artifact.show':
         from .artifacts import load_artifact
