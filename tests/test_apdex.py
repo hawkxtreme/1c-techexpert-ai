@@ -46,5 +46,17 @@ class ApdexTests(unittest.TestCase):
         self.assertEqual(result['frustrated'],1);self.assertEqual(result['score'],0)
         with self.assertRaises(ValueError):self.apdex([],10**400)
 
+    def test_shared_measurement_validation_preserves_rows_and_does_not_choose_an_apdex_target(self):
+        api = importlib.import_module('src.techexpert.apdex')
+        self.assertTrue(hasattr(api, 'validated_records'), 'Shared timed-operation validation is missing')
+        rows = [self.sample(1, 1), dict(self.sample(2, None), operation='other')]
+        valid, operations = api.validated_records(rows)
+        self.assertEqual(operations, {'load', 'other'})
+        self.assertEqual([row for row, _, _ in valid], rows)
+        self.assertEqual([value for _, _, value in valid], [1, None])
+        self.assertEqual(valid[0][1].isoformat(), '2026-11-16T06:00:00+00:00')
+        with self.assertRaises(ValueError):
+            api.validated_records([rows[0], rows[0]])
+
 
 if __name__=='__main__':unittest.main()

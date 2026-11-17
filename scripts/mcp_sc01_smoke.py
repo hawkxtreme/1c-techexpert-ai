@@ -56,7 +56,7 @@ def run(state,version=MODERN):
             process.stdin.write(notification);process.stdin.flush();wire_bytes+=len(notification)
         else:rpc('server/discover',{})
         catalogue=rpc('tools/list',{})
-        if len(catalogue['tools'])!=31:raise ValueError('Unexpected finite tool catalogue')
+        if len(catalogue['tools'])!=32:raise ValueError('Unexpected finite tool catalogue')
         before=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
         after=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/cached.json'))
         b=before['case_id'];a=after['case_id']

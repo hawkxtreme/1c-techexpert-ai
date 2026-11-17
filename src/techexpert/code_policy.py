@@ -83,6 +83,8 @@ class Scope:
             if (arguments['investigation_id'],arguments['revision']) not in self.investigations:raise CodeError('scope_denied','Investigation revision is outside the approved source context.')
         elif operation=='source.compare':
             for ref in (arguments['before'],arguments['after']):target({'case':'cases','artifact':'artifacts'}[ref['kind']],ref['id'])
+        elif operation=='sample.describe':
+            for ref in arguments['inputs']:target({'case':'cases','artifact':'artifacts'}[ref['kind']],ref['id'])
         elif operation.startswith('case.') and operation not in ('case.analyze','case.compare'):target('cases',arguments['case_id'])
         elif operation=='case.compare':
             for identifier in arguments['before']+arguments['after']:target('cases',identifier)

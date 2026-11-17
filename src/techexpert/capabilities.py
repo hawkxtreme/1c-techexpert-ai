@@ -65,6 +65,25 @@ ROUTES={
 }
 # Keep the original13-operation compatibility workload separate from additions.
 BASE_API=tuple(ROUTES)
+ROUTES['sample.describe']=route(dict(inputs=dict(type='array',minItems=1,maxItems=16,
+    items=obj(dict(kind=string(16,enum=['case','artifact']),id=CASE),['kind','id'])),operation=string(256),window=WINDOW,
+    context=dict(obj({name:string(2048) for name in ('platform_version','workload','launch_conditions','selection_basis')}),default={}),
+    reported_normal_seconds=dict(type='number',minimum=0,maximum=31536000),offset=integer(0,100000,0),limit=integer(1,200,20)),
+    ['inputs','operation'],['explicit retained execution cases or normalized APDEX measurement artifacts and saved catalogue bindings'],
+    'describe observed sample selection and distribution; no original paths, new capture, normality or causal verdict',
+    ['inputs','statistics','counts','descriptor','selection','period','exclusions','records','matched_count','next_offset','dependencies','normal_established'])
+_sample_data=ROUTES['sample.describe']['data_schema']['properties']
+_sample_number=dict(type=['number','null'],minimum=0,maximum=31536000)
+_sample_data.update(inputs=dict(type='array',maxItems=16),dependencies=dict(type='array',maxItems=32),
+    records=dict(type='array',maxItems=200),normal_established=dict(type='boolean',enum=[False]),independent_runs=dict(type='null'),
+    selection_sha256=string(64,pattern='[a-f0-9]{64}'),requires_ai_interpretation=dict(type='boolean'),
+    statistics=dict(type='object',required=['count','supplied_count','missing_count','median','percentiles'],properties={
+        **{key:dict(_sample_number) for key in ('median','minimum','maximum','range','median_absolute_deviation','interquartile_range')},
+        **{key:dict(type='integer',minimum=0,maximum=100000) for key in ('count','supplied_count','missing_count')},
+        'percentiles':dict(type='object',required=['values','sample_size','method'],properties=dict(
+            values=obj({key:dict(_sample_number) for key in ('25','50','75','90','95')},['25','50','75','90','95']),
+            sample_size=dict(type='integer',minimum=0,maximum=100000),method=string(128)),additionalProperties=False)},additionalProperties=True))
+ROUTES['sample.describe']['output_schema']=response_schema(ROUTES['sample.describe']['data_schema'])
 ROUTES['source.compare']=route(dict(before=SAVED_SOURCE,after=SAVED_SOURCE),['before','after'],
     ['two selected retained case/artifact sources and their bounded saved catalogue dependencies'],
     'read verified saved bytes; no original paths, capture, event merge or cause judgment',
@@ -173,6 +192,9 @@ def normalize_request(value):
     if operation=='input.inspect':
         from .input_files import normalize
         args=normalize(args['inputs'],args['limits'])
+    if operation=='sample.describe':
+        from .sample_description import normalize
+        args=normalize(**args)
     if operation=='os.import':
         from .input_adapters import normalize
         args=normalize(args,single=True)
@@ -212,6 +234,9 @@ def execute(operation,args,state,output,*,stop=None):
     elif operation=='source.compare':
         from .source_changes import compare
         data=compare(state,**args)
+    elif operation=='sample.describe':
+        from .sample_description import describe
+        data=describe(state,**args)
     elif operation=='case.events':data=storage.list_native_events(state,**args)
     elif operation=='case.evidence':data=storage.read_evidence(state,**args)
     elif operation=='case.compare':data=storage.compare_cases(state,args['before'],args['after'],output_state_dir=output);targets=[dict(kind='comparisons',id=data['comparison_id'])]
@@ -249,6 +274,9 @@ def execute(operation,args,state,output,*,stop=None):
 
 
 def outcome(operation,data):
+    if operation=='sample.describe':
+        if not data['statistics']['count']:return 'partial','sample_no_known_durations'
+        if data['statistics']['missing_count']:return 'partial','sample_missing_durations'
     collection=data.get('result',{}).get('collection_status')
     if operation=='os.collect':
         if collection=='cancelled':return 'cancelled','cancelled'

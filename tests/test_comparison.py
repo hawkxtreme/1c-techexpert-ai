@@ -56,6 +56,23 @@ class ComparisonTests(unittest.TestCase):
         self.assertTrue(value['requires_ai_interpretation'])
         self.assertIsNone(value['cause'])
 
+    def test_group_descriptions_keep_spread_and_missing_values_separate_from_effect_criteria(self):
+        before, after = series()
+        before[0]['job_correlation']['job_lifecycle'].update(execution_seconds=100, execution_bounds_seconds=[99, 101])
+        result = self.compare(before, after)
+        self.assertIn('before_distribution', result['performance'], 'Descriptive samples are missing')
+        self.assertEqual(result['performance']['before_distribution']['count'], 5)
+        self.assertEqual(result['performance']['before_distribution']['maximum'], 100)
+        self.assertEqual(result['performance']['before_distribution']['median'], 10)
+        self.assertFalse(result['performance']['before_distribution']['population_inference'])
+        self.assertEqual(result['performance']['status'], 'improved')
+        after[0]['job_correlation']['job_lifecycle']['execution_seconds'] = None
+        result = self.compare(before, after)
+        self.assertEqual(result['performance']['after_distribution']['count'], 4)
+        self.assertEqual(result['performance']['after_distribution']['missing_count'], 1)
+        self.assertIsNone(result['performance']['after_median_seconds'])
+        self.assertEqual(result['performance']['status'], 'not_comparable')
+
     def test_mode_and_existing_cause_labels_do_not_determine_effect(self):
         before, after = series()
         for case in before+after:

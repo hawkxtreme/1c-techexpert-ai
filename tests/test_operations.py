@@ -83,9 +83,10 @@ class ManagedOperationTests(unittest.TestCase):
 
     def test_registered_routes_use_real_adapters_and_normal_saved_products(self):
         covered=set()
-        def call(operation,*,expected='succeeded',**arguments):
-            request=self.request(operation,**arguments);request['operation_key']='route-'+str(len(covered))+'-'+operation
-            result=self.run_request(request);covered.add(operation)
+        def call(operation_id,*,expected='succeeded',**arguments):
+            request=self.request(operation_id);request['arguments']=arguments
+            request['operation_key']='route-'+str(len(covered))+'-'+operation_id
+            result=self.run_request(request);covered.add(operation_id)
             self.assertEqual(result['status'],expected,result)
             self.assertTrue(result['integrity_verified']);return result['data']
         before=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
@@ -103,6 +104,9 @@ class ManagedOperationTests(unittest.TestCase):
         source_change=call('source.compare',before=dict(kind='case',id=cid,source_id='s1'),after=dict(kind='case',id=after['case_id'],source_id='s1'))
         self.assertEqual(source_change['observation']['relation'],'unknown_origin')
         self.assertFalse(source_change['counts']['events_deduplicated'])
+        sample=call('sample.describe',inputs=[dict(kind='case',id=cid),dict(kind='case',id=after['case_id'])],operation='load orders')
+        self.assertEqual(sample['statistics']['count'],2)
+        self.assertFalse(sample['normal_established'])
         call('source.check',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'),required_fields=['Sdbl'])
         call('knowledge.search',query='очередь')
         card=call('knowledge.card',card_id='SC01-ORDER-LOAD',limit=40);self.assertTrue(card['body_truncated'])

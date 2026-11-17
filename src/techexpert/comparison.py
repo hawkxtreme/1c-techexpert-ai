@@ -11,6 +11,8 @@ import re
 import statistics
 import uuid
 
+from .sample_statistics import describe_values
+
 
 MAX_CASES = 20
 MIN_PAIRS = 5
@@ -242,6 +244,8 @@ def compare_reports(before, after):
         before_median_seconds=before_median,after_median_seconds=after_median,
         before_lower_median_seconds=before_lower,after_upper_median_seconds=after_upper,
         conservative_reduction_fraction=reduction,
+        before_distribution=describe_values([case['seconds'] for case in left]),
+        after_distribution=describe_values([case['seconds'] for case in right]),
         reported_speedup_ratio=(before_median/after_median if before_median is not None and after_median else None),
         interpretation='Measured execution only; correctness and causal interpretation are separate.')
     statuses=[case['result_status'] for case in cases]

@@ -122,7 +122,10 @@ def _snapshots(state,operation,args,data,*,output=None):
         reference['receipt_digest']=fs.digest(fs.read(base/'receipt.json',8192))
         if reference not in references:references.append(reference)
         return report
-    if operation=='source.compare':
+    if operation=='sample.describe':
+        from .sample_description import pin
+        pin(state,args,data,add,references)
+    elif operation=='source.compare':
         from .source_changes import pin
         pin(state,args,data,add,references)
     elif operation.startswith('case.') and operation!='case.compare':add('cases',data.get('case_id',args.get('case_id')))
