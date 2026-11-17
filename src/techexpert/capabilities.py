@@ -62,6 +62,12 @@ BASE_API=tuple(ROUTES)
 from . import diagnostic_adapters as _diagnostics
 import sys as _sys
 ROUTES.update(_diagnostics.routes(_sys.modules[__name__]))
+ROUTES['investigation.sources']=route(dict(investigation_id=CASE,revision=integer(1,1000,1)),['investigation_id','revision'],
+    ['explicit immutable investigation revision and its verified saved evidence'],'read bounded source ownership context; no original-source probes or causal certification',
+    ['investigation_id','revision','bindings','links','dependencies','needs_clarification'])
+ROUTES['investigation.sources']['data_schema']['properties'].update(investigation_id=dict(type='string'),revision=dict(type='integer'),
+    bindings=dict(type='array'),links=dict(type='array'),dependencies=dict(type='array'),needs_clarification=dict(type='boolean'))
+ROUTES['investigation.sources']['output_schema']=response_schema(ROUTES['investigation.sources']['data_schema'])
 CODE_API=tuple(ROUTES)
 from .code_policy import schemas as _code_schemas
 _code_arguments=_code_schemas(_sys.modules[__name__],CODE_API)
@@ -188,6 +194,9 @@ def execute(operation,args,state,output,*,stop=None):
         if data['kind']=='knowledge_use':
             from .knowledge_review import review_use
             data=dict(data,knowledge_review=review_use(state,args['artifact_id']))
+    elif operation=='investigation.sources':
+        from .investigations import source_context
+        data=source_context(state,**args)
     elif operation in _diagnostics.OPERATIONS:
         data,targets=_diagnostics.execute(operation,args,state,output,stop=stop)
     elif operation in ('code.execute','code.inspect'):

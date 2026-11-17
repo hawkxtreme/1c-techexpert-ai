@@ -25,7 +25,8 @@ from .storage import ROOT,verified_case,load_comparison,read_evidence,knowledge_
 MAX_DOCUMENT=2*1024*1024
 EDITABLE={'episode','attachments','evidence','facts','hypotheses','contradictions','open_questions','tool_runs',
           'assessment','improvement','observation_plan','execution_status','harness',
-          'template_id','variant','time_mode','scale','profile_revision','workflow_stage','occurrence'}
+          'template_id','variant','time_mode','scale','profile_revision','workflow_stage','occurrence',
+          'source_bindings','source_links'}
 CAUSES=('confirmed','hypothesis','insufficient_data')
 
 def _digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
@@ -81,6 +82,11 @@ def _verify_evidence(state_dir,doc):
     attachments=_list(doc['attachments'],16);aids=_ids(attachments,'A');targets={}
     for item in attachments:
         _object(item,('id','kind','target_id','report_sha256','source_origin'),('id','kind','target_id'))
+        if doc['schema_version']==2:
+            from .operations import _guard_dependency_paths
+            kinds=dict(case='cases',artifact='artifacts',comparison='comparisons')
+            if item['kind'] not in kinds:raise InputError('unsupported investigation attachment kind')
+            _guard_dependency_paths(state_dir,kinds[item['kind']],item['target_id'])
         target=_target(state_dir,item);digest=_digest(target)
         if item.get('report_sha256',digest)!=digest:raise InputError('investigation attachment integrity mismatch')
         origin=target.get('origin',target.get('result',{}).get('origin','not_established'))
@@ -109,6 +115,31 @@ def _verify_evidence(state_dir,doc):
         item['proof']=proof
     return aids,eids,targets
 
+def _source_profiles(state_dir,doc):
+    """Resolve only profiles pinned in this immutable history, never current.json."""
+    result={};profile=doc.get('profile_snapshot')
+    if profile is not None:result[profile['revision']]=profile
+    needed=set()
+    for binding in _list(doc.get('source_bindings',[]),100):
+        if type(binding) is not dict:raise InputError('invalid source binding')
+        number=binding.get('profile_revision')
+        if number is not None:
+            if type(number) is not int or number<1:raise InputError('invalid source profile revision')
+            needed.add(number)
+    expected=doc.get('parent_sha256')
+    for number in range(doc['revision']-1,0,-1):
+        if needed<=result.keys():break
+        parent,_=_read_revision(state_dir,doc['investigation_id'],number)
+        if _digest(parent)!=expected:raise InputError('source profile history integrity mismatch')
+        profile=parent.get('profile_snapshot');expected=parent.get('parent_sha256')
+        if profile is not None and profile['revision'] in needed:
+            validate_profile(profile)
+            if _digest(profile)!=parent['profile_sha256']:raise InputError('source profile snapshot integrity mismatch')
+            result.setdefault(profile['revision'],profile)
+    if not needed<=result.keys():raise InputError('source profile revision is not pinned in this investigation')
+    return result
+
+
 def _validate(state_dir,doc):
     encoded(doc,MAX_DOCUMENT)
     if doc['time_mode'] not in ('unknown','past','current','reproduce') or doc['scale'] not in ('one','several','all','background','unknown'):raise InputError('invalid investigation time or scale')
@@ -120,10 +151,22 @@ def _validate(state_dir,doc):
         elif value is not None:_text(value)
     if doc['episode'].get('database_mode','unknown') not in ('file','server','unknown'):raise InputError('invalid database mode')
     aids,eids,targets=_verify_evidence(state_dir,doc)
+    source_links=set()
+    if doc['schema_version']==2:
+        from .source_passports import normalize_bindings,normalize_links
+        profile=doc['profile_snapshot']
+        if profile is not None:
+            validate_profile(profile)
+            if _digest(profile)!=doc['profile_sha256']:raise InputError('source passport profile snapshot integrity mismatch')
+        doc['source_bindings']=normalize_bindings(profile,doc['attachments'],targets,doc['source_bindings'],profiles=_source_profiles(state_dir,doc))
+        doc['source_links']=normalize_links(doc['source_bindings'],doc['source_links'])
+        source_links={item['id'] for item in doc['source_links']}
+    elif 'source_bindings' in doc or 'source_links' in doc:raise InputError('source passports require investigation schema2')
     facts=_list(doc['facts'],200);fids=_ids(facts,'F')
     for fact in facts:
-        _object(fact,('id','text','evidence','measurement','statement_basis'),('id','text','evidence'))
+        _object(fact,('id','text','evidence','measurement','statement_basis','source_links'),('id','text','evidence'))
         _text(fact['text']);_references(fact['evidence'],eids,required=True)
+        if 'source_links' in fact:_references(fact['source_links'],source_links)
         fact['statement_basis']='harness_claim_with_linked_evidence; semantic_truth_not_checked'
         if 'measurement' in fact:
             measurement=fact['measurement'];_object(measurement,('attachment','pointer','value','basis'),('attachment','pointer'))
@@ -134,7 +177,8 @@ def _validate(state_dir,doc):
             measurement.update(value=value,basis='verified_tool_report')
     hypotheses=_list(doc['hypotheses'],100);hids=_ids(hypotheses,'H')
     for item in hypotheses:
-        _object(item,('id','text','status','evidence'),('id','text','status','evidence'));_text(item['text'])
+        _object(item,('id','text','status','evidence','source_links'),('id','text','status','evidence'));_text(item['text'])
+        if 'source_links' in item:_references(item['source_links'],source_links)
         if item['status'] not in ('proposed','testing','supported','refuted','insufficient_data'):raise InputError('invalid hypothesis status')
         _references(item['evidence'],eids,required=item['status'] in ('supported','refuted'))
     _ids(_list(doc['contradictions'],100),'C')
@@ -214,10 +258,11 @@ def _validate(state_dir,doc):
                 if any(c['status']=='unresolved' and hypothesis['id'] in c['hypotheses'] for c in doc['contradictions']):raise InputError('unresolved contradiction prevents cause confirmation')
         recommendations=_list(assessment['recommendations'],100)
         for item in recommendations:
-            _object(item,('id','kind','basis','goal','prerequisites','expected_effect','verification','limitations','risk','rollback'),
+            _object(item,('id','kind','basis','goal','prerequisites','expected_effect','verification','limitations','risk','rollback','source_links'),
                 ('id','kind','basis','goal','prerequisites','expected_effect','verification','limitations'))
             if item['kind'] not in ('diagnostic','lab_change','production_change'):raise InputError('invalid recommendation kind')
             _references(item['basis'],eids|hids,required=True)
+            if 'source_links' in item:_references(item['source_links'],source_links)
             for key in ('goal','prerequisites','expected_effect','verification','limitations'):_text(item[key])
             if item['kind']!='diagnostic':_text(item.get('risk'));_text(item.get('rollback'))
         _ids(recommendations,'R')
@@ -257,22 +302,36 @@ def _validate(state_dir,doc):
     return doc
 
 def _basis(doc):
-    return _digest({k:doc.get(k) for k in ('episode','attachments','evidence','facts','hypotheses','contradictions','template','variant','time_mode','scale','profile_sha256','occurrence')})
+    value={k:doc.get(k) for k in ('episode','attachments','evidence','facts','hypotheses','contradictions','template','variant','time_mode','scale','profile_sha256','occurrence')}
+    for key in ('source_bindings','source_links'):
+        if doc.get(key):value[key]=doc[key]
+    return _digest(value)
 
 def _md(value):
     return re.sub(r'([\\`*_{}\[\]()#+\-.!|>])',r'\\\1',html.escape(str(value),quote=False))
 
 def render(doc):
+    from .source_passports import context
+    source_review=context(doc) if doc['schema_version']==2 else None
     lines=['# Расследование '+doc['investigation_id'], '',f"Ревизия: {doc['revision']}. Выполнение: {doc['execution_status']}. Причина: {doc['cause_state']}.", '',
            'Этап: '+doc.get('workflow_stage','initial_analysis')+'.',
            _md(doc['continuation']['message']) if doc.get('continuation') else '',
            _md(doc['task']),'',_md(doc['assessment']['summary']) if doc['assessment'] else 'Причина не установлена. Сохранены наблюдения и следующие проверки.',
            '', 'Проверены структура и ссылки. Причинное объяснение принадлежит указанному harness; правильность механизма инструментом не доказана.',
+           *(['','Принадлежность источников для части выводов требует отдельной проверки.'] if source_review and source_review['needs_clarification'] else []),
            '', '## Контекст', '',f"Шаблон: {doc['template']['id']}, ревизия {doc['template']['revision']}. Время: {doc['time_mode']}. Масштаб: {doc['scale']}.",
            '',_md(json.dumps(doc['episode'],ensure_ascii=False)), '', '## Наблюдения', '']
     for fact in doc['facts']:
         lines.append('- '+fact['id']+': '+_md(fact['text'])+' ('+', '.join(fact['evidence'])+').')
         if 'measurement' in fact:lines.append('  Значение инструмента: '+_md(fact['measurement']['value'])+'; '+_md(fact['measurement']['pointer'])+'.')
+    if source_review and doc['source_bindings']:
+        lines+=['','## Принадлежность источников','']
+        for binding in doc['source_bindings']:
+            lines.append('- '+binding['id']+': '+_md(binding['passport']['type'])+'; профиль '+str(binding['profile_revision'])+'; '+binding['attachment']+'.')
+        for link in doc['source_links']:
+            lines.append('- '+link['id']+': '+link['left']+' / '+link['right']+'; '+_md(link['claim'])+'; '+_md(link['check']['status'])+'; область '+_md(link['check']['scope'])+'.')
+        for item in source_review['dependencies']:
+            if item['unresolved_source_links']:lines.append('- '+item['conclusion_id']+': вывод зависит от неподтверждённых связей '+', '.join(item['unresolved_source_links'])+'.')
     lines+=['','## Гипотезы и противоречия','']
     for item in doc['hypotheses']:lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
     for item in doc['contradictions']:lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
@@ -312,7 +371,7 @@ def _read_revision(state_dir,iid,revision):
     data=read_snapshot(folder/'report.json',MAX_DOCUMENT);markdown=read_snapshot(folder/'report.md',MAX_DOCUMENT)
     if hashlib.sha256(data).hexdigest()!=receipt.get('report_sha256') or hashlib.sha256(markdown).hexdigest()!=receipt.get('markdown_sha256'):raise InputError('investigation report integrity mismatch')
     doc=json_value(data.decode('utf-8'),reject_duplicates=True)
-    if doc.get('schema_version')!=1 or doc.get('investigation_id')!=iid or doc.get('revision')!=revision:raise InputError('unsupported investigation schema or identity')
+    if type(doc.get('schema_version')) is not int or doc['schema_version'] not in (1,2) or doc.get('investigation_id')!=iid or doc.get('revision')!=revision:raise InputError('unsupported investigation schema or identity')
     return doc,receipt
 
 def load(state_dir,investigation_id,*,revision=None):
@@ -331,6 +390,16 @@ def load(state_dir,investigation_id,*,revision=None):
     if _digest(doc)!=original:raise InputError('investigation computed fields integrity mismatch')
     return doc
 
+def source_context(state_dir,investigation_id,*,revision=None):
+    from .source_passports import context
+    from .operations import _verify_target
+    if revision is None:
+        from .operation_state import read,safe
+        head=read(safe(revision_folder(state_dir,investigation_id,1).parent.parent/'head.json'),8192)
+        revision=head.get('revision')
+    return context(_verify_target(state_dir,'investigations',investigation_id,revision=revision))
+
+
 def create(state_dir,request):
     _object(request,('task','template_id','variant','time_mode','scale','episode','harness'),('task',))
     request=dict(dict(template_id='TPL-00',time_mode='unknown',scale='unknown'),**request)
@@ -341,7 +410,7 @@ def create(state_dir,request):
     skill_digest=hashlib.sha256()
     for path in sorted((ROOT/'skills').rglob('SKILL.md')):
         skill_digest.update(path.relative_to(ROOT).as_posix().encode());skill_digest.update(read_snapshot(path,256*1024))
-    doc=dict(schema_version=1,investigation_id=uuid.uuid4().hex,revision=1,parent_sha256=None,
+    doc=dict(schema_version=2,investigation_id=uuid.uuid4().hex,revision=1,parent_sha256=None,
         created_at=datetime.now(timezone.utc).isoformat(),task=request['task'],template=selected['template'],variant=selected['variant'],
         template_catalogue_sha256=book['sha256'],time_mode=request['time_mode'],scale=request['scale'],episode=deepcopy(request.get('episode',{})),
         profile_snapshot=profile,profile_sha256=_digest(profile) if profile else None,
@@ -349,7 +418,7 @@ def create(state_dir,request):
         harness=deepcopy(request.get('harness',dict(name=None,version=None,model=None))),execution_status='partial',cause_state='insufficient_data',
         attachments=[],evidence=[],facts=[],hypotheses=[],contradictions=[],open_questions=[],tool_runs=[],assessment=None,
         assessment_status='not_provided',assessment_harness=None,improvement=None,observation_plan=None,structural_validation_only=True,
-        workflow_stage='initial_analysis',occurrence=None)
+        workflow_stage='initial_analysis',occurrence=None,source_bindings=[],source_links=[])
     _validate(state_dir,doc);doc['analysis_basis_sha256']=_basis(doc)
     return _persist(state_dir,doc)
 
@@ -366,6 +435,7 @@ def revise(state_dir,investigation_id,patch,*,expected_revision):
         if previous['revision']!=expected_revision:raise InputError('investigation revision changed; reload before editing')
         if expected_revision>=1000:raise InputError('investigation revision limit reached; retain history and start a linked investigation')
         doc=deepcopy(previous);changes=deepcopy(patch)
+        doc['schema_version']=2;doc.setdefault('source_bindings',[]);doc.setdefault('source_links',[])
         doc.setdefault('workflow_stage','initial_analysis');doc.setdefault('occurrence',None)
         if changes.get('occurrence') is not None:
             occurrence=changes['occurrence']

@@ -146,7 +146,11 @@
       let busy = false;
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
-      const baseName = id => state.bases.find(base => base.id === id)?.name || id;
+      const baseName = id => {
+        const base=state.bases.find(item=>item.id===id);if(!base)return id;
+        const duplicate=state.bases.filter(item=>item.name===base.name).length>1;
+        return base.name+(duplicate?' · '+modeNames[base.mode]+(base.connection?' · '+base.connection:' · адрес не указан'):'');
+      };
       const selectedBases = () => state.bases.filter(base => selected.has(base.id));
       const serverOnly = type => ['sql','rac'].includes(type);
       const eligibleBases = type => selectedBases().filter(base => !serverOnly(type) || base.mode === 'server');
@@ -284,9 +288,14 @@
           eligibleBases(source.type).forEach(base => {
             const label = element('label',undefined,'check'); const check = document.createElement('input'); check.type = 'checkbox'; check.checked = source.base_ids.includes(base.id); check.dataset.sourceBase = base.id;
             check.addEventListener('change', () => { markChanged(); source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id); if(source.type==='sql')renderSources(source.id); });
-            label.append(check,element('span',base.name)); choices.append(label);
+            label.append(check,element('span',baseName(base.id))); choices.append(label);
           });
-          bindings.append(choices); fields.append(bindings);
+          bindings.append(choices);
+          const sourceState=investigation?.source_states?.[source.id];
+          bindings.append(element('p',sourceState?.needs_clarification
+            ? 'Для выбранного вывода принадлежность данных требует уточнения. Агент покажет в текущем чате, какую связь нужно проверить.'
+            : 'Это привязка в настройках. Принадлежность записей к базе проверяется отдельно при анализе.','note'));
+          fields.append(bindings);
           const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр · БД указываются ниже' : source.type === 'rac' ? 'Адрес RAS · узел:порт' : source.type === 'os' ? 'Файл готовых метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
           const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
           if(help){pathField.append(element('small','Ожидается: '+help.expected_format,'note'),element('small','Пример: '+help.example,'note'));}

@@ -122,6 +122,9 @@ class ManagedOperationTests(unittest.TestCase):
         call('source.read',artifact_id=snapshot['artifact_id'],path='Module.bsl')
         call('rac.observe',endpoint='localhost:1545',query='clusters',executable=str(self.folder/'missing-rac'),expected='partial')
         call('postgresql.observe',database='test',query='activity',executable=str(self.folder/'missing-psql'),expected='partial')
+        from src.techexpert.investigations import create
+        doc=create(self.state,dict(task='Read exact saved source context'))
+        call('investigation.sources',investigation_id=doc['investigation_id'],revision=1)
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

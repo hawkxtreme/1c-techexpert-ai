@@ -42,10 +42,48 @@ def _versions():
     manifest=fs.read(ROOT/'src/techexpert/assets/bundle-manifest.json',1024**2)
     return dict(product=__version__,rules_inventory_sha256=fs.digest(manifest),knowledge=knowledge_revision())
 
-def _verify_target(state,kind,identifier,*,inputs=None):
-    if kind not in ('cases','artifacts','comparisons') or not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
+def _snapshot_folder(state,kind,identifier,revision=None):
+    if kind not in ('cases','artifacts','comparisons','investigations') or not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
         raise InputError('invalid operation product identity')
-    fs.inventory(fs.safe(Path(state)/kind/identifier))
+    base=fs.safe(Path(state)/kind/identifier)
+    if kind=='investigations':
+        if type(revision) is not int or not 1<=revision<=1000:raise InputError('immutable investigation revision required')
+        return fs.safe(base/'revisions'/str(revision).zfill(6))
+    if revision is not None:raise InputError('unexpected snapshot revision')
+    return base
+
+
+def _guard_dependency_paths(state,kind,identifier):
+    if kind not in ('cases','artifacts','comparisons'):raise InputError('unsupported investigation dependency')
+    base=_snapshot_folder(state,kind,identifier);fs.inventory(base)
+    if kind=='comparisons':
+        report=fs.read(base/'report.json',2*1024**2)
+        if type(report) is not dict or type(report.get('input_reports')) is not list:raise InputError('invalid comparison dependencies')
+        seen=set()
+        for reference in report['input_reports']:
+            if type(reference) is not dict:raise InputError('invalid comparison dependency')
+            value=reference.get('case_id')
+            case=_snapshot_folder(state,'cases',value)
+            if value not in seen:fs.inventory(case);seen.add(value)
+
+
+def _verify_target(state,kind,identifier,*,inputs=None,revision=None):
+    if kind not in ('cases','artifacts','comparisons','investigations') or not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
+        raise InputError('invalid operation product identity')
+    base=_snapshot_folder(state,kind,identifier,revision);fs.inventory(base)
+    if kind=='investigations':
+        from .investigations import load,revision_folder
+        fs.safe(Path(state)/kind/identifier/'head.json')
+        for number in range(1,revision+1):
+            for name in ('report.json','report.md','receipt.json'):fs.safe(revision_folder(state,identifier,number)/name)
+        metadata=fs.read(base/'report.json',2*1024**2)
+        references=metadata.get('attachments') if type(metadata) is dict else None
+        if type(references) is not list or len(references)>16:raise InputError('invalid investigation dependencies')
+        kinds=dict(case='cases',artifact='artifacts',comparison='comparisons')
+        for reference in references:
+            if type(reference) is not dict or reference.get('kind') not in kinds:raise InputError('unsupported investigation dependency')
+            _guard_dependency_paths(state,kinds[reference['kind']],reference.get('target_id'))
+        return load(state,identifier,revision=revision)
     if kind=='cases':
         from .storage import verified_case
         return verified_case(state,identifier)
@@ -60,6 +98,7 @@ def _promote(state,folder,worker):
     if not isinstance(targets,list) or len(targets)>1:raise InputError('unexpected operation products')
     for target in targets:
         kind=target['kind'];identifier=target['id']
+        if kind not in ('cases','artifacts','comparisons'):raise InputError('unexpected managed product kind')
         source=fs.safe(folder/'work-state'/kind/identifier);destination=fs.safe(Path(state)/kind/identifier)
         root=folder/'work-state' if source.exists() else state
         loaded=_verify_target(root,kind,identifier,inputs=state)
@@ -74,11 +113,12 @@ def _promote(state,folder,worker):
 def _snapshots(state,operation,args,data,*,output=None):
     if data is None:return []
     references=[]
-    def add(kind,identifier):
+    def add(kind,identifier,revision=None):
         target_state=output if output is not None and (output/kind/identifier).exists() else state
-        report=_verify_target(target_state,kind,identifier,inputs=state)
+        report=_verify_target(target_state,kind,identifier,inputs=state,revision=revision)
         reference=dict(kind=kind,id=identifier,report_digest=fs.digest(report))
-        base=Path(target_state)/kind/identifier
+        if revision is not None:reference['revision']=revision
+        base=_snapshot_folder(target_state,kind,identifier,revision)
         reference['receipt_digest']=fs.digest(fs.read(base/'receipt.json',8192))
         if reference not in references:references.append(reference)
         return report
@@ -89,10 +129,13 @@ def _snapshots(state,operation,args,data,*,output=None):
     elif operation in ('os.collect','os.import','artifact.show'):add('artifacts',data['artifact_id'])
     elif operation in capabilities._diagnostics.CREATORS|capabilities._diagnostics.ARTIFACT_READS:
         add('artifacts',data['artifact_id'])
+    elif operation=='investigation.sources':
+        if data['investigation_id']!=args['investigation_id'] or data['revision']!=args['revision']:raise InputError('source context revision disagrees with request')
+        add('investigations',data['investigation_id'],data['revision'])
     elif operation=='code.execute':
         for call in data['calls']:
             for reference in call.get('snapshots',[]):
-                add(reference['kind'],reference['id'])
+                add(reference['kind'],reference['id'],reference.get('revision'))
                 if reference not in references:raise InputError('CodeMode retained snapshot identity mismatch')
     return references
 
@@ -173,7 +216,7 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
     stop_reason=worker.get('stop_reason') or ('cancelled' if worker['status']=='cancelled' else collection_status if collection_status not in (None,'completed') else None)
     value=dict(schema_version=1,run_id=folder.name,operation=request['operation'],status=worker['status'],data=data,
         executor_id=request['executor_id'],executor_identity_basis='caller_reported',context=plan['context'],versions=plan['versions'],
-        snapshots=snapshots,evidence=[dict(kind=s['kind'],id=s['id'],report_digest=s['report_digest']) for s in snapshots],
+        snapshots=snapshots,evidence=[dict(kind=s['kind'],id=s['id'],report_digest=s['report_digest'],**({'revision':s['revision']} if 'revision' in s else {})) for s in snapshots],
         limits=request['budget'],metrics=worker['metrics'],process=current.get('process'),stop_reason=stop_reason,
         stop_verified=True,cancellation_requested=(folder/'cancel.json').exists(),truncated=bool(truncated(data)),
         message=worker.get('message'),limitations=[
@@ -231,8 +274,8 @@ def result(state,run_id):
         from .code_runtime import verify_audit
         verify_audit(state,run_id,value['data'])
     for snapshot in value['snapshots']:
-        report=_verify_target(state,snapshot['kind'],snapshot['id'])
-        if fs.digest(report)!=snapshot['report_digest'] or fs.digest(fs.read(Path(state)/snapshot['kind']/snapshot['id']/'receipt.json',8192))!=snapshot['receipt_digest']:
+        report=_verify_target(state,snapshot['kind'],snapshot['id'],revision=snapshot.get('revision'))
+        if fs.digest(report)!=snapshot['report_digest'] or fs.digest(fs.read(_snapshot_folder(state,snapshot['kind'],snapshot['id'],snapshot.get('revision'))/'receipt.json',8192))!=snapshot['receipt_digest']:
             raise InputError('operation retained snapshot identity mismatch')
     return _present(state,plan,value,replayed=True)
 

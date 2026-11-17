@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=5
+SANITIZER_VERSION=6
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -134,6 +134,12 @@ def _known(doc,state_dir):
     for source in profile.get('sources',[]):
         add('NODE',source.get('host'));add('PATH',source.get('path'));add('USER',source.get('settings',{}).get('user'))
         for value in source.get('settings',{}).get('databases',{}).values():add('DB',value)
+    categories=dict(base_alias='DB',node_alias='NODE',node_identity='ID',cluster_identity='ID',infobase_identity='DB',
+        dbms_instance_identity='ID',sql_database_name='DB',dbms_database_identity='ID',source_commit='ID',journal_identity='ID')
+    for binding in doc.get('source_bindings',[]):
+        for key,fact in binding['passport']['facts'].items():
+            if key in categories:
+                for claim in fact['claims']:add(categories[key],claim['value'])
     for evidence in doc['evidence']:values[evidence['id']]='EVIDENCE'
     fields=dict.fromkeys(('host','hostname','node','observed_hostname','requested_node_label','computer','computer_name'),'NODE')
     fields.update(dict.fromkeys(('database','database_name','datname','base_name'),'DB'))
@@ -240,6 +246,12 @@ def _content(doc,excluded):
     assessment=doc.get('assessment') or {}
     causes=dict(confirmed='Причина подтверждена в указанной области',hypothesis='Есть обоснованная гипотеза',insufficient_data='Недостаточно данных для объяснения причины')
     lines=['## Симптом','',doc['task'],'','## Состояние объяснения','',causes[doc['cause_state']]]
+    from .source_passports import public_review
+    source_review=public_review(doc)
+    if source_review['unresolved_link_count']:
+        lines+=['','## Принадлежность источников','','Часть выводов зависит от неподтверждённых связей между источниками. '
+            'Эти связи требуют отдельной проверки; сохранённое объяснение остаётся заявлением harness. '
+            'Затронуто выводов: '+str(source_review['dependent_conclusion_count'])+'.']
     if 'summary' not in excluded and assessment.get('summary'):lines+=['',assessment['summary']]
     if 'facts' not in excluded:
         lines+=['','## Наблюдения','']
@@ -393,6 +405,8 @@ def prepare(state_dir,investigation_id,*,revision=None,include_versions=False,ex
             scopes={'synthetic','provided','controlled_real_background_job','controlled_loopback_http_service','not_established'}
             report=dict(schema_version=1,source_origin_scopes=sorted({a['source_origin'] if isinstance(a['source_origin'],str) and a['source_origin'] in scopes else 'unknown' for a in doc['attachments']}),
                         evidence=[dict(id=eid,truncated=record['truncated_before_cleanup'],sanitized_sha256=record['sanitized_sha256']) for eid,record in provenance.items()])
+            from .source_passports import public_review
+            report['source_review']=public_review(doc)
             if include_versions:
                 report['versions']={key:value if isinstance(value,str) and (bool(re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?',value)) if key=='product' else bool(re.fullmatch('[a-f0-9]{64}',value))) else None
                     for key,value in doc['versions'].items() if key in ('product','knowledge','skills_sha256','instructions_sha256')}

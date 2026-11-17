@@ -137,6 +137,7 @@ def main(argv=None):
     template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'),default='unknown')
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
+    source_context=commands.add_parser('source-context');source_context.add_argument('investigation_id');source_context.add_argument('--revision',type=int,required=True)
     investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
     investigation_update.add_argument('patch',type=Path);investigation_update.add_argument('--expected-revision',type=int,required=True)
     incident=commands.add_parser('incident-draft');incident.add_argument('investigation_id');incident.add_argument('--revision',type=int)
@@ -274,6 +275,9 @@ def main(argv=None):
         elif args.command=='template':
             from .incident_templates import plan
             result=plan(args.template_id,variant=args.variant,database_mode=args.database_mode,time_mode=args.time_mode)
+        elif args.command=='source-context':
+            from .investigations import source_context
+            result=source_context(args.state_dir,args.investigation_id,revision=args.revision)
         elif args.command in ('investigation-create','investigation-update','investigation'):
             from .investigations import create,revise,load,revision_folder
             from .inputs import read_snapshot,json_value
@@ -287,6 +291,9 @@ def main(argv=None):
             result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
             from .knowledge_review import review_investigation
             result['knowledge_review']=review_investigation(args.state_dir,result)
+            from .source_passports import context as source_context
+            review=source_context(result)
+            result['source_review']={key:review[key] for key in ('status','dependencies','needs_clarification','clarifications','limitations')}
         elif args.command in ('incident-draft','incident-preview','incident-edit','incident-export','incident-send-plan','incident-record-submission'):
             from . import incident_drafts as drafts
             if args.command=='incident-draft':

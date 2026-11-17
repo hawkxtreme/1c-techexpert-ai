@@ -56,7 +56,7 @@ def run(state,version=MODERN):
             process.stdin.write(notification);process.stdin.flush();wire_bytes+=len(notification)
         else:rpc('server/discover',{})
         catalogue=rpc('tools/list',{})
-        if len(catalogue['tools'])!=28:raise ValueError('Unexpected finite tool catalogue')
+        if len(catalogue['tools'])!=29:raise ValueError('Unexpected finite tool catalogue')
         before=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
         after=call('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/cached.json'))
         b=before['case_id'];a=after['case_id']
@@ -89,7 +89,7 @@ def run(state,version=MODERN):
             question=pair.find('question')
             question.text=question.text.replace('{BEFORE}',b).replace('{AFTER}',a).replace('{COMPARISON}',c)
         evaluated=private/'qa.xml';ET.ElementTree(evaluation).write(evaluated,encoding='utf-8',xml_declaration=True)
-        receipt=dict(product_version=__version__,protocol=version,catalogue_profile='direct',tool_count=28,verified_answers=10,
+        receipt=dict(product_version=__version__,protocol=version,catalogue_profile='direct',tool_count=29,verified_answers=10,
             llm_evaluation_performed=False,token_advantage_verified=False,native_platform_started=False,server_license_used=False,
             fixture_scope='retained transformed laboratory excerpts; not new native capture or full SC01 acceptance',
             state_dir=str(state),before_case=b,after_case=a,comparison_id=c,evaluation=str(evaluated),

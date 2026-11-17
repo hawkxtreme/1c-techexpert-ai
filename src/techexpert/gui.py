@@ -104,12 +104,13 @@ class InitHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _context(doc):
+        from .source_passports import setup_states
         return dict(investigation_id=doc['investigation_id'],revision=doc['revision'],task=doc['task'],
             template_id=doc['template']['id'],variant=doc['variant']['id'] if doc['variant'] else None,
             time_mode=doc['time_mode'],scale=doc['scale'],
             workflow_stage=doc.get('workflow_stage','initial_analysis'),continuation=doc.get('continuation'),
             observation_window_seconds=(doc['observation_plan']['duration_seconds'] if doc['observation_plan'] else doc['episode'].get('requested_window_seconds')),
-            profile_revision=doc['profile_snapshot']['revision'] if doc['profile_snapshot'] else None)
+            profile_revision=doc['profile_snapshot']['revision'] if doc['profile_snapshot'] else None,source_states=setup_states(doc))
 
     def _guard(self, *, write=False, api=False):
         hosts = self.headers.get_all('Host', [])
