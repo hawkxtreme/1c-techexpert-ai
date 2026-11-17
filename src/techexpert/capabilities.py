@@ -30,6 +30,7 @@ from .input_files import LIMITS as _INPUT_LIMITS
 from .input_adapters import fields as _input_fields
 INPUTS=obj(dict(inputs=dict(type='array',minItems=1,maxItems=16,items=obj(dict(path=FILE,kind=string(16,enum=['file','directory','zip'])),['path','kind'])),
     limits=dict(obj({k:integer(0 if k=='max_depth' else 1,v,v) for k,v in _INPUT_LIMITS.items()}),default={})),['inputs'])
+SAVED_SOURCE=obj(dict(kind=string(16,enum=['case','artifact']),id=CASE,source_id=string(16,pattern='s(?:[1-9]|[12][0-9]|3[0-2])')),['kind','id','source_id'])
 
 def route(arguments,required,source,impact,fields,*,timeout=60):
     strings={'case_id','artifact_id','comparison_id','knowledge_revision','content_sha256','id','evidence_id','sha256','body'}
@@ -62,8 +63,22 @@ ROUTES={
  'os.import':route(dict(measurements=FILE,**_input_fields(_sys.modules[__name__],single=True)),['measurements'],['provided OS metrics JSON or one approved catalogue member'],'private artifact snapshot',['artifact_id','result','sources']),
  'artifact.show':route(dict(artifact_id=CASE),['artifact_id'],['verified saved artifact'],'read saved evidence',['artifact_id','result','sources']),
 }
-
+# Keep the original13-operation compatibility workload separate from additions.
 BASE_API=tuple(ROUTES)
+ROUTES['source.compare']=route(dict(before=SAVED_SOURCE,after=SAVED_SOURCE),['before','after'],
+    ['two selected retained case/artifact sources and their bounded saved catalogue dependencies'],
+    'read verified saved bytes; no original paths, capture, event merge or cause judgment',
+    ['before','after','byte_relation','common_prefix_bytes','observation','input_duplicate','interpretation','framing','counts','dependencies'])
+ROUTES['source.compare']['data_schema']['properties'].update(byte_relation=dict(type='string',enum=['identical','extended_prefix','shortened_prefix','changed']),
+    common_prefix_bytes=dict(type='integer',minimum=0,maximum=16*MIB),dependencies=dict(type='array',maxItems=4),suggested_after_range=dict(type=['object','null']))
+for _side in ('before','after'):
+    ROUTES['source.compare']['data_schema']['properties'][_side]=obj(dict(kind=SAVED_SOURCE['properties']['kind'],id=CASE,
+        source_id=SAVED_SOURCE['properties']['source_id'],report_digest=string(64,pattern='[a-f0-9]{64}'),
+        receipt_digest=string(64,pattern='[a-f0-9]{64}'),context_digest=string(64,pattern='[a-f0-9]{64}'),
+        sha256=string(64,pattern='[a-f0-9]{64}'),bytes=dict(type='integer',minimum=0,maximum=16*MIB),crc32=dict(type='integer',minimum=0,maximum=2**32-1)),
+        ['kind','id','source_id','report_digest','receipt_digest','context_digest','sha256','bytes','crc32'])
+
+ROUTES['source.compare']['output_schema']=response_schema(ROUTES['source.compare']['data_schema'])
 ROUTES['input.inspect']=route(INPUTS['properties'],['inputs'],['explicit files/directories/ZIP metadata'],
     'save private bounded catalogue; no member extraction or analysis',['artifact_id','result','sources'])
 from . import diagnostic_adapters as _diagnostics
@@ -194,6 +209,9 @@ def execute(operation,args,state,output,*,stop=None):
         from .source_coverage import inspect_case,inspect_manifest
         options={k:args[k] for k in COVERAGE if k in args}
         data=inspect_case(state,args['case_id'],**options) if operation=='case.coverage' else inspect_manifest(args['manifest'],**options)
+    elif operation=='source.compare':
+        from .source_changes import compare
+        data=compare(state,**args)
     elif operation=='case.events':data=storage.list_native_events(state,**args)
     elif operation=='case.evidence':data=storage.read_evidence(state,**args)
     elif operation=='case.compare':data=storage.compare_cases(state,args['before'],args['after'],output_state_dir=output);targets=[dict(kind='comparisons',id=data['comparison_id'])]

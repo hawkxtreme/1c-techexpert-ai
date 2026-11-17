@@ -10,12 +10,13 @@ import json
 import os
 from pathlib import Path
 import stat
+import time
 from datetime import datetime, timezone
-from itertools import islice
 
 from .inputs import InputError, SnapshotReadError, MAX_FILE_BYTES, MAX_EVENTS, MAX_RECORD_BYTES
 from .input_files import chain
-from .native_tj_stream import Frames
+from .native_tj_stream import summarize_frames
+from . import reader_scope
 
 
 def _open(path):
@@ -71,27 +72,11 @@ def _read(stream, boundary, *, keep):
 
 
 def _framing(data, max_records, max_record_bytes):
-    frames = Frames(io.BytesIO(data), chunk_size=65536, max_input_bytes=MAX_FILE_BYTES, max_record_bytes=max_record_bytes)
-    frames.initialize()
-    cursor = terminated = frames.start
-    tail = None
-    count = 0
-    iterator = iter(frames)
-    try:
-        for frame in islice(iterator, max_records):
-            count += 1
-            cursor = frame['byte_end']
-            if frame['terminated']:
-                terminated = cursor
-            else:
-                start = frame['byte_start']
-                tail = dict(byte_start=start, byte_end=cursor, bytes=cursor-start,
-                    sha256=hashlib.sha256(memoryview(data)[start:cursor]).hexdigest(), open_quote=frame['open_quote'])
-    finally:
-        iterator.close()
-    return dict(boundary_basis='quote_aware_frame_not_valid_event', terminated_prefix_bytes=terminated,
-        incomplete_tail=tail, complete_scan=cursor == len(data), unframed_bytes=len(data)-cursor,
-        frame_attempts=count, max_records=max_records, max_record_bytes=max_record_bytes)
+    result = summarize_frames(io.BytesIO(data), size=len(data), max_records=max_records, max_record_bytes=max_record_bytes)
+    tail = result['incomplete_tail']
+    if tail is not None:
+        tail['sha256'] = hashlib.sha256(memoryview(data)[tail['byte_start']:tail['byte_end']]).hexdigest()
+    return result
 
 
 def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_record_bytes=MAX_RECORD_BYTES):
@@ -102,6 +87,8 @@ def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_r
     if '..' in path.parts:
         raise InputError('parent traversal in TJ prefix path')
     started = datetime.now(timezone.utc).isoformat()
+    started_monotonic = str(time.monotonic_ns())
+    scope = reader_scope.observe()
     before_chain = chain(path)
     path_identity = _identity(path.lstat())
     with _open(path) as stream:
@@ -129,9 +116,12 @@ def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_r
             raise SnapshotReadError('TJ prefix path was replaced or rotated during observation', 'source_replaced') from exc
         if min(sizes) < boundary or any(after < before for before, after in zip(sizes, sizes[1:])):
             raise SnapshotReadError('TJ source was truncated during prefix observation', 'source_truncated')
-    fingerprint = dict(method='tj-prefix-v1', file_identity=identity, byte_start=0, byte_end=boundary, sha256=checksum)
+    if reader_scope.observe() != scope:
+        scope = dict(profile=reader_scope.PROFILE, status='unknown', platform=scope['platform'], id=None)
+    fingerprint = dict(method='tj-prefix-v1', file_identity=identity, reader_scope=scope, byte_start=0, byte_end=boundary, sha256=checksum)
     acquisition = dict(fingerprint, snapshot_id=hashlib.sha256(json.dumps(fingerprint, sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
         started_at=started, finished_at=datetime.now(timezone.utc).isoformat(), observed_sizes=sizes,
+        started_monotonic_ns=started_monotonic, finished_monotonic_ns=str(time.monotonic_ns()),
         append_observed=max(sizes)>boundary, excluded_appended_bytes=max(sizes)-boundary,
         atomic_snapshot=False, coherence='two_equal_fixed_prefix_reads_same_observed_file_identity',
         collection_coverage='unknown', writer_protocol='not_verified_against_running_platform',

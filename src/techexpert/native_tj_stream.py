@@ -33,8 +33,12 @@ class Frames:
 
     def finish(self):
         """Read bounded remaining bytes without treating them as record attempts."""
-        self._bytes_iterator.close()
+        self.close()
         while not self.eof and self.seen<self.limit+1:self._read()
+
+    def close(self):
+        """Release generator buffers without reading or closing caller-owned I/O."""
+        self._bytes_iterator.close()
 
     @property
     def scan_size(self):return min(self.seen,self.limit)
@@ -74,3 +78,40 @@ class Frames:
             position+=1
         if start<position:
             yield dict(byte_start=start,byte_end=position,line=first_line,end_line=line,terminated=False,open_quote=quote is not None and not pending_quote,raw=None if oversized else bytes(payload))
+
+
+def summarize_frames(stream, *, size, max_records=100000, max_record_bytes=262144, point=None):
+    """Bounded framing only; a terminated frame is not an accepted native event.
+
+    The caller owns whole-source hash verification, including unframed bytes.
+    """
+    if (type(size) is not int or not 0 <= size <= 16*1024**2
+        or type(max_records) is not int or not 0 <= max_records <= 100000
+        or type(max_record_bytes) is not int or not 1 <= max_record_bytes <= 16*1024**2
+        or point is not None and (type(point) is not int or not 0 <= point < size)):
+        raise ValueError('invalid framing summary bounds')
+    frames = Frames(stream, chunk_size=65536, max_input_bytes=size, max_record_bytes=max_record_bytes)
+    frames.initialize()
+    cursor = terminated = frames.start
+    tail = selected = None
+    count = 0
+    iterator = iter(frames)
+    try:
+        for frame in islice(iterator, max_records):
+            count += 1
+            cursor = frame['byte_end']
+            if frame['terminated']:
+                terminated = cursor
+            else:
+                tail = dict(byte_start=frame['byte_start'], byte_end=cursor, bytes=cursor-frame['byte_start'], open_quote=frame['open_quote'])
+            if point is not None and frame['byte_start'] <= point < cursor:
+                selected = {key: frame[key] for key in ('byte_start', 'byte_end', 'line', 'end_line', 'terminated', 'open_quote')}
+    finally:
+        iterator.close()
+        frames.close()
+    result = dict(boundary_basis='quote_aware_frame_not_valid_event', terminated_prefix_bytes=terminated,
+        incomplete_tail=tail, complete_scan=cursor == size, unframed_bytes=size-cursor,
+        frame_attempts=count, max_records=max_records, max_record_bytes=max_record_bytes)
+    if point is not None:
+        result['point_frame'] = selected
+    return result
