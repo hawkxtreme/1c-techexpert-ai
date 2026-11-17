@@ -142,9 +142,16 @@ def _nested_stopped(state,folder,plan,current):
     return nested_observations(state,folder.name)['stop_verified']
 
 
+def _program_guard(state,folder,plan,*,finishing=False,reserve_bytes=0,reserve_files=0):
+    if plan['request']['operation']!='code.execute':return None
+    from .code_runtime import enforce_owned_limit
+    return enforce_owned_limit(state,folder.name,require_audit=finishing,reserve_bytes=reserve_bytes,reserve_files=reserve_files)
+
+
 def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None):
     request=plan['request'];data=worker['data']
     if not _nested_stopped(state,folder,plan,current):raise InputError('nested program jobs are active or unknown; retain evidence')
+    _program_guard(state,folder,plan,finishing=True)
     if request['operation']=='code.execute' and data is not None:
         from .code_runtime import verify_audit
         verify_audit(state,folder.name,data)
@@ -186,6 +193,7 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
         presented=_present(state,plan,value,replayed=False,strict=True,recovery_reason='')
         fs.write(prepared_path,dict(schema_version=1,value=value,sha256=fs.digest(value),plan_sha256=fs.digest(plan),
             worker_sha256=fs.digest(worker),full_reply_bytes=len(fs.encode(presented))))
+    _program_guard(state,folder,plan,finishing=True)
     recovery_reason=current.get('recovery_previous_reason') or (current.get('stop_reason') if replayed else None)
     if presented is None or replayed:
         presented=_present(state,plan,value,replayed=replayed,recovery_reason=recovery_reason)
@@ -196,6 +204,9 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
     if parent_guard:parent_guard(force=True)
     if _snapshots(state,request['operation'],request['arguments'],data)!=snapshots:raise InputError('promoted snapshot changed before result commit')
     if not output.exists():fs.write(output,value)
+    # Leave a bounded64KiB for the receipt and advisory status/journal. Large
+    # output/prepared files are measured before any public result receipt.
+    _program_guard(state,folder,plan,finishing=True,reserve_bytes=65536,reserve_files=2)
     fs.write(folder/'output-receipt.json',dict(sha256=fs.digest(value)))
     current.update(status=value['status'],finished_at=fs.stamp(),heartbeat_at=fs.stamp(),stop_verified=True,stop_reason=stop_reason)
     if recovery_reason:current['recovery_previous_reason']=recovery_reason
@@ -289,6 +300,8 @@ def run(state,request,*,parent_guard=None):
             if now-last_check>=.2:
                 last_check=now;usage=fs.inventory(folder);_space(folder)
                 if usage['bytes']>DISK:raise InputError('owned_disk_limit')
+                program_usage=_program_guard(state,folder,plan)
+                if program_usage is not None:usage=program_usage
                 for name in ('stdout.bin','stderr.bin','worker-result.json'):
                     path=folder/name
                     if path.exists() and path.stat().st_size>request['budget']['max_result_bytes']:raise InputError('output_limit')
@@ -312,6 +325,7 @@ def run(state,request,*,parent_guard=None):
             current['process']=process;current['stop_verified']=process['tree_finished'] and _nested_stopped(state,folder,plan,current)
             if not process['tree_finished']:raise InputError('owned process tree stop is unknown')
             current['stop_reason']=current.get('stop_reason') or process.get('guard_error') or process.get('stop_reason')
+            _program_guard(state,folder,plan)
             # Recovery must retain the controller's observed process metrics as
             # well as the worker payload before any promotion can begin.
             fs.record(folder,current,'worker_stopped')

@@ -59,6 +59,43 @@ def verify_audit(state,run_id,data):
     return journal
 
 
+def owned_usage(state,run_id,*,require_audit=False):
+    """Monitor the same owned paths in the worker, controller and recovery path."""
+    from .operations import _worker
+    folder,plan,source,journal=_audit(state,run_id,optional=not require_audit)
+    paths=[folder]
+    for call in journal['calls'] if journal else []:
+        identifier=call.get('run_id')
+        if not identifier:continue
+        child=fs.folder(state,identifier);paths.append(child)
+        # Admission is still writing its permit/receipt. Its folder is already
+        # counted; no product can be promoted before the sealed worker exists.
+        if not (child/'plan-receipt.json').exists():continue
+        child_plan=fs.plan(child)
+        if (child_plan['request']['operation_key']!='code-'+run_id+'-'+str(call['index'])
+            or fs.digest(child_plan['request'])!=call.get('request_sha256')):raise InputError('CodeMode child ownership mismatch')
+        if not (child/'worker-result.json').exists() or not (child/'worker-receipt.json').exists():continue
+        for target in _worker(child)['targets']:
+            kind=target['kind'];identity=target['id']
+            if (kind not in ('cases','artifacts','comparisons') or not isinstance(identity,str) or len(identity)!=32
+                or any(c not in 'abcdef0123456789' for c in identity)):raise InputError('invalid owned CodeMode product')
+            paths.append(fs.safe(Path(state)/kind/identity))
+    used=files=0
+    for path in dict.fromkeys(paths):
+        if not fs.safe(path).exists():continue
+        usage=fs.inventory(path);used+=usage['bytes'];files+=usage['files']
+    return dict(bytes=used,files=files,audit_available=source is not None and journal is not None,
+        scope='owned operation folders and sealed API products' if journal else 'outer folder only; API audit unavailable')
+
+
+def enforce_owned_limit(state,run_id,*,reserve_bytes=0,reserve_files=0,require_audit=False):
+    usage=owned_usage(state,run_id,require_audit=require_audit)
+    maximum=fs.plan(fs.folder(state,run_id))['request']['arguments']['resources']['max_owned_bytes']
+    if usage['bytes']+reserve_bytes>maximum:raise CodeError('owned_disk_limit','owned_disk_limit')
+    if usage['files']+reserve_files>1000:raise CodeError('owned_file_limit','owned_file_limit')
+    return usage
+
+
 def nested_observations(state,run_id):
     try:folder,plan,source,journal=_audit(state,run_id,optional=True)
     except (OSError,ValueError,KeyError,TypeError):return dict(stop_verified=False,status='unknown',calls=None)
@@ -94,6 +131,7 @@ def inspect_program(state,run_id):
         language=plan['request']['arguments']['language'],run_id=run_id,calls=journal['calls'] if journal else None,
         audit_available=source is not None and journal is not None,execution_status=journal.get('execution_status') if journal else 'unknown',
         saved_result_available=saved is not None,nested=nested_observations(state,run_id),
+        owned_disk=owned_usage(state,run_id),
         requires_ai_interpretation=True,limitations=['Inspection never restarts a program or collects original sources. Missing audit remains unknown.'])
 
 
@@ -112,8 +150,9 @@ class Runtime:
             actual=resource.getrlimit(resource.RLIMIT_AS)[0]
             if actual==resource.RLIM_INFINITY or actual>args['resources']['memory_bytes']:raise CodeError('isolation_unavailable','CodeMode address-space limit was not enforced.')
         self.stop=stop;self.scope=Scope(args['scope'],capabilities.CODE_API);self.resources=args['resources']
-        self.started=time.monotonic();self.deadline=self.plan['deadline_monotonic'];self.calls=[];self.inner_paths=[];self.last_guard=0
-        self.metrics=dict(calls_attempted=0,calls_started=0,api_response_bytes=0,observed_owned_bytes=0,observed_owned_files=0,steps=0)
+        self.started=time.monotonic();self.deadline=self.plan['deadline_monotonic'];self.calls=[];self.last_guard=0
+        self.metrics=dict(calls_attempted=0,calls_started=0,api_response_bytes=0,observed_owned_bytes=0,observed_owned_files=0,steps=0,
+            disk_observation_stage='program runtime; controller checks serialization and final commit separately')
         self.digest=_hash_source(args['program']);self.owner=identity
         self.common=dict(schema_version=1,parent_run_id=self.folder.name,program_sha256=self.digest,request_sha256=fs.digest(self.plan['request']))
         self.source=dict(self.common,program=args['program'],language=args['language'])
@@ -129,15 +168,8 @@ class Runtime:
         now=time.monotonic()
         if now>=self.deadline:raise CodeError('timeout','The whole program deadline was reached.')
         if not force and now-self.last_guard<.2:return
-        self.last_guard=now;paths=[self.folder,*self.inner_paths]
-        paths.extend(self.state/t['kind']/t['id'] for t in self.scope.products)
-        used=files=0
-        for path in dict.fromkeys(paths):
-            if not fs.safe(path).exists():continue
-            usage=fs.inventory(path);used+=usage['bytes'];files+=usage['files']
-        self.metrics.update(observed_owned_bytes=used,observed_owned_files=files)
-        if used>self.resources['max_owned_bytes']:raise CodeError('owned_disk_limit','Cumulative program-owned disk limit reached; partial evidence is retained.')
-        if files>1000:raise CodeError('owned_file_limit','Cumulative program-owned file limit reached.')
+        self.last_guard=now;usage=enforce_owned_limit(self.state,self.folder.name,require_audit=True)
+        self.metrics.update(observed_owned_bytes=usage['bytes'],observed_owned_files=usage['files'])
 
     def api(self,operation,arguments):
         from . import capabilities,operations,responses
@@ -158,7 +190,7 @@ class Runtime:
             if 'context' in self.plan['request']:request['context']=self.plan['request']['context']
             request=capabilities.normalize_request(request);self.scope.authorize(operation,request['arguments'])
             identifier=hashlib.sha256(request['operation_key'].encode()).hexdigest();child=fs.folder(self.state,identifier)
-            record.update(run_id=identifier,request_sha256=fs.digest(request),launch_state='dispatching');self.inner_paths.append(child)
+            record.update(run_id=identifier,request_sha256=fs.digest(request),launch_state='dispatching')
             self.flush('running');self.metrics['calls_started']+=1
             value=operations.run(self.state,request,parent_guard=self.guard)
             record.update(status=value['status'],snapshots=value.get('snapshots',[]),response_bytes=len(fs.encode(value)),
@@ -192,6 +224,7 @@ def run_program(state,output,args,*,stop=None):
             max_value_bytes=args['resources']['max_value_bytes'],stop=stop)
         value=machine.run();runtime.guard(force=True)
     except MemoryError as exc:
+        if machine is not None:runtime.metrics['steps']=machine.metrics['steps']
         exc.__traceback__=None;machine=None;gc.collect();execution='failed'
         diagnostic=dict(code='code_memory_limit',message='The isolated program memory limit was reached; prior API facts are retained.')
     except (CodeError,ValueError,TypeError,KeyError,IndexError,ArithmeticError,RecursionError) as exc:

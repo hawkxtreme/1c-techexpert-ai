@@ -207,6 +207,7 @@ return second
         self.assertEqual(large['status'],'succeeded',large);self.assertEqual(large['data']['value'],80)
         self.assertEqual(small['status'],'failed',small)
         self.assertEqual(small['data']['diagnostic']['code'],'code_memory_limit')
+        self.assertGreater(small['data']['metrics']['steps'],0,'OOM must retain the steps executed before memory exhaustion')
         if os.name!='nt':self.assertLessEqual(small['metrics']['effective_address_space_limit_bytes'],64*1024**2)
         else:self.assertEqual(small['process']['resource_usage']['enforced_job_memory_limit_bytes'],64*1024**2)
 
@@ -228,8 +229,28 @@ return second
             bindings=dict(selected=manifest),scope=dict(operations=['case.analyze'],manifests=[manifest]),
             resources=dict(max_owned_bytes=1024**2))
         self.assertIn(result['status'],('failed','partial'),result)
-        self.assertEqual(result['data']['metrics']['calls_started'],1)
+        from src.techexpert.code_runtime import inspect_program,nested_observations
+        calls=inspect_program(self.state,result['run_id'])['calls']
+        self.assertEqual(len(calls),1)
+        self.assertIsNotNone(calls[0]['run_id'])
+        deadline=time.monotonic()+8
+        while not nested_observations(self.state,result['run_id'])['stop_verified'] and time.monotonic()<deadline:time.sleep(.05)
+        self.assertTrue(nested_observations(self.state,result['run_id'])['stop_verified'])
         self.assertLessEqual(len(list((self.state/'cases').iterdir())),3)
+
+    def test_program_disk_limit_covers_worker_output_and_finalization_without_recovery_bypass(self):
+        from src.techexpert import operations
+        for count in (40,8):
+            with self.subTest(count=count):
+                result=self.program('return ["x" * 60000 for item in range('+str(count)+')]',resources=dict(max_owned_bytes=1024**2))
+                self.assertIn(result['status'],('failed','partial'),result['status'])
+                self.assertEqual(result['stop_reason'],'owned_disk_limit')
+                folder=self.state/'operations'/result['run_id']
+                self.assertTrue((folder/'worker-result.json').exists(),'Retain the partial files, rather than discarding evidence')
+                self.assertFalse((folder/'output-receipt.json').exists(),'Over-budget output must not be published')
+                with patch('src.techexpert.operation_process.run',side_effect=AssertionError('Recovery launched the program')):
+                    with self.assertRaisesRegex(ValueError,'owned_disk_limit'):operations.reconcile(self.state,result['run_id'])
+                    self.assertNotEqual(operations.result(self.state,result['run_id'])['status'],'succeeded')
 
     def test_program_has_the_same_thirteen_diagnostic_operations_as_direct_calls(self):
         from src.techexpert.capabilities import CODE_API
@@ -320,16 +341,18 @@ return api("knowledge.search", {"query": "очередь"})
                 except (OSError,ValueError,KeyError):pass
                 time.sleep(.04)
             self.assertIsNotNone(nested);self.assertEqual(nested['status'],'running')
+            controller=fs.read(fs.folder(self.state,run_id)/'status.json',65536)['owner']
             # The test owns this Popen handle. No termination by a discovered PID.
             p.kill();p.communicate(timeout=5)
             deadline=time.monotonic()+10
             while time.monotonic()<deadline:
-                identities=[nested['owner'],nested['child']]
+                identities=[controller,nested['owner'],nested['child']]
                 stopped=all(fs.inspect_process(i)['state'] in ('not_running','different_lifetime') for i in identities)
-                if stopped and (os.name=='nt' or fs.inspect_group(nested['child'])['state']=='stopped'):break
+                if stopped and (os.name=='nt' or all(fs.inspect_group(i)['state']=='stopped' for i in identities)):break
                 time.sleep(.05)
             self.assertTrue(stopped,'An owned nested worker outlived the observed manager death')
-            if os.name!='nt':self.assertEqual(fs.inspect_group(nested['child'])['state'],'stopped')
+            if os.name!='nt':
+                for identity in identities:self.assertEqual(fs.inspect_group(identity)['state'],'stopped')
             self.assertEqual(len(list((self.state/'operations').iterdir())),2)
             with patch('src.techexpert.operation_process.run',side_effect=AssertionError('Read restarted the program')):
                 self.assertEqual(operations.result(self.state,run_id)['run_id'],run_id)
