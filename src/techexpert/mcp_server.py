@@ -36,7 +36,9 @@ def _bounded(value,depth=0,counter=None):
         for k,v in value.items():_bounded(k,depth+1,counter);_bounded(v,depth+1,counter)
     elif isinstance(value,list):
         for v in value:_bounded(v,depth+1,counter)
-    elif isinstance(value,str) and len(value)>65536:raise InputError('MCP string exceeds limits')
+    elif isinstance(value,str):
+        if len(value)>65536:raise InputError('MCP string exceeds limits')
+        value.encode('utf-8')  # Reject escaped lone surrogates before dispatch or framing.
 
 
 class _FramedOutput:

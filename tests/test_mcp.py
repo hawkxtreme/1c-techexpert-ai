@@ -259,4 +259,38 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(value['protocol'],MODERN)
 
 
+    def test_huge_numeric_arguments_return_tool_error_and_keep_connection(self):
+        p,q=self.start();big=10**400
+        inputs=[('techexpert_knowledge_card',dict(self.args(),budget=dict(max_result_bytes=big))),
+            ('techexpert_knowledge_card',dict(self.args(),budget=dict(timeout_seconds=big))),
+            ('techexpert_knowledge_card',self.args(card_id='SC01-ORDER-LOAD',limit=big)),
+            ('techexpert_os_collect',self.args(transport='local',duration_seconds=-big))]
+        for index,(name,args) in enumerate(inputs,1):
+            self.send(p,'tools/call',dict(name=name,arguments=args),identifier=index)
+            result=self.receive(q,index)['result'];self.assertTrue(result['isError'])
+            self.assertEqual(result['structuredContent']['status'],'invalid_input')
+        self.send(p,'ping',identifier=5);self.assertIn('result',self.receive(q,5));self.assertFalse(self.state.exists())
+
+    def test_huge_number_in_another_request_does_not_cancel_the_running_collection(self):
+        p,q=self.start();self.send(p,'tools/call',dict(name='techexpert_os_collect',
+            arguments=self.args('survive-invalid-other-request',transport='local',duration_seconds=4,interval_seconds=1)))
+        deadline=time.monotonic()+5
+        while time.monotonic()<deadline and not list(self.state.glob('operations/*/worker-started.json')):time.sleep(.02)
+        self.assertTrue(list(self.state.glob('operations/*/worker-started.json')))
+        self.send(p,'tools/call',dict(name='techexpert_knowledge_card',arguments=dict(self.args(),budget=dict(max_result_bytes=10**400))),identifier=2)
+        self.assertTrue(self.receive(q,2)['result']['isError'])
+        self.send(p,'ping',identifier=3);self.assertIn('result',self.receive(q,3))
+        self.assertEqual(self.receive(q)['result']['structuredContent']['status'],'succeeded')
+        self.assertEqual(len(list(self.state.glob('operations/*'))),1);self.assertFalse(list(self.state.glob('kernel-calls/*/cancel.json')))
+
+    def test_surrogate_escape_in_id_or_metadata_is_rejected_then_ping_still_works(self):
+        p,q=self.start()
+        values=[dict(jsonrpc='2.0',id='\ud800',method='ping',params={'_meta':dict(META)}),
+            dict(jsonrpc='2.0',id=2,method='ping',params={'_meta':dict(META,**{'io.modelcontextprotocol/protocolVersion':'\ud800'})})]
+        for v in values:
+            p.stdin.write((json.dumps(v,ensure_ascii=True)+'\n').encode('utf-8'));p.stdin.flush()
+            line=q.get(timeout=5);self.assertIsNotNone(line,'Invalid Unicode must not close the transport')
+            self.assertEqual(json.loads(line)['error']['code'],-32700)
+        self.send(p,'ping',identifier=3);self.assertIn('result',self.receive(q,3));self.assertFalse(self.state.exists())
+
 if __name__=='__main__':unittest.main()

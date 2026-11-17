@@ -82,7 +82,8 @@ def validate(value,schema):
             or 'pattern' in schema and not re.fullmatch(schema['pattern'],value)):
             raise InputError('invalid bounded operation text')
     if kind in ('number','integer'):
-        if not math.isfinite(value) or not schema.get('minimum',-math.inf)<=value<=schema.get('maximum',math.inf):raise InputError('operation argument outside limits')
+        if (not schema.get('minimum',-math.inf)<=value<=schema.get('maximum',math.inf)
+            or type(value) is float and not math.isfinite(value)):raise InputError('operation argument outside limits')
     if 'enum' in schema and value not in schema['enum']:raise InputError('unsupported operation argument value')
     return value
 
