@@ -25,6 +25,9 @@ OS=obj(dict(transport=string(8,enum=['local','ssh','winrm'],default='local'),hos
     identity_file=FILE,known_hosts_file=FILE))
 OS['properties']['port'].pop('default')
 OS['properties']['max_bytes'].pop('default')
+from .input_files import LIMITS as _INPUT_LIMITS
+INPUTS=obj(dict(inputs=dict(type='array',minItems=1,maxItems=16,items=obj(dict(path=FILE,kind=string(16,enum=['file','directory','zip'])),['path','kind'])),
+    limits=dict(obj({k:integer(0 if k=='max_depth' else 1,v,v) for k,v in _INPUT_LIMITS.items()}),default={})),['inputs'])
 
 def route(arguments,required,source,impact,fields,*,timeout=60):
     strings={'case_id','artifact_id','comparison_id','knowledge_revision','content_sha256','id','evidence_id','sha256','body'}
@@ -36,7 +39,7 @@ def route(arguments,required,source,impact,fields,*,timeout=60):
         impact=impact,data_schema=data_schema,output_schema=response_schema(data_schema))
 
 ROUTES={
- 'case.analyze':route(dict(manifest=FILE),['manifest'],['selected manifest and declared stable files'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
+ 'case.analyze':route(dict(manifest=FILE,input_plan=CASE),['manifest'],['selected manifest and declared stable files or approved input catalogue members'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
  'case.show':route(dict(case_id=CASE),['case_id'],['verified saved case'],'read retained case; no original-path access',['case_id','sources']),
  'case.coverage':route(dict(case_id=CASE,**COVERAGE),['case_id'],['verified saved TJ'],'derive coverage from retained bytes',['sources','limitations']),
  'case.events':route(dict(case_id=CASE,source_id=string(16,pattern='s[1-9][0-9]*'),event=string(64),
@@ -59,6 +62,8 @@ ROUTES={
 }
 
 BASE_API=tuple(ROUTES)
+ROUTES['input.inspect']=route(INPUTS['properties'],['inputs'],['explicit files/directories/ZIP metadata'],
+    'save private bounded catalogue; no member extraction or analysis',['artifact_id','result','sources'])
 from . import diagnostic_adapters as _diagnostics
 import sys as _sys
 ROUTES.update(_diagnostics.routes(_sys.modules[__name__]))
@@ -149,6 +154,9 @@ def normalize_request(value):
     if operation in ('source.check','case.coverage'):
         from .source_coverage import validate_request as coverage_request
         args.update(coverage_request(**{k:args[k] for k in COVERAGE if k in args}))
+    if operation=='input.inspect':
+        from .input_files import normalize
+        args=normalize(args['inputs'],args['limits'])
     if operation=='os.collect':
         from .os_metrics import validate_request as os_request
         args=os_request(args)
@@ -166,7 +174,15 @@ def normalize_request(value):
 def execute(operation,args,state,output,*,stop=None):
     from . import storage
     targets=[]
-    if operation=='case.analyze':data=storage.investigate(args['manifest'],output);targets=[dict(kind='cases',id=data['case_id'])]
+    if operation=='case.analyze':
+        if 'input_plan' in args:
+            from .input_intake import analyze
+            data=analyze(state,output,args['manifest'],args['input_plan'])
+        else:data=storage.investigate(args['manifest'],output)
+        targets=[dict(kind='cases',id=data['case_id'])]
+    elif operation=='input.inspect':
+        from .input_intake import inspect
+        data=inspect(output,**args);targets=[dict(kind='artifacts',id=data['artifact_id'])]
     elif operation=='case.show':
         from .knowledge_review import review_legacy_report
         data=storage.verified_case(state,args['case_id']);data=dict(data,knowledge_review=review_legacy_report(data))

@@ -125,6 +125,7 @@ class ManagedOperationTests(unittest.TestCase):
         from src.techexpert.investigations import create
         doc=create(self.state,dict(task='Read exact saved source context'))
         call('investigation.sources',investigation_id=doc['investigation_id'],revision=1)
+        call('input.inspect',inputs=[dict(path=str(ROOT/'tests/fixtures/order-load/baseline-native.txt'),kind='file')])
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

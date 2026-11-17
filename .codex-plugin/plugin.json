@@ -1,6 +1,6 @@
 {
   "name": "1c-techexpert-ai",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "description": "Расследование технических проблем 1С с ИИ текущего harness, локальными инструментами и комплектной базой знаний.",
   "author": {
     "name": "1C TechExpert AI contributors"
@@ -16,8 +16,14 @@
     "longDescription": "Настройка независимых источников, проверяемые наблюдения, поиск знаний и проверка исправления в текущем чате.",
     "developerName": "1C TechExpert AI contributors",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "brandColor": "#FFE45C",
-    "defaultPrompt": ["Помоги настроить источники 1С", "Помоги разобраться с проблемой 1С"]
+    "defaultPrompt": [
+      "Помоги настроить источники 1С",
+      "Помоги разобраться с проблемой 1С"
+    ]
   }
 }

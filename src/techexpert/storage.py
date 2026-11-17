@@ -97,13 +97,23 @@ def job_report(bundle):
                             'Проверить причины задержки по дополнительным свидетельствам; очередь пока неизвестна.'])
 
 
-def investigate(manifest_path, state_dir):
+def investigate(manifest_path, state_dir, *, intake=None):
     bundle = load_manifest(manifest_path)
+    if intake is not None:
+        selected=intake['selected']
+        if len(selected)!=len(bundle['sources']):raise InputError('selected input capture is incomplete')
+        for number,(source,capture) in enumerate(zip(bundle['sources'],selected),1):
+            if (source['id']!=f's{number}' or source['path']!=capture['path']
+                or source['size']!=capture['bytes'] or source['sha256']!=capture['sha256']):raise InputError('selected input capture integrity mismatch')
+            origin=capture['input_origin'];source['input_origin']=dict(origin)
+            source['path']=origin['path']+('!/'+origin['member'] if origin['kind']=='zip' else '/'+origin['member'] if origin['kind']=='directory' else '')
+            bundle['source_attempts'][number-1]['path']=source['path']
     has_correlation = bundle['manifest'].get('correlation_profile') == '1c-file-job-markers-v1'
     result = job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])
     from .source_coverage import summarize_bundle
     result['source_coverage']=summarize_bundle(bundle)
     result['source_acquisition']=bundle['source_attempts']
+    if intake is not None:result['input_intake']=intake
     if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
         result['order_load']=analyze_order_load(bundle,result)
     native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']

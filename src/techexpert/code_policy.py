@@ -17,7 +17,8 @@ def schemas(cap,api_operations):
         cases=cap.array(cap.CASE,100),artifacts=cap.array(cap.CASE,100),comparisons=cap.array(cap.CASE,100),
         investigations=cap.array(cap.obj(dict(id=cap.CASE,revision=cap.integer(1,1000,1)),['id','revision']),100),
         manifests=cap.array(cap.FILE,64),measurements=cap.array(cap.FILE,64),
-        collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap)))
+        collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8),
+        intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap)))
     return dict(program=dict(type='string',minLength=1,maxLength=65536,x_multiline=True),
         language=cap.string(32,enum=['bounded-python-v1'],default='bounded-python-v1'),
         bindings=dict(type='object',maxProperties=64,additionalProperties=True,default={},x_bounded_json=16384),
@@ -38,6 +39,8 @@ def normalize(arguments):
     properties=cap.ROUTES['code.execute']['input_schema']['properties']
     for field in ('scope','resources'):result[field]=cap.validate(result[field],properties[field])
     for field in ('manifests','measurements'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
+    from .input_files import normalize as intake_request
+    for profile in result['scope']['intakes']:profile['settings']=intake_request(profile['settings']['inputs'],profile['settings']['limits'])
     for profile in result['scope']['collectors']:
         settings=validate_request(profile['settings'])
         for field in ('identity_file','known_hosts_file'):
@@ -62,12 +65,17 @@ class Scope:
         self.investigations={(item['id'],item['revision']) for item in value.get('investigations',[])}
         self.imported=set();self.collector_runs=[0]*len(value['collectors']);self.products=[]
         self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql')}
+        self.intake_runs=[0]*len(value.get('intakes',[]))
 
     def authorize(self,operation,arguments):
         if operation not in self.api_operations or operation not in self.operations:raise CodeError('scope_denied','Operation is outside the caller-selected API scope.')
         def target(kind,identifier):
             if identifier not in self.ids[kind]:raise CodeError('scope_denied','Target is outside the caller-selected resource scope.')
-        if operation=='investigation.sources':
+        if operation=='input.inspect':
+            selected=next((i for i,p in enumerate(self.value['intakes']) if p['settings']==arguments and self.intake_runs[i]<p['max_runs']),None)
+            if selected is None:raise CodeError('scope_denied','Input inspection is outside the exact approved paths, limits or repeat count.')
+            self.intake_runs[selected]+=1
+        elif operation=='investigation.sources':
             if (arguments['investigation_id'],arguments['revision']) not in self.investigations:raise CodeError('scope_denied','Investigation revision is outside the approved source context.')
         elif operation.startswith('case.') and operation not in ('case.analyze','case.compare'):target('cases',arguments['case_id'])
         elif operation=='case.compare':
@@ -98,6 +106,7 @@ class Scope:
             if identity in self.imported:raise CodeError('scope_denied','Repeated measurements import requires a separately reviewed plan.')
             self.imported.add(identity)
         elif operation in ('case.analyze','source.check','os.import'):
+            if operation=='case.analyze' and arguments.get('input_plan'):target('artifacts',arguments['input_plan'])
             field='measurements' if operation=='os.import' else 'manifests'
             key=path_key(arguments['measurements' if operation=='os.import' else 'manifest'])
             if key not in {path_key(p) for p in self.value[field]}:raise CodeError('scope_denied','Input path is outside the caller-selected source scope.')
@@ -119,7 +128,7 @@ class Scope:
     def produced(self,operation,data):
         if not isinstance(data,dict):return
         field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-            **{op:('artifact_id','artifacts') for op in ('os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
+            **{op:('artifact_id','artifacts') for op in ('input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
