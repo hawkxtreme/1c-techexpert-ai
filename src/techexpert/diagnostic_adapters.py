@@ -7,7 +7,7 @@ OPERATIONS=('artifact.evidence','apdex.import','jr.import','jr.events','jr.recor
     'source.snapshot','source.search','source.read','rac.observe','postgresql.observe')
 CREATORS={'apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe'}
 ARTIFACT_READS={'artifact.evidence','jr.events','jr.record','source.search','source.read'}
-RAC_QUERIES=('clusters','infobases','sessions','connections','processes','servers')
+RAC_QUERIES=('clusters','infobases','sessions','connections','processes','servers','infobase_info')
 PG_QUERIES=('capabilities','activity','locks','database_stats','statements')
 
 
@@ -30,8 +30,8 @@ def connection_schema(cap,kind):
 def scope_schemas(cap):
     profiles={}
     for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES)]:
-        fields=dict(settings=connection_schema(cap,kind),queries=cap.array(cap.string(32,enum=list(queries)),len(queries)),max_calls=cap.integer(1,64,len(queries)))
-        if kind=='rac':fields.update(clusters=cap.array(cap.string(36),100),any_cluster=dict(type='boolean',default=False))
+        fields=dict(settings=connection_schema(cap,kind),queries=cap.array(cap.string(32,enum=list(queries)),len(queries)),max_calls=cap.integer(1,64,6 if kind=='rac' else len(queries)))
+        if kind=='rac':fields.update(clusters=cap.array(cap.string(36),100),any_cluster=dict(type='boolean',default=False),infobases=dict(type='array',items=cap.string(36),maxItems=100))
         profiles[kind]=cap.array(cap.obj(fields,['settings']),8)
     return dict(source_snapshots=cap.array(source_schema(cap),32),journals=cap.array(journal_schema(cap),32),**profiles)
 
@@ -70,7 +70,7 @@ def routes(cap):
     }
     for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES)]:
         settings=connection_schema(cap,kind);args=dict(settings['properties'],query=cap.string(32,enum=list(queries)))
-        if kind=='rac':args['cluster']=cap.string(36)
+        if kind=='rac':args.update(cluster=cap.string(36),infobase=cap.string(36))
         result[kind+'.observe']=route(args,settings['required']+['query'],['explicit existing '+kind+' connection and read rights'],
             'fixed read-only query; private snapshot, unavailable visibility remains unknown',outputs,timeout=35 if kind=='rac' else 25)
     for name,value in result.items():
@@ -127,11 +127,11 @@ def normalize(operation,args):
         if lower is not None and upper is not None and lower>=upper:raise InputError('APDEX start must precede end')
         result['measurements']=str(Path(result['measurements']).absolute())
     elif operation in ('rac.observe','postgresql.observe'):
-        kind=operation.split('.')[0];query=result['query'];settings={k:v for k,v in result.items() if k not in ('query','cluster')}
+        kind=operation.split('.')[0];query=result['query'];settings={k:v for k,v in result.items() if k not in ('query','cluster','infobase')}
         normalize_connection(kind,settings)
         if kind=='rac':
             from .rac import RacClient
-            RacClient(**settings).command(query,cluster=result.get('cluster'))
+            RacClient(**settings).command(query,cluster=result.get('cluster'),infobase=result.get('infobase'))
     return result
 
 
@@ -163,7 +163,7 @@ def execute(operation,args,state,output,*,stop=None):
         return data,[]
     elif operation=='rac.observe':
         from .rac import RacClient,collect_rac
-        data=collect_rac(output,RacClient(**{k:v for k,v in args.items() if k not in ('query','cluster')}),args['query'],cluster=args.get('cluster'),should_stop=stop)
+        data=collect_rac(output,RacClient(**{k:v for k,v in args.items() if k not in ('query','cluster','infobase')}),args['query'],cluster=args.get('cluster'),infobase=args.get('infobase'),should_stop=stop)
     elif operation=='postgresql.observe':
         from .postgresql import PsqlClient,observe
         data=observe(output,PsqlClient(**{k:v for k,v in args.items() if k!='query'}),args['query'],should_stop=stop)

@@ -1,5 +1,4 @@
 """Local readiness and reusable source configuration; no connection side effects."""
-import configparser
 import hashlib
 import json
 import os
@@ -9,7 +8,6 @@ import shutil
 import sys
 import uuid
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 from . import __version__
 from .inputs import InputError, read_snapshot, json_value
@@ -48,39 +46,8 @@ def doctor(state_dir=None):
 
 
 def read_starter(path):
-    data = read_snapshot(path, 1024*1024)
-    try:
-        text = data.decode('utf-8-sig')
-    except UnicodeDecodeError:
-        text = data.decode('cp1251')
-    parser = configparser.RawConfigParser(strict=True, interpolation=None)
-    try:
-        parser.read_string(text)
-    except configparser.Error as exc:
-        raise InputError('unsupported or ambiguous starter list') from exc
-    bases = []
-    for section in parser.sections():
-        connection = parser.get(section, 'Connect', fallback='')
-        if not connection:
-            continue
-        values = {m.group(1).lower(): m.group(2).replace('""', '"') for m in
-                  re.finditer(r'(\w+)\s*=\s*"((?:[^"\r\n]|"")*)"\s*;?', connection)}
-        mode, clean = 'unknown', ''
-        if values.get('file'):
-            mode, clean = 'file', values['file']
-        elif values.get('srvr') and values.get('ref'):
-            mode, clean = 'server', f"Srvr={values['srvr']};Ref={values['ref']}"
-        elif values.get('ws'):
-            url = urlsplit(values['ws'])
-            host = url.hostname or ''
-            if ':' in host:
-                host = '[' + host + ']'
-            if url.port:
-                host += ':' + str(url.port)
-            clean = urlunsplit((url.scheme, host, url.path, '', ''))
-        identity = hashlib.sha256((str(Path(path).resolve()) + '\0' + section).encode()).hexdigest()[:16]
-        bases.append(dict(id=identity, name=section, mode=mode, connection=clean))
-    return bases
+    from .discovery import inspect_starter
+    return inspect_starter(path)['bases']
 
 
 def validate_profile(value):
@@ -179,20 +146,9 @@ def validate_source_settings(kind,value,base_ids):
     return result
 
 
-def discover_ras(endpoint,*,executable='rac',docker_container=None,cluster=None):
-    from .rac import RacClient,parse_rows
-    if Path(executable).name.lower() not in ('rac','rac.exe'):raise InputError('choose the installed rac executable')
-    client=RacClient(endpoint,executable=executable,docker_container=docker_container)
-    if cluster is None:
-        return dict(clusters=parse_rows(client.execute('clusters')),bases=[],temporal_scope='current_snapshot_only')
-    rows=parse_rows(client.execute('infobases',cluster=cluster))
-    bases=[]
-    for row in rows:
-        if not row.get('name') or not row.get('infobase'):raise InputError('incomplete RAC infobase row')
-        identity=hashlib.sha256((endpoint+'\0'+cluster+'\0'+row['infobase']).encode()).hexdigest()[:24]
-        bases.append(dict(id=identity,name=row['name'],mode='server',connection='RAS='+endpoint+';Cluster='+cluster+';IB='+row['infobase']))
-    return dict(cluster=cluster,endpoint=endpoint,bases=bases,temporal_scope='current_snapshot_only',
-                limitations=['SQL address and historical job ownership are not established by summary list.'])
+def discover_ras(endpoint,*,executable='rac',docker_container=None,cluster=None,infobase=None):
+    from .discovery import inspect_ras
+    return inspect_ras(endpoint,executable=executable,docker_container=docker_container,cluster=cluster,infobase=infobase)
 
 
 def check_profile(value):

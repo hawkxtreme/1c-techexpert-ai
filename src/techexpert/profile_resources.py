@@ -78,7 +78,7 @@ def validate(value):
     """Validate schema2 without accessing any configured file, host or executable."""
     from .profiles import _validate_legacy_profile,validate_source_settings
     from .source_passports import interval
-    _object(value,('schema_version','name','revision','capability_status','bases','sources',*RESOURCE_KINDS),('schema_version','name','bases','sources'))
+    _object(value,('schema_version','name','revision','capability_status','bases','sources','registration_decisions',*RESOURCE_KINDS),('schema_version','name','bases','sources'))
     if type(value['schema_version']) is not int or value['schema_version']!=2:raise InputError('profile schema_version=2 required')
     rows={kind:_rows(value.get(kind,[]),500 if kind=='database_bindings' else 200) for kind in RESOURCE_KINDS}
     nodes=[]
@@ -100,7 +100,7 @@ def validate(value):
         instances.append(dict(id=_text(row['id'],80),name=_text(row['name'],120),node_id=_ref(row.get('node_id'),node_map),connection_id=cid,reported_identity=_text(row.get('reported_identity',''),empty=True)))
     instance_map={r['id']:r for r in instances};bases=[]
     for row in _rows(value['bases'],100):
-        _object(row,('id','name','mode','connection_method','connection_id','connection_parameters','mode_origin','connection_origin','applicability','node_id','cluster_id','reported_identity'),('id','name','mode'))
+        _object(row,('id','name','mode','connection_method','connection_id','connection_parameters','mode_origin','connection_origin','applicability','node_id','cluster_id','reported_identity','registrations'),('id','name','mode'))
         mode=row['mode'];cid=_ref(row.get('connection_id'),connection_map)
         if mode not in ('file','server','unknown'):raise InputError('invalid infobase storage mode')
         if cid is not None and connection_map[cid]['kind']!='onec':raise InputError('infobase requires an application connection')
@@ -118,6 +118,9 @@ def validate(value):
         bases.append(dict(id=_text(row['id'],80),name=_text(row['name'],120),mode=mode,connection_method=method,connection_id=cid,connection_parameters=params,
             mode_origin=_origin(row.get('mode_origin'),mode!='unknown'),connection_origin=_origin(row.get('connection_origin'),method!='unknown'),applicability=interval(row.get('applicability',{})),
             node_id=_ref(row.get('node_id'),node_map),cluster_id=cluster_id,reported_identity=_text(row.get('reported_identity',''),empty=True)))
+        if 'registrations' in row:
+            from .registrations import validate_registrations
+            bases[-1]['registrations']=validate_registrations(row['registrations'])
     if not bases:raise InputError('profile requires at least one infobase')
     base_map={r['id']:r for r in bases};databases=[]
     for row in rows['database_bindings']:
@@ -150,6 +153,10 @@ def validate(value):
         sources.append(dict(id=_text(row['id'],80),type=kind,path=_text(row.get('path',''),empty=kind in ('os','rac','sql')),base_ids=bid,node_id=_ref(row.get('node_id'),node_map),cluster_id=cluster_id,
             connection_id=cid,dbms_instance_id=instance_id,database_ids=dids,settings=settings,status='not_checked'))
     result=dict(schema_version=2,name=_text(value['name'],120),nodes=nodes,connections=connections,clusters=clusters,dbms_instances=instances,bases=bases,database_bindings=databases,sources=sources,capability_status='configured_not_connected')
+    if 'registration_decisions' in value:
+        decisions=value['registration_decisions']
+        if type(decisions) is not dict or len(decisions)>100 or any(not re.fullmatch('match-[a-f0-9]{20}',key) or item!='separate' for key,item in decisions.items()):raise InputError('invalid registration decision')
+        result['registration_decisions']=dict(decisions)
     # Reuse the existing bounded adapter/settings validation on a pure projection.
     view=_validate_legacy_profile(_project(result))
     for source,effective in zip(result['sources'],view['sources']):
@@ -266,7 +273,7 @@ def editor_context(profile):
     return dict(profile=graph,view=effective_profile(graph),connection_bindings=bindings,connections=list(connections.values()),scope='configuration_only_not_connected')
 
 
-def compose_profile(before,view,*,connection_bindings=None,connection_edits=None):
+def compose_profile(before,view,*,connection_bindings=None,connection_edits=None,base_registrations=None,discovery_resources=None,base_merge=None,registration_decisions=None):
     """Compile the simple GUI view without discarding the canonical graph.
 
     Shared edits are explicit. A changed per-card endpoint cannot silently change
@@ -344,6 +351,11 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
         if old is not None and item['mode']==old['mode'] and item['connection'] in (baseline['connection'],current['connection']):bases.append(deepcopy(old))
         else:
             row=deepcopy(lookup(fresh,'bases',item['id']))
+            row['mode_origin']['origin']='configured_input'
+            row['connection_origin']['origin']='configured_input'
+            if old is not None:
+                row['mode_origin']=deepcopy(old['mode_origin']) if item['mode']==old['mode'] else dict(basis=row['mode_origin']['basis'],origin='user_override')
+                row['connection_origin']['origin']='user_override'
             copy_resource('connections',row['connection_id']);copy_resource('clusters',row['cluster_id']);copy_resource('nodes',row['node_id'])
             bases.append(row)
     result['bases']=bases;base_ids={r['id'] for r in bases}
@@ -389,8 +401,17 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
             else:row['connection_id']=cid
         elif old is None:copy_resource('connections',row['connection_id']);copy_resource('clusters',row['cluster_id'])
         sources.append(row)
-    result['sources']=sources;result=validate(result)
-    return dict(profile=result,impact=resource_impact(before,result),invalidated_claims=invalidated,editor=editor_context(result),saved=False,connected=False)
+    result['sources']=sources
+    from .registrations import apply_registration_claims,merge_discovery_resources,candidate_matches,merge_profile_bases,source_suggestions
+    result=validate(apply_registration_claims(merge_discovery_resources(result,discovery_resources),base_registrations,previous=original if before is not None else None))
+    if base_merge is not None:
+        if type(base_merge) is not dict or set(base_merge)!={'keep_id','remove_ids'}:raise InputError('invalid candidate merge choice')
+        result=merge_profile_bases(result,base_merge['keep_id'],base_merge['remove_ids'])
+    if registration_decisions is not None:
+        candidate_ids={row['id'] for row in candidate_matches(result)['groups']}
+        if type(registration_decisions) is not dict or set(registration_decisions)-candidate_ids:raise InputError('registration decision refers to changed candidates')
+        result['registration_decisions']=dict(registration_decisions);result=validate(result)
+    return dict(profile=result,impact=resource_impact(before,result),invalidated_claims=invalidated,editor=editor_context(result),matches=candidate_matches(result),source_suggestions=source_suggestions(result),saved=False,connected=False)
 
 
 def _references(row):

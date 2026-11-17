@@ -193,6 +193,9 @@ class InitHandler(BaseHTTPRequestHandler):
             elif self.path == '/api/source-help':
                 from .source_help import catalogue
                 self._json(200,catalogue())
+            elif self.path == '/api/starter-location':
+                from .discovery import default_starter_path
+                path=default_starter_path();self._json(200,dict(path=str(path) if path is not None else None,checked=False))
             elif self.path == '/api/context':
                 from .investigations import load
                 self._json(200,self._context(load(self.server.state_dir,self.server.investigation_id)) if self.server.investigation_id else None)
@@ -229,15 +232,17 @@ class InitHandler(BaseHTTPRequestHandler):
                 patch={k:v for k,v in data.items() if k!='expected_revision'}
                 result=self._context(revise(self.server.state_dir,self.server.investigation_id,patch,expected_revision=data.get('expected_revision')))
             elif self.path=='/api/ras':
-                if set(data)-{'endpoint','executable','docker_container','cluster'}:raise ValueError('Unsupported RAS parameter')
+                if set(data)-{'endpoint','executable','docker_container','cluster','infobase'}:raise ValueError('Unsupported RAS parameter')
+                if type(data.get('endpoint')) is not str or ('executable' in data and type(data['executable']) is not str):raise ValueError('RAS endpoint and executable must be text')
+                if any(data.get(key) is not None and type(data[key]) is not str for key in ('docker_container','cluster','infobase')):raise ValueError('RAS selection must be text or null')
                 result=profiles.discover_ras(data.get('endpoint'),executable=data.get('executable','rac'),
-                                            docker_container=data.get('docker_container') or None,cluster=data.get('cluster') or None)
+                                            docker_container=data.get('docker_container') or None,cluster=data.get('cluster') or None,infobase=data.get('infobase') or None)
             elif self.path=='/api/profile-editor':
                 if set(data)!={'profile'}:raise ValueError('Требуется выбранный профиль.')
                 from .profile_resources import editor_context
                 result=editor_context(data['profile'])
             elif self.path=='/api/profile-compose':
-                if set(data)-{'view','draft_profile','connection_bindings','connection_edits'} or 'view' not in data:raise ValueError('Недопустимое поле редактора профиля.')
+                if set(data)-{'view','draft_profile','connection_bindings','connection_edits','base_registrations','discovery_resources','base_merge','registration_decisions'} or 'view' not in data:raise ValueError('Недопустимое поле редактора профиля.')
                 expected=self._expected_profile_revision()
                 if expected is None:return
                 from .profile_resources import compose_profile,resource_impact,retain_editor_resources,editor_context
@@ -248,17 +253,21 @@ class InitHandler(BaseHTTPRequestHandler):
                         from .investigations import load
                         if load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']!=current:raise profiles.ProfileRevisionConflict('pinned profile differs')
                     draft=data.get('draft_profile')
-                    result=compose_profile(draft if draft is not None else current,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'))
+                    result=compose_profile(draft if draft is not None else current,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'),base_registrations=data.get('base_registrations'),discovery_resources=data.get('discovery_resources'),base_merge=data.get('base_merge'),registration_decisions=data.get('registration_decisions'))
                     result['profile']=retain_editor_resources(result['profile'],current)
                     result['editor']=editor_context(result['profile'])
                     result['impact']=resource_impact(current,result['profile'])
             elif self.path=='/api/check':
                 result=profiles.check_profile(data)
             elif self.path == '/api/starter':
+                if set(data)-{'path','include_registrations'} or type(data.get('include_registrations',False)) is not bool:raise ValueError('Недопустимое поле чтения списка.')
                 path = data.get('path')
                 if not isinstance(path, str) or not path.strip():
                     raise ValueError('Укажите путь к файлу .v8i или ibases.v8i.')
-                result = profiles.read_starter(path)
+                if data.get('include_registrations'):
+                    from .discovery import inspect_starter
+                    result=inspect_starter(path)
+                else:result = profiles.read_starter(path)
             else:
                 expected=self._expected_profile_revision()
                 if expected is None:return

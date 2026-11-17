@@ -51,6 +51,7 @@ def normalize(arguments):
         for profile in result['scope'][kind]:
             profile['settings']=drivers.normalize_connection(kind,profile['settings'])
             if kind=='rac' and any(not UUID.fullmatch(c) for c in profile['clusters']):raise CodeError('invalid_program','Invalid scoped cluster UUID.')
+            if kind=='rac' and any(not UUID.fullmatch(c) for c in profile.get('infobases',[])):raise CodeError('invalid_program','Invalid scoped infobase UUID.')
     return result
 
 
@@ -82,10 +83,11 @@ class Scope:
             if identity in self.imported:raise CodeError('scope_denied','Repeated source capture requires a separately reviewed plan.')
             self.imported.add(identity)
         elif operation in ('rac.observe','postgresql.observe'):
-            kind=operation.split('.')[0];connection={k:v for k,v in arguments.items() if k not in ('query','cluster')};selected=None
+            kind=operation.split('.')[0];connection={k:v for k,v in arguments.items() if k not in ('query','cluster','infobase')};selected=None
             for index,profile in enumerate(self.value[kind]):
                 if profile['settings']!=connection or arguments['query'] not in profile['queries']:continue
                 if kind=='rac' and arguments.get('cluster') and not profile['any_cluster'] and arguments['cluster'] not in profile['clusters']:continue
+                if kind=='rac' and arguments['query']=='infobase_info' and arguments['infobase'] not in profile.get('infobases',[]):continue
                 if self.observation_runs[kind][index]<profile['max_calls']:selected=index;break
             if selected is None:raise CodeError('scope_denied','Connection, query or observation count exceeds the approved source plan.')
             self.observation_runs[kind][selected]+=1

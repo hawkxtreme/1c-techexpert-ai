@@ -9,7 +9,7 @@ description: Получить ограниченные read-only снимки к
 
 Для файловой ИБ этот источник не требуется. Установите endpoint RAS, фактическую версию RAC и разрешённую область. Адреса файлов, ОС и SQL проверяются отдельно.
 
-Из проверенного корня пакета выполните `python techexpert.py rac clusters --endpoint server:1545`. Каталог содержит только clusters, infobases, servers, processes, sessions и connections. Для всех операций кроме clusters передайте --cluster с фактическим UUID. --executable указывает установленный RAC; --docker-container использует /opt/1cv8/current/rac явно выбранного контейнера. Это не развёртывание сервера.
+Из проверенного корня пакета выполните `python techexpert.py rac clusters --endpoint server:1545`. Каталог содержит только clusters, infobases, infobase_info, servers, processes, sessions и connections. Для всех операций кроме clusters передайте --cluster с фактическим UUID. Для infobase_info дополнительно обязателен --infobase UUID; через CodeMode этот UUID должен входить в scope.rac.infobases. Сохраняются только UUID ИБ, имя, dbms, db-server и db-name. Пароли, пользователи и коды доступа из ответа не сохраняются. Эти текущие свойства не доказывают доступность SQL или историческую принадлежность данных. --executable указывает установленный RAC; --docker-container использует /opt/1cv8/current/rac явно выбранного контейнера. Это не развёртывание сервера.
 
 Снимок сохраняется в частном состоянии как artifact_id; продолжение — `artifact ID`, точный исходный текст — `artifact ID --source s1`. Не делайте вывод об истории из текущего списка. Идентификаторы ограничены кластером, ИБ, узлом, временем и жизнью процесса; один PID или session-number не привязывает старый ТЖ к заданию. [Методика](../../knowledge/methods/ras-identity.md).
 

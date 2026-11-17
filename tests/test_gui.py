@@ -10,6 +10,49 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_ras_invalid_types_are_rejected_before_any_connection(self):
+        from unittest.mock import patch
+        with patch('src.techexpert.profiles.discover_ras',side_effect=AssertionError('invalid request connected')):
+            for key,value in [('endpoint',0),('executable',None),('cluster',False),('infobase',0),('docker_container',[])] :
+                with self.subTest(key=key):
+                    request=dict(endpoint='host.invalid:1545');request[key]=value
+                    self.assertEqual(self.request('POST','/api/ras',request)[0],400)
+
+    def test_matching_choices_compose_without_save_or_database_access(self):
+        from test_registration_matches import profile
+        from src.techexpert.profile_resources import effective_profile
+        value=profile();body=dict(view=effective_profile(value),draft_profile=value)
+        status,_,raw=self.request('POST','/api/profile-compose',body,headers={'If-Match':'"profile-0"'})
+        self.assertEqual(status,200);found=json.loads(raw);gid=found['matches']['groups'][0]['id']
+        body['registration_decisions']={gid:'separate'}
+        status,_,raw=self.request('POST','/api/profile-compose',body,headers={'If-Match':'"profile-0"'})
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['matches']['groups'][0]['status'],'separate')
+        body.pop('registration_decisions');body['base_merge']=dict(keep_id='a',remove_ids=['b'])
+        status,_,raw=self.request('POST','/api/profile-compose',body,headers={'If-Match':'"profile-0"'})
+        self.assertEqual(status,200);self.assertEqual([b['id'] for b in json.loads(raw)['profile']['bases']],['a']);self.assert_no_profile()
+
+    def test_starter_location_is_a_passive_suggestion_and_requires_authorization(self):
+        from unittest.mock import patch
+        self.assertEqual(self.request('GET','/api/starter-location',token=False)[0],401)
+        with patch('src.techexpert.discovery.read_snapshot',side_effect=AssertionError('GET read a starter list')):
+            status,_,raw=self.request('GET','/api/starter-location')
+        self.assertEqual(status,200);body=json.loads(raw)
+        self.assertEqual(set(body),{'path','checked'});self.assertFalse(body['checked']);self.assert_no_profile()
+
+    def test_detailed_starter_registration_reaches_saved_graph_only_on_explicit_save(self):
+        starter=Path(self.temp.name)/'ibases.v8i';entry='11111111-1111-1111-1111-111111111111'
+        starter.write_text('[Accounting]\nConnect=File="C:\\Data\\Accounting";\nID='+entry+'\n',encoding='utf-8-sig')
+        status,_,raw=self.request('POST','/api/starter',dict(path=str(starter),include_registrations=True))
+        self.assertEqual(status,200);found=json.loads(raw);self.assert_no_profile()
+        value=dict(schema_version=1,name='Imported',bases=found['bases'],sources=[])
+        status,_,raw=self.request('POST','/api/profile-compose',dict(view=value,base_registrations=found['registrations']),headers={'If-Match':'"profile-0"'})
+        self.assertEqual(status,200);prepared=json.loads(raw);self.assert_no_profile()
+        self.assertEqual(prepared['profile']['bases'][0]['registrations'][0]['entry_id'],entry)
+        self.assertEqual(self.request('POST','/api/profile',prepared['profile'],headers={'If-Match':'"profile-0"'})[0],200)
+        status,_,raw=self.request('GET','/api/profile');saved=json.loads(raw)
+        self.assertEqual(saved['bases'][0]['mode_origin']['origin'],'starter_connect_file')
+        self.assertFalse((self.state_dir/'artifacts').exists());self.assertFalse((self.state_dir/'cases').exists())
+
     def test_preflight_legacy_os_with_omitted_settings_defaults_returns_a_response(self):
         value=dict(schema_version=1,name='Legacy',bases=[dict(id='a',name='File',mode='file',connection='//file.invalid/main')],sources=[dict(id='os',type='os',path='',host='',base_ids=['a'],settings={})])
         status,_,raw=self.request('POST','/api/check',value)

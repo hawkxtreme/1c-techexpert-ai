@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=7
+SANITIZER_VERSION=8
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -147,6 +147,20 @@ def _known(doc,state_dir):
         for base in graph['bases']:
             add('ID',base['reported_identity']);params=base['connection_parameters']
             add('DB',params.get('ref'));add('PATH',params.get('file_path'));add('PATH',params.get('publication'))
+            for registration in base.get('registrations',[]):
+                add('PATH',registration.get('source_path'));add('ID',registration.get('source_sha256'))
+                add('ID',registration.get('entry_id'));add('DB',registration.get('entry_name'))
+                add('CONNECTION',registration.get('connection'))
+                from .discovery import connection_parameters
+                try:parts=connection_parameters(registration.get('connection',''))
+                except InputError:parts={}
+                add('NODE',parts.get('srvr'));add('DB',parts.get('ref'))
+                try:add('NODE',urlsplit('//'+parts.get('srvr','')).hostname)
+                except ValueError:pass
+                for key in ('cluster_id','infobase_id','snapshot_sha256','ras_connection_sha256','docker_container'):add('ID',registration.get(key))
+                add('CONNECTION',registration.get('endpoint'));add('NODE',registration.get('cluster_host'));add('DB',registration.get('ref'))
+                add('PATH',registration.get('executable'))
+                properties=registration.get('properties',{});add('NODE',properties.get('db-server'));add('DB',properties.get('db-name'));add('DB',properties.get('name'))
         for node in graph['nodes']:add('NODE',node['name']);add('ID',node['reported_identity'])
         for kind in ('clusters','dbms_instances'):
             for resource in graph[kind]:add('ID',resource['reported_identity']);label(resource['name'])

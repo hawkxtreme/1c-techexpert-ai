@@ -29,6 +29,8 @@ def main(argv=None):
         if name=='operation-cancel':operation.add_argument('--executor-id',required=True)
     kernel_call=commands.add_parser('kernel-call');kernel_call.add_argument('call_id')
     commands.add_parser('doctor')
+    starter=commands.add_parser('starter-inspect',help='read only the selected starter list; omitted path selects the current user default')
+    starter.add_argument('path',type=Path,nargs='?')
     readiness=commands.add_parser('readiness')
     readiness.add_argument('--entrypoint-sha256')
     readiness.add_argument('--investigation')
@@ -84,9 +86,10 @@ def main(argv=None):
     artifact.add_argument('artifact_id')
     artifact.add_argument('--source')
     rac = commands.add_parser('rac')
-    rac.add_argument('operation',choices=('clusters','infobases','sessions','connections','processes','servers'))
+    rac.add_argument('operation',choices=('clusters','infobases','sessions','connections','processes','servers','infobase_info'))
     rac.add_argument('--endpoint',required=True)
     rac.add_argument('--cluster')
+    rac.add_argument('--infobase')
     rac.add_argument('--executable',default='rac')
     rac.add_argument('--docker-container')
     for name in ('os-plan','os-collect'):
@@ -178,6 +181,11 @@ def main(argv=None):
             return call['exit_code']
         elif args.command == 'doctor':
             result = doctor(args.state_dir)
+        elif args.command == 'starter-inspect':
+            from .discovery import inspect_starter,default_starter_path
+            path=args.path if args.path is not None else default_starter_path()
+            if path is None:raise InputError('No default starter list is defined on this OS; select a .v8i file.')
+            result=inspect_starter(path)
         elif args.command == 'readiness':
             from .readiness import check
             result=check(args.state_dir,entrypoint_sha256=args.entrypoint_sha256,investigation_id=args.investigation)
@@ -247,7 +255,7 @@ def main(argv=None):
         elif args.command == 'rac':
             from .rac import RacClient,collect_rac
             result=collect_rac(args.state_dir,RacClient(args.endpoint,executable=args.executable,
-                docker_container=args.docker_container),args.operation,cluster=args.cluster)
+                docker_container=args.docker_container),args.operation,cluster=args.cluster,infobase=args.infobase)
         elif args.command in ('os-plan','os-collect'):
             from .os_metrics import validate_request,collect_os
             request=dict(transport=args.transport,host=args.host,duration_seconds=args.duration,

@@ -30,6 +30,15 @@ def graph():
 
 
 class ProfileResourceTests(unittest.TestCase):
+    def test_manual_correction_records_its_origin_without_overwriting_old_profile(self):
+        from src.techexpert.profile_resources import upgrade_profile,effective_profile,compose_profile
+        value=upgrade_profile(dict(schema_version=1,name='Manual',bases=[dict(id='a',name='Main',mode='server',connection='Srvr=app;Ref=main')],sources=[]))
+        old=copy.deepcopy(value);view=effective_profile(value);view['bases'][0].update(mode='file',connection='D:/Main')
+        result=compose_profile(value,view)['profile']['bases'][0]
+        self.assertEqual(result['mode_origin'],dict(basis='reported',origin='user_override'))
+        self.assertEqual(result['connection_origin'],dict(basis='reported',origin='user_override'))
+        self.assertEqual(value,old)
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('src.techexpert.profile_resources'),'Shared profile resources are not implemented')
         self.api=importlib.import_module('src.techexpert.profile_resources')

@@ -42,6 +42,9 @@
     details[open] > summary { margin-bottom: 14px; }
     .base { padding: 13px 0; display: flex; align-items: start; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--border); }
     .base .check { flex: 1; }
+    .base-body { flex: 1; min-width: 0; }
+    .base-body > details { margin: 9px 0 0 27px; }
+    .base-body .stack { margin-top: 9px; }
     .base-title { display: block; font-weight: 600; }
     .base-info { display: block; color: var(--muted); font-size: 13px; margin-top: 3px; }
     .base button { padding: 4px 8px; min-height: 32px; }
@@ -102,15 +105,18 @@
         <details><summary>Расположение утилиты RAC</summary><div class="grid"><label class="field"><span>Установленная утилита rac / rac.exe</span><input type="text" id="rac-executable" value="rac" spellcheck="false"></label><label class="field"><span>Контейнер с RAC · если используется Docker</span><input type="text" id="rac-container" spellcheck="false" autocomplete="off"></label></div></details>
         <div><button type="button" id="read-clusters">Проверить RAS и получить кластеры</button></div>
         <div id="ras-cluster-choice" hidden class="stack"><label class="field"><span>Кластер</span><select id="ras-cluster"></select></label><div><button type="button" id="read-ras-bases">Получить базы кластера</button></div></div>
-        <p class="note">Это явная проверка подключения: читаются только списки кластеров и баз. Службы, сеансы и настройки 1С не изменяются. Адрес SQL и доступы к журналам настраиваются отдельно.</p>
+        <p class="note">По кнопке читаются базы выбранного кластера, его свойства и доступные рабочие узлы. Свойства отдельной ИБ читаются отдельной кнопкой в её параметрах ниже. Службы, сеансы и настройки 1С не изменяются.</p>
       </div></details>
       <div class="box stack"><h2>Добавить базу вручную</h2><div class="grid"><label class="field"><span>Название базы</span><input type="text" id="manual-name" maxlength="120" placeholder="Как вы называете эту базу" autocomplete="off"></label><label class="field"><span>Тип базы</span><select id="manual-mode"><option value="unknown">Пока не знаю</option><option value="file">Файловая</option><option value="server">Серверная</option></select></label></div><label class="field"><span id="manual-connection-label">Известный адрес · необязательно</span><input type="text" id="manual-connection" maxlength="1500" spellcheck="false" autocomplete="off"><small class="note">Без паролей и токенов. Общая папка UNC и web-адрес сами по себе не определяют тип базы.</small></label><div><button type="button" id="add-base">Добавить базу</button></div></div>
       <div><h2>Базы для этого профиля</h2><div id="base-list"></div><p id="empty-bases" class="note">Пока ни одной базы. Если подробности неизвестны, добавьте название и оставьте тип «Пока не знаю».</p></div>
+      <div><button type="button" id="match-bases">Проверить совпадения записей</button><p class="note">Сравнение выбранных параметров без подключения к базам. Объединение выполняется только по вашему выбору.</p></div>
       <footer><span class="note" id="base-count">Выбрано: 0</span><button type="button" class="primary" id="to-sources">К источникам</button></footer>
     </section>
+    <details id="registration-panel" class="box" hidden open><summary>Похожие записи баз</summary><div id="registration-matches" class="stack"></div></details>
     <section data-view="sources" class="stack" hidden>
       <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
       <p class="hint" id="source-context"></p>
+      <div id="source-suggestions" class="stack"></div>
       <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="rac">Кластер 1С · RAS/RAC</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
       <details class="box" id="source-export-help" hidden><summary>Помочь получить исходники</summary><div id="source-export-help-body" class="stack"></div></details>
       <div id="shared-connections" class="stack"></div>
@@ -147,6 +153,12 @@
       let readinessState = null;
       let busy = false;
       let editorProfile = null;
+      let baseRegistrations = {};
+      const priorBaseLabels = {};
+      const starterDefaults = {};
+      let discoveryResources = {nodes:[],clusters:[],connections:[]};
+      let matches = [];
+      let sourceSuggestions = [];
       let connectionEdits = {};
       let bindingOverrides = {};
       let preparedProfile = null;
@@ -154,7 +166,7 @@
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
       const baseName = id => {
-        let base=state.bases.find(item=>item.id===id) || editorProfile?.bases.find(item=>item.id===id);if(!base)return id;
+        let base=state.bases.find(item=>item.id===id) || editorProfile?.bases.find(item=>item.id===id);if(!base)return priorBaseLabels[id] || 'Прежняя запись базы';
         const known=new Map([...(editorProfile?.bases || []),...state.bases].map(item=>[item.id,item]));
         const duplicate=[...known.values()].filter(item=>item.name===base.name).length>1;
         if(!Object.hasOwn(base,'connection')){const connection=editorProfile.connections.find(item=>item.id===base.connection_id);const params=base.connection_parameters;base={...base,connection:params.file_path || (connection?(params.ref?'Srvr='+connection.address+';Ref='+params.ref:connection.address+(params.publication || '')):'')};}
@@ -169,7 +181,7 @@
       function message(text, error=false) {
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
       }
-      function markChanged() { saved = null; preparedProfile = null; preparedImpact = null; message(''); }
+      function markChanged() { saved = null; preparedProfile = null; preparedImpact = null; matches=[];sourceSuggestions=[];q('#registration-panel').hidden=true;q('#source-suggestions').replaceChildren();message(''); }
       function renderVariant(selectedValue) {
         const template = templateBook.templates.find(item=>item.id===q('#incident-template').value);
         const select=q('#incident-variant');select.replaceChildren(new Option('Общий вариант',''));
@@ -238,10 +250,10 @@
         const input = document.createElement('input'); input.type = 'text'; input.value = value || ''; input.maxLength = 1500; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = placeholder;
         input.addEventListener('input', () => { markChanged(); onInput(input.value); }); label.append(input); return label;
       }
-      function choice(labelText,items,value,onChange) {
-        const label=element('label',undefined,'field'); label.append(element('span',labelText)); const select=document.createElement('select');
+      function choice(labelText,items,value,onChange,dirty=true) {
+        const label=element('label',undefined,'field'); label.append(element('span',labelText)); const select=document.createElement('select');select.setAttribute('aria-label',labelText);
         items.forEach(([key,text])=>{ const option=element('option',text); option.value=key; select.append(option); }); select.value=value;
-        select.addEventListener('change',()=>{ markChanged(); onChange(select.value); }); label.append(select); return label;
+        select.addEventListener('change',()=>{ if(dirty)markChanged(); onChange(select.value); }); label.append(select); return label;
       }
       function numberField(labelText,value,onInput,min,max) {
         const label=field(labelText,String(value),text=>onInput(Number(text)));const input=label.querySelector('input');input.type='number';input.min=min;input.max=max;input.step='1';return label;
@@ -297,16 +309,40 @@
           const rows=new Map(previous[key].map(row=>[row.id,row]));profile[key].forEach(row=>rows.set(row.id,row));editorProfile[key]=[...rows.values()];
         }
       }
-      async function prepareProfile() {
-        const result=await api('/api/profile-compose',{view:payload(),draft_profile:editorProfile,connection_edits:connectionEdits,connection_bindings:bindingOverrides});
-        preparedProfile=result.profile;preparedImpact=result.impact;mergeEditor(result.profile);connectionEdits={};bindingOverrides={};
+      async function prepareProfile({baseMerge=null,selectionOnly=false,decisions=null}={}) {
+        const view=payload();if(selectionOnly)view.sources=view.sources.filter(source=>source.base_ids.length && (['sql','rac','os'].includes(source.type) || source.path));
+        const sourceIds=new Set(view.sources.map(source=>source.id));
+        const request={view,draft_profile:editorProfile,connection_edits:connectionEdits,connection_bindings:Object.fromEntries(Object.entries(bindingOverrides).filter(([id])=>sourceIds.has(id))),base_registrations:Object.fromEntries(Object.entries(baseRegistrations).filter(([id])=>selected.has(id))),discovery_resources:discoveryResources};
+        if(baseMerge)request.base_merge=baseMerge;if(decisions)request.registration_decisions=decisions;
+        const result=await api('/api/profile-compose',request);
+        if(baseMerge){const removed=new Set(baseMerge.remove_ids);removed.forEach(id=>{priorBaseLabels[id]=baseName(id);});state.bases=state.bases.filter(base=>!removed.has(base.id));removed.forEach(id=>{selected.delete(id);delete baseRegistrations[id];});if(editorProfile){editorProfile.bases=editorProfile.bases.filter(base=>!removed.has(base.id));editorProfile.database_bindings=editorProfile.database_bindings.filter(row=>!removed.has(row.base_id));}state.sources.forEach(source=>{source.base_ids=[...new Set(source.base_ids.map(id=>removed.has(id)?baseMerge.keep_id:id))];});}
+        preparedProfile=selectionOnly?null:result.profile;preparedImpact=result.impact;mergeEditor(result.profile);connectionEdits={};sourceIds.forEach(id=>delete bindingOverrides[id]);discoveryResources={nodes:[],clusters:[],connections:[]};
         for(const key of ['bases','sources']){const rows=new Map(result.editor.view[key].map(row=>[row.id,row]));state[key]=state[key].map(row=>rows.get(row.id) || row);}
-        renderBases();return result;
+        result.profile.bases.forEach(base=>{if(base.registrations)baseRegistrations[base.id]=base.registrations;});
+        matches=result.matches.groups;sourceSuggestions=result.source_suggestions;renderBases();renderMatches();renderSuggestions();return result;
+      }
+      function acceptDiscovery(found) {
+        for(const kind of ['nodes','clusters','connections']){const rows=new Map(discoveryResources[kind].map(row=>[row.id,row]));(found.resources?.[kind] || []).forEach(row=>rows.set(row.id,row));discoveryResources[kind]=[...rows.values()];}
+        for(const [id,records] of Object.entries(found.registrations || {})){const previous=baseRegistrations[id] || editorProfile?.bases.find(base=>base.id===id)?.registrations || [];const key=r=>r.kind==='starter'?JSON.stringify([r.kind,r.source_path,r.entry_id || r.entry_name]):JSON.stringify([r.kind,r.endpoint,r.cluster_id,r.infobase_id,r.docker_container,r.executable]);const rows=new Map(previous.map(row=>[key(row),row]));records.forEach(row=>{rows.set(key(row),row);if(row.kind==='starter')starterDefaults[id]=row;});baseRegistrations[id]=[...rows.values()];}
+        found.bases.forEach(base=>{if(!state.bases.some(item=>item.id===base.id))state.bases.push(base);selected.add(base.id);});
+      }
+      function renderMatches() {
+        const box=q('#registration-matches');box.replaceChildren();q('#registration-panel').hidden=!matches.length || step==='review';
+        const reasons={multiple_candidates:'Больше двух кандидатов',storage_mode_unresolved:'Не определён тип хранения',different_ras_identities_or_namespaces:'Различаются UUID или пространства адресов RAS',application_parameters_differ:'Различаются параметры соединения',connection_access_refs_differ:'Различаются способы доступа',loopback_namespace_unresolved:'Не определено пространство localhost',file_node_scope_differs:'Различаются узлы файловой базы'};
+        matches.forEach(group=>{const row=element('div',undefined,'stack');row.append(element('strong',group.base_ids.map(baseName).join(' ↔ ')),element('p',group.status==='separate'?'Вы выбрали оставить записи раздельно.':group.reasons.length?group.reasons.map(key=>reasons[key] || key).join('; '):'Совпадают параметры настроек. Это не подтверждает принадлежность исторических данных.','note'));
+          if(!group.reasons.length){let keepId=group.base_ids[0];const keep=choice('Сохранить название и запись',group.base_ids.map(id=>[id,baseName(id)]),keepId,value=>{keepId=value;},false);keep.querySelector('select').dataset.mergeKeep=group.id;row.append(keep);const merge=element('button','Объединить настройки');merge.type='button';merge.dataset.mergeGroup=group.id;merge.addEventListener('click',()=>perform(async()=>{const remove_ids=group.base_ids.filter(id=>id!==keepId);await prepareProfile({baseMerge:{keep_id:keepId,remove_ids},selectionOnly:true});message('Объединены только настройки будущих проверок. Прежние расследования сохранены.');if(step==='sources')renderSources();}));row.append(merge);}
+          if(group.status!=='separate'){const separate=element('button','Оставить раздельно');separate.type='button';separate.dataset.separateGroup=group.id;separate.addEventListener('click',()=>perform(async()=>{const currentIds=new Set(matches.map(item=>item.id));const decisions=Object.fromEntries(Object.entries(editorProfile?.registration_decisions || {}).filter(([id])=>currentIds.has(id)));decisions[group.id]='separate';await prepareProfile({selectionOnly:true,decisions});message('Решение сохранится вместе с профилем.');}));row.append(separate);}box.append(row);
+        });
+      }
+      function renderSuggestions() {
+        const box=q('#source-suggestions');box.replaceChildren();
+        sourceSuggestions.filter(item=>item.base_ids.some(id=>selected.has(id))).forEach(item=>{const panel=element('div',undefined,'box stack');panel.append(element('strong','СУБД из свойств выбранной ИБ'),element('p',item.settings.engine+' · '+item.host+' · '+item.base_ids.map(id=>baseName(id)+': '+item.settings.databases[id]).join('; '),'note'),element('p','Порт предложен по умолчанию: '+item.settings.port+'. Проверьте порт и доступ из среды агента'+(item.namespace?' · свойства прочитаны из контейнера '+item.namespace:'')+'. Существующие источники не меняются.','note'));const add=element('button','Использовать для нового источника SQL');add.type='button';add.dataset.sqlSuggestion='true';add.addEventListener('click',()=>{markChanged();const source={id:nextId('source'),type:'sql',path:'',host:item.host,base_ids:item.base_ids.filter(id=>selected.has(id)),settings:structuredClone(item.settings)};state.sources.push(source);sourceSuggestions=sourceSuggestions.filter(row=>row!==item);renderSuggestions();renderSources(source.id);});panel.append(add);box.append(panel);});
       }
       function pruneBindings() {
         state.sources.forEach(source => { const ids = new Set(eligibleBases(source.type).map(base => base.id)); source.base_ids = source.base_ids.filter(id => ids.has(id)); });
       }
       function renderBases() {
+        const openRows=new Set([...q('#base-list').querySelectorAll('details[open]')].map(node=>node.dataset.editBase));
         const box = q('#base-list'); box.replaceChildren();
         state.bases.forEach(base => {
           const row = element('div',undefined,'base'); row.dataset.baseId = base.id;
@@ -314,10 +350,20 @@
           const check = document.createElement('input'); check.type = 'checkbox'; check.checked = selected.has(base.id); check.dataset.selectBase = base.id;
           check.addEventListener('change', () => { markChanged(); if (check.checked) selected.add(base.id); else selected.delete(base.id); pruneBindings(); renderBases(); renderSources(); });
           const text = element('span'); text.append(element('span',base.name,'base-title'),element('span',modeNames[base.mode] + (base.connection ? ' · ' + base.connection : ' · адрес не указан'),'base-info'));
-          label.append(check,text);
+          const registrations=baseRegistrations[base.id] || editorProfile?.bases.find(item=>item.id===base.id)?.registrations || [];
+          if(registrations.length)text.append(element('span','Сохранённые ссылки: '+[...new Set(registrations.map(item=>item.kind==='starter'?'список '+item.source_path.split(/[\\/]/).pop():'RAS '+item.endpoint))].join('; '),'base-info'));
+          const origin=editorProfile?.bases.find(item=>item.id===base.id);if(origin?.mode_origin.origin==='user_override' || origin?.connection_origin.origin==='user_override')text.append(element('span','Параметры исправлены пользователем.','base-info'));
+          label.append(check,text);const body=element('div',undefined,'base-body');body.append(label);
+          const edit=element('details');edit.dataset.editBase=base.id;edit.open=openRows.has(base.id);edit.append(element('summary','Параметры базы'));const fields=element('div',undefined,'stack');
+          fields.append(field('Название',base.name,value=>{base.name=value;}),choice('Тип базы',[['unknown','Пока не знаю'],['file','Файловая'],['server','Серверная']],base.mode,value=>{base.mode=value;pruneBindings();renderBases();renderSources();}),field('Каталог или параметры соединения',base.connection,value=>{base.connection=value;}),element('p','Файловая: D:\\Bases\\Main или \\\\server\\share\\Main. Серверная: Srvr=server:1541;Ref=base. Web-публикация: https://server/base/ — тип хранения может оставаться неизвестным. Без паролей.','note'));
+          const refreshed=starterDefaults[base.id] || (baseRegistrations[base.id] || []).filter(item=>item.kind==='starter').at(-1);
+          if(refreshed && (refreshed.mode!==base.mode || refreshed.connection!==base.connection)){const apply=element('button','Применить параметры из списка');apply.type='button';apply.addEventListener('click',()=>{markChanged();base.mode=refreshed.mode;base.connection=refreshed.connection;acceptDiscovery({bases:[],registrations:{[base.id]:[refreshed]}});pruneBindings();renderBases();renderSources();});fields.append(element('p','В прочитанном списке: '+modeNames[refreshed.mode]+' · '+refreshed.connection,'note'),apply);}
+          const ras=registrations.filter(item=>item.kind==='ras' || item.kind==='ras_info').at(-1);
+          if(ras){const inspect=element('button','Прочитать свойства этой ИБ из RAS');inspect.type='button';inspect.dataset.rasInfo=base.id;inspect.addEventListener('click',()=>perform(async()=>{const found=await api('/api/ras',{endpoint:ras.endpoint,executable:ras.executable,docker_container:ras.docker_container,cluster:ras.cluster_id,infobase:ras.infobase_id});markChanged();const records=Object.values(found.registrations)[0];acceptDiscovery({...found,bases:[],registrations:{[base.id]:records}});await prepareProfile({selectionOnly:true});message('Свойства выбранной ИБ прочитаны. SQL не подключался; доступные параметры предложены на шаге источников.');}));fields.append(inspect);const info=registrations.filter(item=>item.kind==='ras_info').at(-1);if(info)fields.append(element('p','Свойства RAS: '+['dbms','db-server','db-name'].map(key=>key+' = '+(info.properties[key] || 'неизвестно')).join('; '),'note'));}
+          edit.append(fields);body.append(edit);
           const remove = element('button','Убрать','link'); remove.type = 'button'; remove.setAttribute('aria-label','Убрать базу ' + base.name);
-          remove.addEventListener('click', () => { markChanged(); selected.delete(base.id); state.bases = state.bases.filter(item => item.id !== base.id); pruneBindings(); renderBases(); renderSources(); });
-          row.append(label,remove); box.append(row);
+          remove.addEventListener('click', () => { markChanged();priorBaseLabels[base.id]=baseName(base.id); selected.delete(base.id); state.bases = state.bases.filter(item => item.id !== base.id); pruneBindings(); renderBases(); renderSources(); });
+          row.append(body,remove); box.append(row);
         });
         q('#empty-bases').hidden = !!state.bases.length;
         q('#base-count').textContent = 'Выбрано: ' + selected.size;
@@ -450,8 +496,8 @@
       async function navigate(next) {
         if (next !== 'bases' && !selected.size) { step = 'bases'; renderStep(); throw new Error('Добавьте и выберите хотя бы одну базу. Если тип неизвестен, оставьте «Пока не знаю».'); }
         if (next === 'review') { validateSources(); await prepareProfile(); renderReview(); }
-        if (next === 'sources') renderSources();
-        step = next; renderStep(); message('');
+        if (next === 'sources') {await prepareProfile({selectionOnly:true});renderSources();}
+        step = next; renderStep();renderMatches(); message('');
       }
       function renderStep() {
         root.querySelectorAll('[data-view]').forEach(node => { node.hidden = node.dataset.view !== step; });
@@ -465,13 +511,13 @@
       });
       q('#read-starter').addEventListener('click', () => perform(async () => {
         const path = q('#starter-path').value.trim(); if (!path) throw new Error('Укажите путь к своему файлу .v8i или ibases.v8i.');
-        const bases = await api('/api/starter',{path}); markChanged();
-        bases.forEach(base => { if (!state.bases.some(item => item.id === base.id)) state.bases.push({id:base.id,name:base.name,mode:base.mode,connection:base.connection || ''}); selected.add(base.id); });
-        renderBases(); message('Из указанного файла прочитано баз: ' + bases.length + '. Подключений к 1С не было.');
+        const found = await api('/api/starter',{path,include_registrations:true});const bases=found.bases; markChanged();
+        acceptDiscovery(found);renderBases();message('Из указанного файла прочитано баз: ' + bases.length + '. Подключений к 1С не было.');
       }));
       const rasRequest=()=>({endpoint:q('#ras-endpoint').value.trim(),executable:q('#rac-executable').value.trim() || 'rac',docker_container:q('#rac-container').value.trim()});
       q('#read-clusters').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',rasRequest());const select=q('#ras-cluster');select.replaceChildren();response.clusters.forEach(row=>{const option=element('option',(row.name || row.host || 'Кластер')+' · '+row.cluster);option.value=row.cluster;select.append(option);});q('#ras-cluster-choice').hidden=!response.clusters.length;message('Получено кластеров: '+response.clusters.length+'. Настройки не изменены.');}));
-      q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();response.bases.forEach(base=>{if(!state.bases.some(item=>item.id===base.id))state.bases.push(base);selected.add(base.id);});renderBases();message('Из RAS прочитано серверных баз: '+response.bases.length+'. SQL и журналы подключаются отдельно.');}));
+      q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();acceptDiscovery(response);await prepareProfile({selectionOnly:true});message('Из RAS прочитано серверных баз: '+response.bases.length+'. Рабочие узлы: '+(response.node_observations===null?'недоступны':response.node_observations.length)+'. Доступ к журналам и SQL требует отдельной проверки.');}));
+      q('#match-bases').addEventListener('click',()=>perform(async()=>{if(!selected.size)throw new Error('Сначала выберите базы.');await prepareProfile({selectionOnly:true});message(matches.length?'Выберите действие для похожих записей.':'Совпадающих настроек выбранных баз не найдено.');}));
       q('#check-profile').addEventListener('click',()=>perform(async()=>{
         validateSources();if(!preparedProfile)await prepareProfile();const result=await api('/api/check',preparedProfile);const box=q('#preflight-results');box.replaceChildren();
         const labels={requires_explicit_path_check:'Путь указан; доступ и формат проверяются отдельным действием',local_collector_available:'План локального сборщика доступен; сбор не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_configured_not_checked:'Параметры СУБД указаны; инструмент и доступ проверяются отдельно',configured_not_connected:'Адрес указан; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};
@@ -507,6 +553,7 @@
       perform(async () => {
         renderReadiness(await api('/api/readiness'));
         [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);renderContext();
+        const starterLocation=await api('/api/starter-location');if(starterLocation.path && !q('#starter-path').value)q('#starter-path').value=starterLocation.path;
         const profile = await api('/api/profile');
         if (profile) {const opened=await api('/api/profile-editor',{profile});editorProfile=opened.profile;state=opened.view;selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }
       });
