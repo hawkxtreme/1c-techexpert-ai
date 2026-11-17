@@ -1,4 +1,5 @@
 """Fixed catalogue worker; own lifetime budget continues without an AI/harness wait."""
+import hashlib
 import os
 from pathlib import Path
 import signal
@@ -13,6 +14,7 @@ from . import operation_state as state
 from . import __version__,kernel_context
 from .capabilities import execute,outcome as output_status
 from .inputs import InputError
+from .processes import CommandStopped
 from .storage import ROOT,knowledge_revision
 
 def main(folder):
@@ -57,14 +59,26 @@ def main(folder):
         kernel_context.install(dict(call_id=boundary.get('call_id',folder.name),deadline=deadline,
             parent=state.process_identity(os.getpid()),cancel_files=list(dict.fromkeys(markers)),
             limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
-    outcome='succeeded';data=None;targets=[];message=None;stop_reason=None
+    outcome='succeeded';data=None;targets=[];message=None;stop_reason=None;command_stop=None
     try:
         data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',stop=stop)
         if request['operation']=='code.execute':outcome=data['result_status']
         if request['operation']!='code.execute':outcome,stop_reason=output_status(request['operation'],data)
+    except CommandStopped as exc:
+        outcome='cancelled' if exc.reason=='cancelled' else 'failed';stop_reason=exc.reason
+        message='Bounded command stopped: '+exc.reason+'. Private partial output retained; no source artifact created.'
+        files=[]
+        for name,raw in [('command-partial-stdout.bin',exc.stdout),('command-partial-stderr.bin',exc.stderr)]:
+            if not isinstance(raw,bytes) or len(raw)>64*1024**2:raise InputError('invalid bounded command capture')
+            with state.safe(folder/name).open('xb') as stream:
+                stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            files.append(dict(path=name,bytes=len(raw),sha256=hashlib.sha256(raw).hexdigest()))
+        command_stop=dict(reason=exc.reason,process_started=exc.process_started,returncode=exc.returncode,files=files)
+        state.write(folder/'command-stop.json',command_stop)
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
         outcome='invalid_input' if isinstance(exc,(InputError,ValueError)) else 'failed';message=str(exc)[:2048]
     metrics=dict(elapsed_seconds=time.monotonic()-started,model_tokens=None,harness_memory_bytes=None)
+    if command_stop is not None:metrics['command_stop']=command_stop
     if os.name!='nt':
         usage=resource.getrusage(resource.RUSAGE_SELF);children=resource.getrusage(resource.RUSAGE_CHILDREN)
         metrics.update(self_cpu_seconds=usage.ru_utime+usage.ru_stime,terminated_children_cpu_seconds=children.ru_utime+children.ru_stime,

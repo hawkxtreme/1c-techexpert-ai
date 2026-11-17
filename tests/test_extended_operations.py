@@ -147,6 +147,25 @@ return {"comment_characters": len(record["data"]["record"]["comment"]), "raw_cha
         self.assertEqual(result['data']['value']['comment_characters'],80000)
         self.assertGreater(result['data']['value']['raw_characters'],80000)
 
+    def test_program_reads_a_supported_journal_serialized_array_without_narrowing_the_direct_api(self):
+        folder=self.root/'wide-journal';folder.mkdir()
+        dictionary=(ROOT/'tests/fixtures/native-jr/1Cv8.lgf').read_bytes()
+        (folder/'1Cv8.lgf').write_bytes(dictionary)
+        header=b''.join(dictionary.splitlines(keepends=True)[:2])+b'\r\n'
+        data='{'+','.join(['0']*100001)+'}'
+        record=('{20261117120000,N,{0,0},0,1,1,2,1,I,"",0,'+data+',"",0,0,0,2,0,{0}}').encode('utf-8')
+        self.assertLess(len(record),262144)
+        (folder/'20261117000000.lgp').write_bytes(header+record)
+        imported=self.call('jr.import',path=str(folder),platform_version='8.3.27.1989')
+        aid=imported['data']['artifact_id']
+        direct=self.call('jr.record',artifact_id=aid,record_id='s2:r1')
+        self.assertEqual(direct['status'],'succeeded')
+        self.assertEqual(len(direct['data']['record']['data']),100001)
+        computed=self.call('code.execute',program='return len(api("jr.record", {"artifact_id": selected, "record_id": "s2:r1"})["data"]["record"]["data"])',
+            bindings=dict(selected=aid),scope=dict(operations=['jr.record'],artifacts=[aid]))
+        self.assertEqual(computed['status'],'succeeded',computed.get('data',{}).get('diagnostic'))
+        self.assertEqual(computed['data']['value'],100001)
+
     def test_network_source_failures_are_retained_and_the_program_cannot_expand_connections(self):
         for kind,settings,queries in [('rac',dict(endpoint='localhost:1545',executable=str(self.root/'missing-rac.exe')),['clusters']),
             ('postgresql',dict(database='test',executable=str(self.root/'missing-psql.exe')),['activity'])]:
