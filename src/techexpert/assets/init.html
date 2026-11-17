@@ -310,16 +310,31 @@
         }
       }
       async function prepareProfile({baseMerge=null,selectionOnly=false,decisions=null}={}) {
+        if(baseMerge){const ids=new Set([baseMerge.keep_id,...baseMerge.remove_ids]);for(const source of state.sources){if(source.type!=='sql')continue;const names=new Set(Object.entries(source.settings.databases || {}).filter(([id,name])=>ids.has(id) && name).map(([,name])=>name));if(names.size>1)throw new Error('Для объединяемых записей указаны разные имена SQL-базы. Сначала уточните соответствие в настройках источника.');}}
         const view=payload();if(selectionOnly)view.sources=view.sources.filter(source=>source.base_ids.length && (['sql','rac','os'].includes(source.type) || source.path));
         const sourceIds=new Set(view.sources.map(source=>source.id));
         const request={view,draft_profile:editorProfile,connection_edits:connectionEdits,connection_bindings:Object.fromEntries(Object.entries(bindingOverrides).filter(([id])=>sourceIds.has(id))),base_registrations:Object.fromEntries(Object.entries(baseRegistrations).filter(([id])=>selected.has(id))),discovery_resources:discoveryResources};
         if(baseMerge)request.base_merge=baseMerge;if(decisions)request.registration_decisions=decisions;
         const result=await api('/api/profile-compose',request);
-        if(baseMerge){const removed=new Set(baseMerge.remove_ids);removed.forEach(id=>{priorBaseLabels[id]=baseName(id);});state.bases=state.bases.filter(base=>!removed.has(base.id));removed.forEach(id=>{selected.delete(id);delete baseRegistrations[id];});if(editorProfile){editorProfile.bases=editorProfile.bases.filter(base=>!removed.has(base.id));editorProfile.database_bindings=editorProfile.database_bindings.filter(row=>!removed.has(row.base_id));}state.sources.forEach(source=>{source.base_ids=[...new Set(source.base_ids.map(id=>removed.has(id)?baseMerge.keep_id:id))];});}
+        if(baseMerge)applyBaseMerge(baseMerge,result.profile);
         preparedProfile=selectionOnly?null:result.profile;preparedImpact=result.impact;mergeEditor(result.profile);connectionEdits={};sourceIds.forEach(id=>delete bindingOverrides[id]);discoveryResources={nodes:[],clusters:[],connections:[]};
         for(const key of ['bases','sources']){const rows=new Map(result.editor.view[key].map(row=>[row.id,row]));state[key]=state[key].map(row=>rows.get(row.id) || row);}
         result.profile.bases.forEach(base=>{if(base.registrations)baseRegistrations[base.id]=base.registrations;});
         matches=result.matches.groups;sourceSuggestions=result.source_suggestions;renderBases();renderMatches();renderSuggestions();return result;
+      }
+      function applyBaseMerge(merge,profile) {
+        const removed=new Set(merge.remove_ids);const included=new Set(profile.sources.map(source=>source.id));
+        removed.forEach(id=>{priorBaseLabels[id]=baseName(id);});
+        if(editorProfile){
+          for(const source of state.sources){const cached=editorProfile.sources.find(item=>item.id===source.id);if(cached && cached.base_ids.some(id=>removed.has(id)) && !included.has(source.id) && ['sql','rac','os'].includes(source.type))bindingOverrides[source.id]=sourceConnectionId(source);}
+          // Current complete rows come from the verified compose result. Pending
+          // or deleted cards must not retain a cached reference to a removed IB.
+          editorProfile.sources=editorProfile.sources.filter(source=>!source.base_ids.some(id=>removed.has(id)));
+          editorProfile.bases=editorProfile.bases.filter(base=>!removed.has(base.id));
+          editorProfile.database_bindings=editorProfile.database_bindings.filter(row=>!removed.has(row.base_id));
+        }
+        state.bases=state.bases.filter(base=>!removed.has(base.id));removed.forEach(id=>{selected.delete(id);delete baseRegistrations[id];});
+        for(const source of state.sources){source.base_ids=[...new Set(source.base_ids.map(id=>removed.has(id)?merge.keep_id:id))];if(source.settings.databases)source.settings.databases=Object.fromEntries(Object.entries(source.settings.databases).map(([id,name])=>[removed.has(id)?merge.keep_id:id,name]));}
       }
       function acceptDiscovery(found) {
         for(const kind of ['nodes','clusters','connections']){const rows=new Map(discoveryResources[kind].map(row=>[row.id,row]));(found.resources?.[kind] || []).forEach(row=>rows.set(row.id,row));discoveryResources[kind]=[...rows.values()];}

@@ -348,7 +348,7 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
     result['name']=flat['name'];bases=[]
     for item in flat['bases']:
         old=lookup(result,'bases',item['id']);baseline=original_bases.get(item['id']);current=edited_bases.get(item['id'])
-        if old is not None and item['mode']==old['mode'] and item['connection'] in (baseline['connection'],current['connection']):bases.append(deepcopy(old))
+        if old is not None and item['mode']==old['mode'] and item['connection'] in (baseline['connection'],current['connection']):bases.append(dict(deepcopy(old),name=item['name']))
         else:
             row=deepcopy(lookup(fresh,'bases',item['id']))
             row['mode_origin']['origin']='configured_input'

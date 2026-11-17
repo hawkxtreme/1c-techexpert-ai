@@ -30,6 +30,14 @@ def graph():
 
 
 class ProfileResourceTests(unittest.TestCase):
+    def test_rename_preserves_identity_origin_and_other_configuration(self):
+        from src.techexpert.profile_resources import upgrade_profile,effective_profile,compose_profile
+        original=upgrade_profile(dict(schema_version=1,name='Manual',bases=[dict(id='a',name='Old',mode='server',connection='Srvr=app;Ref=main')],sources=[]))
+        before=copy.deepcopy(original);view=effective_profile(original);view['bases'][0]['name']='New GUI Name'
+        result=compose_profile(original,view)['profile']['bases'][0]
+        expected=copy.deepcopy(original['bases'][0]);expected['name']='New GUI Name'
+        self.assertEqual(result,expected);self.assertEqual(original,before)
+
     def test_manual_correction_records_its_origin_without_overwriting_old_profile(self):
         from src.techexpert.profile_resources import upgrade_profile,effective_profile,compose_profile
         value=upgrade_profile(dict(schema_version=1,name='Manual',bases=[dict(id='a',name='Main',mode='server',connection='Srvr=app;Ref=main')],sources=[]))
