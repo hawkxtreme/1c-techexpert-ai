@@ -13,12 +13,13 @@ def schemas(cap,api_operations):
         max_api_bytes=cap.integer(16384,64*1024**2,64*1024**2),
         max_owned_bytes=cap.integer(1024**2,256*1024**2,256*1024**2),
         max_value_bytes=cap.integer(16384,16*1024**2,16*1024**2)),[])
+    from .logcfg_api import scope_schemas as logcfg_schemas
     scope=cap.obj(dict(operations=cap.array(cap.string(64,enum=list(api_operations)),len(api_operations)),
         cases=cap.array(cap.CASE,100),artifacts=cap.array(cap.CASE,100),comparisons=cap.array(cap.CASE,100),
         investigations=cap.array(cap.obj(dict(id=cap.CASE,revision=cap.integer(1,1000,1)),['id','revision']),100),
         manifests=cap.array(cap.FILE,64),measurements=cap.array(cap.FILE,64),
         collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8),
-        intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap)))
+        intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap),**logcfg_schemas(cap)))
     return dict(program=dict(type='string',minLength=1,maxLength=65536,x_multiline=True),
         language=cap.string(32,enum=['bounded-python-v1'],default='bounded-python-v1'),
         bindings=dict(type='object',maxProperties=64,additionalProperties=True,default={},x_bounded_json=16384),
@@ -47,6 +48,9 @@ def normalize(arguments):
             if field in settings:settings[field]=str(Path(settings[field]).absolute())
         profile['settings']={k:v for k,v in settings.items() if v is not None}
     from . import diagnostic_adapters as drivers
+    from . import logcfg_api
+    for field,operation in [('logcfg_plans','logcfg.prepare'),('logcfg_rollbacks','logcfg.rollback_plan')]:
+        for plan in result['scope'][field]:plan['settings']=logcfg_api.normalize(operation,plan['settings'])
     result['scope']['source_snapshots']=[drivers.normalize_source(p) for p in result['scope']['source_snapshots']]
     result['scope']['journals']=[drivers.normalize('jr.import',p) for p in result['scope']['journals']]
     from .rac import UUID
@@ -66,6 +70,7 @@ class Scope:
         self.imported=set();self.collector_runs=[0]*len(value['collectors']);self.products=[]
         self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql')}
         self.intake_runs=[0]*len(value.get('intakes',[]))
+        self.logcfg_runs={field:[0]*len(value.get(field,[])) for field in ('logcfg_plans','logcfg_rollbacks')}
 
     def authorize(self,operation,arguments):
         if operation not in self.api_operations or operation not in self.operations:raise CodeError('scope_denied','Operation is outside the caller-selected API scope.')
@@ -75,7 +80,13 @@ class Scope:
             base=(operation,path_key(path))
             return base+(arguments['input_plan'],tuple(sorted(arguments['members']))) if arguments.get('input_plan') else base
         if operation in ('jr.import','os.import','apdex.import') and arguments.get('input_plan'):target('artifacts',arguments['input_plan'])
-        if operation=='input.inspect':
+        if operation in ('logcfg.prepare','logcfg.rollback_plan'):
+            if operation=='logcfg.rollback_plan':target('artifacts',arguments['proposal_id'])
+            field='logcfg_plans' if operation=='logcfg.prepare' else 'logcfg_rollbacks'
+            selected=next((i for i,p in enumerate(self.value.get(field,[])) if p['settings']==arguments and self.logcfg_runs[field][i]<p['max_runs']),None)
+            if selected is None:raise CodeError('scope_denied','logcfg proposal exceeds exact approved settings, input or repeat count.')
+            self.logcfg_runs[field][selected]+=1
+        elif operation=='input.inspect':
             selected=next((i for i,p in enumerate(self.value['intakes']) if p['settings']==arguments and self.intake_runs[i]<p['max_runs']),None)
             if selected is None:raise CodeError('scope_denied','Input inspection is outside the exact approved paths, limits or repeat count.')
             self.intake_runs[selected]+=1
@@ -136,7 +147,7 @@ class Scope:
     def produced(self,operation,data):
         if not isinstance(data,dict):return
         field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-            **{op:('artifact_id','artifacts') for op in ('input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
+            **{op:('artifact_id','artifacts') for op in ('logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

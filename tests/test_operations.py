@@ -133,6 +133,13 @@ class ManagedOperationTests(unittest.TestCase):
         doc=create(self.state,dict(task='Read exact saved source context'))
         call('investigation.sources',investigation_id=doc['investigation_id'],revision=1)
         call('input.inspect',inputs=[dict(path=str(ROOT/'tests/fixtures/order-load/baseline-native.txt'),kind='file')])
+        config=self.folder/'supplied-logcfg.xml'
+        config.write_bytes(b'<config xmlns="http://v8.1c.ru/v8/tech-log"><dump create="false"/></config>')
+        prepared=call('logcfg.prepare',current_file=str(config),node='client',os='windows',mode='file',process='client',
+            platform_version='8.3.27.1989',config_path='C:/onec/conf/logcfg.xml',log_location='C:/tj/incident',events=['CALL'],purpose='finite test')
+        config.write_bytes((self.state/'artifacts'/prepared['artifact_id']/'sources/logcfg.xml').read_bytes())
+        rollback=call('logcfg.rollback_plan',proposal_id=prepared['artifact_id'],current_file=str(config))
+        self.assertEqual(rollback['result']['action'],'replace_file')
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

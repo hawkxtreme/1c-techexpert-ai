@@ -183,7 +183,8 @@ def _saved(state_dir,artifact_id):
     if report['kind']!='native-jr' or report['result'].get('profile')!=PROFILE:raise InputError('artifact is not a supported native JR snapshot')
     sources=[]
     for source in report['sources']:
-        data=read_snapshot(artifact_folder(state_dir,artifact_id)/'sources'/(source['id']+'.bin'))
+        from .artifacts import source_path
+        data=read_snapshot(source_path(artifact_folder(state_dir,artifact_id),source))
         if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:
             raise InputError('JR snapshot integrity mismatch during read')
         sources.append((source['name'],data))

@@ -130,7 +130,8 @@ def snapshot_source(state_dir,path,*,kind='catalog',ref='HEAD',encoding='utf-8')
 def load_source(state_dir,artifact_id):
     report=load_artifact(state_dir,artifact_id)
     if report['kind']!='onec_source':raise InputError('source snapshot artifact required')
-    document=json_value(read_snapshot(artifact_folder(state_dir,artifact_id)/'sources/s1.bin').decode('utf-8'),reject_duplicates=True)
+    from .artifacts import source_path
+    document=json_value(read_snapshot(source_path(artifact_folder(state_dir,artifact_id),report['sources'][0])).decode('utf-8'),reject_duplicates=True)
     if document.get('profile')!='onec-source-snapshot-v1':raise InputError('unsupported source snapshot')
     result=[]
     for row in document['files']:

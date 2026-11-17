@@ -37,7 +37,8 @@ def _load(state, ref):
         _check_plan(plan, binding, source)
         dependencies.append(dict(kind='artifacts', id=binding['id'], report_digest=fs.digest(plan),
                                  receipt_digest=fs.digest(fs.read(state/'artifacts'/binding['id']/'receipt.json', 8192))))
-    return dict(ref=ref, report=report, source=source, path=folder/'sources'/(ref['source_id']+'.bin'),
+    path=folder/'sources'/(ref['source_id']+'.bin') if ref['kind']=='case' else artifacts.source_path(folder,source)
+    return dict(ref=ref, report=report, source=source, path=path,
                 binding=binding, plan=plan, dependencies=dependencies, context_digest=context_digest, receipt_digest=receipt_digest)
 
 

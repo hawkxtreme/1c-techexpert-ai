@@ -48,7 +48,7 @@ def routes(cap):
     result={
         'artifact.evidence':route(dict(**artifact,source_id=cap.string(16,pattern='s[1-9][0-9]*')),['artifact_id','source_id'],
             ['verified saved artifact'],'read bounded private evidence; never publish',
-            ['artifact_id','source_id','sha256','text','truncated'],dict(source_id=dict(type='string'),text=dict(type='string'))),
+            ['artifact_id','source_id','sha256','text','truncated'],dict(source_id=dict(type='string'),text=dict(type='string'),file_path=dict(type='string'))),
         'apdex.import':route(dict(measurements=cap.FILE,target_seconds=dict(type='number',minimum=0,maximum=31536000),
             operation=cap.string(256),start=cap.string(80),end=cap.string(80),**input_fields(cap,single=True)),['measurements','target_seconds'],
             ['explicit normalized APDEX measurements and target'],'save measured APDEX; no BSP/native export compatibility claim',outputs),

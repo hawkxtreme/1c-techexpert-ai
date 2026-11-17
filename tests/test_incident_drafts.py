@@ -202,6 +202,19 @@ class IncidentDraftTests(unittest.TestCase):
                 evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
             with self.assertRaisesRegex(ValueError,'text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
 
+    def test_raw_logcfg_proposals_and_rollback_sources_are_not_public_excerpts(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        for kind in ('logcfg_proposal','logcfg_rollback'):
+            with self.subTest(kind=kind),tempfile.TemporaryDirectory() as temp:
+                state=Path(temp);inv=self.investigation(state)
+                secret=b'<config><eq property="Password" value="SYNTHETICPRIVATECREDENTIAL42"/></config>'
+                raw=save_artifact(state,kind,{},[('config',secret),('diff',b'+ '+secret)],{},source_names=['logcfg.xml','change.diff'])
+                inv=revise(state,inv['investigation_id'],dict(attachments=inv['attachments']+[dict(id='A-2',kind='artifact',target_id=raw['artifact_id'])],
+                    evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1'),dict(id='E-3',attachment='A-2',record='s2')]),expected_revision=2)
+                for evidence_id in ('E-2','E-3'):
+                    with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=[evidence_id])
+
     def test_encoded_source_snapshot_requires_a_separate_prepared_text_excerpt(self):
         from src.techexpert.source_code import snapshot_source
         from src.techexpert.investigations import revise
@@ -312,7 +325,7 @@ class IncidentDraftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp);inv=self.investigation(state);view=self.api.prepare(state,inv['investigation_id'])
             folder=state/'incident-drafts'/view['draft_id']/'revisions'/'000001'
-            source=json.loads((folder/'source.json').read_text(encoding='utf-8'));source['sanitizer_version']=0
+            source=json.loads((folder/'source.json').read_text(encoding='utf-8'));source['sanitizer_version']=8
             raw=json.dumps(source).encode();(folder/'source.json').write_bytes(raw)
             receipt=json.loads((folder/'receipt.json').read_text(encoding='utf-8'));receipt['source_sha256']=hashlib.sha256(raw).hexdigest()
             (folder/'receipt.json').write_text(json.dumps(receipt),encoding='utf-8')

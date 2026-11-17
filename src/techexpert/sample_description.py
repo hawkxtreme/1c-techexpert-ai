@@ -86,7 +86,8 @@ def _load(state, ref, remaining, plans):
         binding = retained.binding(report, source_ref, source)
         crc = 0
         chunks = []
-        with open_verified_snapshot(fs.safe(folder / 'sources' / (source['id'] + '.bin')),
+        path=folder/'sources'/(source['id']+'.bin') if ref['kind']=='case' else artifacts.source_path(folder,source)
+        with open_verified_snapshot(fs.safe(path),
                 source['sha256'], expected_size=source['size']) as stream:
             while True:
                 chunk = stream.read(65536)

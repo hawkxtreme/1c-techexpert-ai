@@ -23,10 +23,29 @@ def artifact_folder(state_dir, artifact_id):
     return Path(state_dir)/'artifacts'/artifact_id
 
 
-def save_artifact(state_dir, kind, request, sources, result, *, input_intake=None):
+def _file_name(value):
+    if (type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.(?:xml|bin|diff)',value)
+        or value.split('.')[0].upper() in {'CON','PRN','AUX','NUL',*[f'{p}{i}' for p in ('COM','LPT') for i in range(1,10)]}):
+        raise InputError('invalid artifact source file name')
+    return value
+
+
+def source_path(folder, source):
+    """Resolve a sealed leaf, never an original input path or supplied directory."""
+    from .operation_state import safe
+    if type(source) is not dict or not re.fullmatch(r's(?:[1-9]|[12][0-9]|3[0-2])',str(source.get('id',''))):
+        raise InputError('invalid artifact source identity')
+    return safe(Path(folder)/'sources'/_file_name(source.get('file_name',source['id']+'.bin')))
+
+
+def save_artifact(state_dir, kind, request, sources, result, *, input_intake=None, source_names=None):
     if not isinstance(kind,str) or not re.fullmatch('[a-z][a-z0-9_-]{0,63}',kind):
         raise InputError('invalid artifact kind')
     if not isinstance(sources,list) or len(sources)>32:raise InputError('at most 32 evidence files allowed')
+    if source_names is not None:
+        if type(source_names) is not list or len(source_names)!=len(sources):raise InputError('invalid artifact source names')
+        names=[_file_name(name) for name in source_names]
+        if len({name.casefold() for name in names})!=len(names):raise InputError('duplicate artifact source file name')
     request_data=encoded(request,1024*1024)
     evidence=[];total=0
     for i,source in enumerate(sources,1):
@@ -36,12 +55,13 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
         total+=len(data)
         if len(data)>MAX_FILE_BYTES or total>MAX_TOTAL_BYTES:raise InputError('evidence exceeds byte limit')
         evidence.append(dict(id=f's{i}',name=name,bytes=len(data),sha256=hashlib.sha256(data).hexdigest()))
+        if source_names is not None:evidence[-1]['file_name']=names[i-1]
     if input_intake is not None:
         from .input_intake import bind_sources
         bound=bind_sources(input_intake,sources)
         result=dict(result,input_intake=bound)
         for metadata,capture in zip(evidence,bound['selected']):metadata['input_origin']=dict(capture['input_origin'])
-    report=dict(schema_version=1,artifact_id=uuid.uuid4().hex,kind=kind,product_version=__version__,
+    report=dict(schema_version=2 if source_names is not None else 1,artifact_id=uuid.uuid4().hex,kind=kind,product_version=__version__,
                 created_at=datetime.now(timezone.utc).isoformat(),knowledge_revision=knowledge_revision(),
                 result=result,sources=evidence,requires_ai_interpretation=True)
     report_data=encoded(report,MAX_REPORT_BYTES)
@@ -53,7 +73,7 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
     (folder/'request.json').write_bytes(request_data)
     (folder/'report.json').write_bytes(report_data)
     for metadata,(_,data) in zip(evidence,sources):
-        (folder/'sources'/(metadata['id']+'.bin')).write_bytes(data)
+        source_path(folder,metadata).write_bytes(data)
     write_json(folder/'receipt.json',dict(schema_version=1,
         report_sha256=hashlib.sha256(report_data).hexdigest(),request_sha256=hashlib.sha256(request_data).hexdigest()))
     return report
@@ -68,14 +88,18 @@ def load_artifact(state_dir,artifact_id):
         if hashlib.sha256(data).hexdigest()!=receipt.get(name+'_sha256'):
             raise InputError('saved artifact '+name+' integrity mismatch')
     report=json_value(report_data.decode('utf-8'),reject_duplicates=True)
-    if report.get('schema_version')!=1 or report.get('artifact_id')!=artifact_id:
+    if report.get('schema_version') not in (1,2) or report.get('artifact_id')!=artifact_id:
         raise InputError('unsupported artifact schema')
     evidence=report.get('sources')
     if not isinstance(evidence,list) or len(evidence)>32:raise InputError('invalid artifact evidence')
-    total=0
+    total=0;names=set()
     for i,source in enumerate(evidence,1):
-        if source.get('id')!=f's{i}':raise InputError('invalid artifact evidence identity')
-        data=read_snapshot(folder/'sources'/(source['id']+'.bin'))
+        if type(source) is not dict or source.get('id')!=f's{i}':raise InputError('invalid artifact evidence identity')
+        if ('file_name' in source)!=(report['schema_version']==2):raise InputError('invalid artifact source schema')
+        path=source_path(folder,source)
+        if path.name.casefold() in names:raise InputError('duplicate artifact source file name')
+        names.add(path.name.casefold())
+        data=read_snapshot(path)
         total+=len(data)
         if total>MAX_TOTAL_BYTES or len(data)!=source.get('bytes') or hashlib.sha256(data).hexdigest()!=source.get('sha256'):
             raise InputError('saved artifact evidence integrity mismatch')
@@ -86,8 +110,11 @@ def artifact_evidence(state_dir,artifact_id,source_id):
     report=load_artifact(state_dir,artifact_id)
     source=next((s for s in report['sources'] if s['id']==source_id),None)
     if source is None:raise InputError('unknown artifact evidence source')
-    data=read_snapshot(artifact_folder(state_dir,artifact_id)/'sources'/(source_id+'.bin'))
+    path=source_path(artifact_folder(state_dir,artifact_id),source)
+    data=read_snapshot(path)
+    if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:raise InputError('saved artifact evidence integrity mismatch')
     return dict(artifact_id=artifact_id,source_id=source_id,sha256=source['sha256'],
+                file_path=str(path.absolute()),
                 integrity_verified=True,untrusted_source_content=True,
                 text=data[:8192].decode('utf-8-sig',errors='replace'),truncated=len(data)>8192)
 
