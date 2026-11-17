@@ -18,7 +18,7 @@ ENTRY='skills/techexpert/SKILL.md'
 SKILLS=('techexpert','investigate','logcfg','rac','tech-log','event-log','onec-cluster','postgresql','sql-server',
     'onec-source','os-metrics','client-ui-performance','apdex-and-observation','verify-improvement',
     'report-and-evidence','setup-and-access','code-mode-analysis','external-research')
-REQUIRED=dict(runtime={'techexpert.py','.codex-plugin/plugin.json','src/techexpert/__init__.py',
+REQUIRED=dict(runtime={'techexpert.py','.codex-plugin/plugin.json','plugin.json','mcp.json','.mcp.json','.agents/plugins/marketplace.json','src/techexpert/__init__.py',
     'src/techexpert/readiness.py','src/techexpert/cli.py','src/techexpert/storage.py','src/techexpert/inputs.py',
     'src/techexpert/gui.py','src/techexpert/assets/init.html'},
     instructions={'AGENTS.md','.agents/skills/techexpert/SKILL.md',*('skills/'+name+'/SKILL.md' for name in SKILLS)},

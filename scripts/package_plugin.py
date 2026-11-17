@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT))
 def build(output):
     output = Path(output).resolve()
     files = [ROOT / 'techexpert.py', ROOT / 'README.md', ROOT / 'AGENTS.md', ROOT / '.codex-plugin/plugin.json',
+             ROOT / 'plugin.json', ROOT / 'mcp.json', ROOT / '.mcp.json', ROOT / '.agents/plugins/marketplace.json',
              ROOT / 'scripts/sc01_blind.py', ROOT / 'scripts/generate_bundle_manifest.py', ROOT / 'evaluations/sc01-codex-skill.md',
              ROOT / 'evaluations/local-adapters-0.5.0.md',ROOT / 'evaluations/investigations-0.7.0.md',
              ROOT / 'evaluations/incident-drafts-0.8.0.md',ROOT / 'evaluations/source-export-0.9.0.md',ROOT / 'evaluations/first-run-0.10.0.md',

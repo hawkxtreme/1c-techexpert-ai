@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "techexpert": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["-X", "utf8", "${PLUGIN_ROOT}/techexpert.py", "mcp-stdio"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}

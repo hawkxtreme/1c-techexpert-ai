@@ -1,0 +1,24 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "1c-techexpert-ai",
+  "version": "0.20.0",
+  "description": "Расследование технических проблем 1С с ИИ текущего harness, локальными инструментами и комплектной базой знаний.",
+  "author": {"name": "1C TechExpert AI contributors"},
+  "repository": "https://github.com/hawkxtreme/1c-techexpert-ai",
+  "extensions": {
+    "com.openai": {
+      "requires_local_executor": true,
+      "onboardingSkill": "./skills/setup-and-access/SKILL.md",
+      "interface": {
+        "displayName": "1C TechExpert AI",
+        "shortDescription": "Помощник расследования проблем 1С",
+        "longDescription": "Настройка независимых источников, проверяемые наблюдения, поиск знаний и проверка исправления в текущем чате.",
+        "developerName": "1C TechExpert AI contributors",
+        "category": "Productivity",
+        "capabilities": ["Read", "Write"],
+        "brandColor": "#FFE45C",
+        "defaultPrompt": ["Помоги настроить источники 1С", "Помоги разобраться с проблемой 1С"]
+      }
+    }
+  }
+}

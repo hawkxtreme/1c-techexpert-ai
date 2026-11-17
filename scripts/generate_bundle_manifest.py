@@ -16,7 +16,7 @@ def canonical(data):
     return data.decode('utf-8').replace('\r\n','\n').encode('utf-8')
 
 def generate():
-    groups=dict(runtime=['techexpert.py','.codex-plugin/plugin.json'],instructions=['AGENTS.md'],
+    groups=dict(runtime=['techexpert.py','.codex-plugin/plugin.json','plugin.json','mcp.json','.mcp.json','.agents/plugins/marketplace.json'],instructions=['AGENTS.md'],
         catalogues=[],knowledge=[],demo=['examples/sc01/case.json','examples/sc01/events.jsonl'])
     for relative,category in (('src/techexpert','runtime'),('skills','instructions')):
         for current,dirs,files in os.walk(ROOT/relative,followlinks=False):
