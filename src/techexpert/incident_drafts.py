@@ -129,7 +129,9 @@ def _known(doc,state_dir):
     profile=doc.get('profile_snapshot') or {}
     graph=profile if profile.get('schema_version')==2 else None
     if graph:
+        from .profiles import validate_profile
         from .profile_resources import effective_profile
+        graph=validate_profile(graph)
         profile=effective_profile(graph)
     def add(category,value):
         if isinstance(value,str) and 2<=len(value)<=4096 and not SECRET.search(value):values.setdefault(value,category)
@@ -139,10 +141,19 @@ def _known(doc,state_dir):
         add('NODE',source.get('host'));add('PATH',source.get('path'));add('USER',source.get('settings',{}).get('user'))
         for value in source.get('settings',{}).get('databases',{}).values():add('DB',value)
     if graph:
+        public_labels={'кластер','субд','postgresql','microsoft sql server','sql server','ras','os','1с','1c'}
+        def label(value):
+            if value.casefold() not in public_labels:add('ID',value)
+        for base in graph['bases']:
+            add('ID',base['reported_identity']);params=base['connection_parameters']
+            add('DB',params.get('ref'));add('PATH',params.get('file_path'));add('PATH',params.get('publication'))
         for node in graph['nodes']:add('NODE',node['name']);add('ID',node['reported_identity'])
         for kind in ('clusters','dbms_instances'):
-            for resource in graph[kind]:add('ID',resource['reported_identity'])
-        for connection in graph['connections']:add('CONNECTION',connection['address']);add('ID',connection['credential_ref'])
+            for resource in graph[kind]:add('ID',resource['reported_identity']);label(resource['name'])
+        for database in graph['database_bindings']:add('DB',database['name'])
+        for connection in graph['connections']:
+            add('CONNECTION',connection['address']);add('ID',connection['credential_ref']);label(connection['name'])
+            add('USER',connection['settings'].get('user'));add('ID',connection['settings'].get('docker_container'))
     categories=dict(base_alias='DB',node_alias='NODE',node_identity='ID',cluster_identity='ID',infobase_identity='DB',
         dbms_instance_identity='ID',sql_database_name='DB',dbms_database_identity='ID',source_commit='ID',journal_identity='ID',
         process_identity='ID',session_identity='ID')
@@ -179,6 +190,7 @@ def _known(doc,state_dir):
                     if isinstance(value,(dict,list)):stack.append((value,depth+1))
             elif isinstance(item,list):stack.extend((value,depth+1) for value in item)
         if len(values)>2048:raise InputError('incident identifier catalogue exceeds bounds')
+    if len(values)>2048:raise InputError('incident identifier catalogue exceeds bounds')
     return values
 
 def _json_secrets(text,privacy):

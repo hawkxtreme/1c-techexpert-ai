@@ -111,6 +111,9 @@ class ProfileResourceTests(unittest.TestCase):
         restored=self.api.compose_profile(detached,self.api.effective_profile(detached),connection_bindings={'sql-b':'sql'})['profile']
         source=next(s for s in restored['sources'] if s['id']=='sql-b')
         self.assertEqual(source['dbms_instance_id'],'postgres');self.assertEqual(source['node_id'],'db')
+        impact=self.api.resource_impact(detached,restored)
+        self.assertEqual(impact['affected_base_ids'],['b']);self.assertEqual(impact['affected_source_ids'],['sql-b'])
+        self.assertTrue(impact['changed_associations'])
 
     def test_editor_discards_only_abandoned_new_resources_and_keeps_saved_unused_ones(self):
         from src.techexpert.profiles import validate_profile
@@ -188,6 +191,27 @@ class ProfileResourceTests(unittest.TestCase):
             preview=prepare(tmp,doc['investigation_id'])
             for alias in aliases:self.assertNotIn(alias,preview['body'])
 
+    def test_public_preview_masks_known_infobase_claims_without_source_bindings(self):
+        from src.techexpert.profiles import save_profile
+        from src.techexpert.investigations import create
+        from src.techexpert.incident_drafts import prepare
+        aliases=('PRIVATE_REPORTED_IB_ID','PRIVATE_IB_REF','PRIVATE_UNUSED_SQL_DB','PRIVATE_CLUSTER_ALIAS','PRIVATE_INSTANCE_ALIAS','PRIVATE_CONNECTION_ALIAS')
+        value=graph();value['bases'][0]['reported_identity']=aliases[0];value['bases'][0]['connection_parameters']['ref']=aliases[1]
+        value['database_bindings'].append(dict(id='unused-db',base_id='a',instance_id='postgres',name=aliases[2]))
+        value['clusters'][0]['name']=aliases[3];value['dbms_instances'][0]['name']=aliases[4];value['connections'][1]['name']=aliases[5]
+        with tempfile.TemporaryDirectory() as tmp:
+            save_profile(tmp,value,expected_revision=0);doc=create(tmp,dict(task='Наблюдение '+ ' '.join(aliases)))
+            preview=prepare(tmp,doc['investigation_id'])
+            for alias in aliases:self.assertNotIn(alias,preview['body'])
+
+    def test_legacy_preflight_fills_os_defaults_without_mutating_the_document(self):
+        from src.techexpert.profiles import check_profile
+        value=dict(schema_version=1,name='Legacy OS',bases=[dict(id='a',name='File',mode='file',connection='//file.invalid/main')],
+            sources=[dict(id='os',type='os',path='',host='',base_ids=['a'],settings={})])
+        before=copy.deepcopy(value)
+        self.assertEqual(check_profile(value)['sources'][0]['status'],'local_collector_available')
+        self.assertEqual(value,before)
+
     def test_invalid_graphs_do_not_reach_save(self):
         from src.techexpert.profiles import validate_profile
         changes=[lambda p:p['sources'][0].update(dbms_instance_id='absent'),
@@ -241,3 +265,7 @@ class ProfileResourceTests(unittest.TestCase):
             self.assertEqual(result['facts']['infobase_identity']['basis'],'reported');self.assertEqual(result['facts']['infobase_identity']['value'],'USER_IB_ID')
             self.assertEqual(result['facts']['cluster_identity']['basis'],'reported')
             self.assertEqual(result['access_scope']['configured_resource_refs']['node_id'],'app')
+            raw=dict(value,revision=8)
+            direct=normalize_bindings(raw,[dict(id='A-1',kind='artifact',target_id=report['artifact_id'])],{'A-1':report},[dict(id='S-1',attachment='A-1',profile_source_id='code')])[0]['passport']
+            self.assertEqual(direct['facts']['node_identity']['claims'][0]['proof']['profile_sha256'],digest(raw))
+            self.assertNotIn('mode_origin',raw['bases'][0])

@@ -99,13 +99,15 @@ def _passport(profile,binding,attachment,target):
                 value=next(iter(values));claim(field,None if field=='database_mode' and value=='unknown' else value,'reported',proof)
         node_alias=source['host'];raw_bases=[]
         if profile['schema_version']==2:
-            raw=next(s for s in profile['sources'] if s['id']==source['id']);raw_bases=[b for b in profile['bases'] if b['id'] in declared]
-            instance=next((r for r in profile['dbms_instances'] if r['id']==raw['dbms_instance_id']),None)
+            from .profiles import validate_profile
+            graph=validate_profile(profile)
+            raw=next(s for s in graph['sources'] if s['id']==source['id']);raw_bases=[b for b in graph['bases'] if b['id'] in declared]
+            instance=next((r for r in graph['dbms_instances'] if r['id']==raw['dbms_instance_id']),None)
             node_id=raw['node_id'] or (instance['node_id'] if instance else None)
             cluster_ids={b['cluster_id'] for b in raw_bases}
             cluster_id=raw['cluster_id'] or (next(iter(cluster_ids)) if len(cluster_ids)==1 else None)
-            node=next((r for r in profile['nodes'] if r['id']==node_id),None)
-            cluster=next((r for r in profile['clusters'] if r['id']==cluster_id),None)
+            node=next((r for r in graph['nodes'] if r['id']==node_id),None)
+            cluster=next((r for r in graph['clusters'] if r['id']==cluster_id),None)
             if node:
                 node_alias=node['name'];claim('node_identity',node['reported_identity'],'reported',dict(proof,entity='nodes',entity_id=node_id))
             if cluster:claim('cluster_identity',cluster['reported_identity'],'reported',dict(proof,entity='clusters',entity_id=cluster_id))

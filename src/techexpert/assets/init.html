@@ -154,8 +154,10 @@
       let serial = 0;
       const nextId = prefix => prefix + '-' + (globalThis.crypto?.randomUUID?.() || Date.now() + '-' + (++serial));
       const baseName = id => {
-        const base=state.bases.find(item=>item.id===id);if(!base)return id;
-        const duplicate=state.bases.filter(item=>item.name===base.name).length>1;
+        let base=state.bases.find(item=>item.id===id) || editorProfile?.bases.find(item=>item.id===id);if(!base)return id;
+        const known=new Map([...(editorProfile?.bases || []),...state.bases].map(item=>[item.id,item]));
+        const duplicate=[...known.values()].filter(item=>item.name===base.name).length>1;
+        if(!Object.hasOwn(base,'connection')){const connection=editorProfile.connections.find(item=>item.id===base.connection_id);const params=base.connection_parameters;base={...base,connection:params.file_path || (connection?(params.ref?'Srvr='+connection.address+';Ref='+params.ref:connection.address+(params.publication || '')):'')};}
         return base.name+(duplicate?' · '+modeNames[base.mode]+(base.connection?' · '+base.connection:' · адрес не указан'):'');
       };
       const selectedBases = () => state.bases.filter(base => selected.has(base.id));
@@ -431,10 +433,10 @@
         data.sources.filter(source=>source.type==='os').forEach(source=>add('План сборщика',source.settings.duration_seconds+' с · шаг '+source.settings.interval_seconds+' с · '+({local:'На этом компьютере',ssh:'SSH',winrm:'WinRM'}[source.settings.transport])+' · один запуск, ещё не начат'));
         if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
         if (saved) add('Ревизия профиля',String(saved.revision));
-        const impact=q('#resource-impact');impact.replaceChildren();impact.hidden=!preparedImpact?.changed_resources.length;
+        const impact=q('#resource-impact');impact.replaceChildren();impact.hidden=!((preparedImpact?.changed_resources.length || 0)+(preparedImpact?.changed_associations?.length || 0));
         if(!impact.hidden){
-          impact.append(element('strong','Изменения общих ресурсов'),element('p','Затронутые базы: '+preparedImpact.affected_base_ids.map(baseName).join(', ')));
-          const names=preparedImpact.affected_source_ids.map(id=>{const source=state.sources.find(item=>item.id===id);return source?typeNames[source.type]+' · '+source.base_ids.map(baseName).join(', '):'Удалённый источник';});
+          impact.append(element('strong','Изменения окружения'),element('p','Затронутые базы: '+preparedImpact.affected_base_ids.map(baseName).join(', ')));
+          const names=preparedImpact.affected_source_ids.map(id=>{const source=state.sources.find(item=>item.id===id) || editorProfile?.sources.find(item=>item.id===id);return source?typeNames[source.type]+' · '+source.base_ids.map(baseName).join(', '):'Удалённый источник';});
           if(names.length)impact.append(element('p','Источники: '+names.join('; ')));
           impact.append(element('p','Меняются настройки будущих проверок. Прежние расследования сохраняют свою ревизию профиля. Соответствие экземпляра и права после смены подключения требуют проверки.','note'));
         }

@@ -10,6 +10,12 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_preflight_legacy_os_with_omitted_settings_defaults_returns_a_response(self):
+        value=dict(schema_version=1,name='Legacy',bases=[dict(id='a',name='File',mode='file',connection='//file.invalid/main')],sources=[dict(id='os',type='os',path='',host='',base_ids=['a'],settings={})])
+        status,_,raw=self.request('POST','/api/check',value)
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['sources'][0]['status'],'local_collector_available')
+        self.assertFalse(self.state_dir.exists())
+
     def test_shared_profile_editor_is_protected_and_configuration_only(self):
         from test_profile_resources import graph
         from src.techexpert.profiles import save_profile,load_profile

@@ -438,7 +438,7 @@ def _dependencies(value):
 
 def resource_impact(before,after):
     old=upgrade_profile(before) if before is not None else {k:[] for k in (*RESOURCE_KINDS,'bases','sources')}
-    new=upgrade_profile(after);old_deps=_dependencies(old);new_deps=_dependencies(new);changes=[];affected_bases=set();affected_sources=set()
+    new=upgrade_profile(after);old_deps=_dependencies(old);new_deps=_dependencies(new);changes=[];associations=[];affected_bases=set();affected_sources=set()
     for kind in RESOURCE_KINDS:
         left={r['id']:r for r in old[kind]};right={r['id']:r for r in new[kind]}
         for identity in sorted(left.keys()|right.keys()):
@@ -450,4 +450,14 @@ def resource_impact(before,after):
                 bids=sorted(set(bids)|{bid for doc in (old,new) for source in doc['sources'] if source['id'] in sids for bid in source['base_ids']})
             affected_bases.update(bids);affected_sources.update(sids)
             changes.append(dict(kind=kind,id=identity,change='added' if identity not in left else 'removed' if identity not in right else 'changed',affected_base_ids=bids,affected_source_ids=sids))
-    return dict(schema_version=1,changed_resources=changes,affected_base_ids=sorted(affected_bases),affected_source_ids=sorted(affected_sources),connected=False,applied=False,scope='configured_dependencies_only_not_runtime_ownership')
+    for kind in ('bases','sources'):
+        left={row['id']:row for row in old[kind]};right={row['id']:row for row in new[kind]}
+        for identity in sorted(left.keys()|right.keys()):
+            if left.get(identity)==right.get(identity):continue
+            if kind=='bases':
+                bids=[identity];sids=sorted({s['id'] for doc in (old,new) for s in doc['sources'] if identity in s['base_ids']})
+            else:
+                bids=sorted({bid for row in (left.get(identity),right.get(identity)) if row for bid in row['base_ids']});sids=[identity]
+            affected_bases.update(bids);affected_sources.update(sids)
+            associations.append(dict(kind=kind,id=identity,change='added' if identity not in left else 'removed' if identity not in right else 'changed',affected_base_ids=bids,affected_source_ids=sids))
+    return dict(schema_version=1,changed_resources=changes,changed_associations=associations,affected_base_ids=sorted(affected_bases),affected_source_ids=sorted(affected_sources),connected=False,applied=False,scope='configured_dependencies_only_not_runtime_ownership')

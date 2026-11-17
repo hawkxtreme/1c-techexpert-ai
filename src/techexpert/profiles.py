@@ -202,7 +202,7 @@ def check_profile(value):
     targets behind local links. Actual access belongs to an explicit adapter run.
     """
     from .profile_resources import effective_profile
-    clean=effective_profile(value);checks=[]
+    clean=effective_profile(validate_profile(value));checks=[]
     for source in clean['sources']:
         kind=source['type']
         if kind in ('tj','jr','source'):
