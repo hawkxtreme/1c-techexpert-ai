@@ -14,6 +14,7 @@ PLUGIN = '1c-techexpert-ai'
 FORMAT = 'src/techexpert/assets/update-format.json'
 CASE_RETIREMENT_FORMAT = 'src/techexpert/assets/case-retirement-format.json'
 REPORT_RETIREMENT_FORMAT = 'src/techexpert/assets/report-retirement-format.json'
+REPORT_REFERENCE_FORMAT = 'src/techexpert/assets/report-reference-format.json'
 TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
 CONTEXT_DISCLOSURE_FORMAT = 'src/techexpert/assets/context-disclosure-format.json'
 CONTEXT_INTAKE_FORMAT = 'src/techexpert/assets/context-intake-format.json'
@@ -123,6 +124,7 @@ def read_package(path):
         hashes={name:dict(sha256=_digest(value), bytes=len(value)) for name, value in contents.items()},
         archive=data, case_retirement_schemas=_additional_schemas(contents, listed, CASE_RETIREMENT_FORMAT, 'case_source_retirements'),
         report_retirement_schemas=_additional_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'),
+        report_reference_schemas=_additional_schemas(contents, listed, REPORT_REFERENCE_FORMAT, 'report_references'),
         tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'),
         context_disclosure_schemas=_additional_schemas(contents, listed, CONTEXT_DISCLOSURE_FORMAT, 'context_disclosure'),
         context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'),

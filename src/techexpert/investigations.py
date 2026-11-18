@@ -13,9 +13,9 @@ import os
 from pathlib import Path
 import re
 import uuid
-from urllib.parse import urlsplit
 
 from . import __version__
+from . import report_references
 from .artifacts import load_artifact,artifact_evidence,encoded
 from .incident_templates import catalogue as templates,plan as template_plan
 from .inputs import InputError,json_value,read_snapshot
@@ -266,11 +266,7 @@ def _validate(state_dir,doc):
             for key in ('goal','prerequisites','expected_effect','verification','limitations'):_text(item[key])
             if item['kind']!='diagnostic':_text(item.get('risk'));_text(item.get('rollback'))
         _ids(recommendations,'R')
-        for item in _list(assessment['references'],100):
-            _object(item,('url','purpose','applicability'),('url','purpose','applicability'))
-            _text(item['purpose']);_text(item['applicability']);url=_text(item['url'],2048)
-            parsed=urlsplit(url)
-            if parsed.scheme!='https' or not parsed.hostname or parsed.username or parsed.password or any(c.isspace() or c in '<>"' for c in url):raise InputError('reference must be a credential-free HTTPS URL')
+        report_references.validate(assessment, hypotheses, doc['evidence'], doc['attachments'], targets)
         doc['cause_state']=cause
     if 'workflow_stage' in doc:
         stage=doc['workflow_stage']
@@ -313,10 +309,19 @@ def _md(value):
 def render(doc):
     from .source_passports import context
     source_review=context(doc) if doc['schema_version']==2 else None
+    assessment=doc['assessment']
+    citations=report_references.by_target(assessment)
+    summary_references=[]
+    if citations['assessment']:
+        summary_references.append('')
+        if assessment['evidence']:
+            summary_references.append('Вывод опирается на '+', '.join(assessment['evidence'])+'.')
+        summary_references.extend(report_references.markdown(item,'assessment',_md) for item in citations['assessment'])
     lines=['# Расследование '+doc['investigation_id'], '',f"Ревизия: {doc['revision']}. Выполнение: {doc['execution_status']}. Причина: {doc['cause_state']}.", '',
            'Этап: '+doc.get('workflow_stage','initial_analysis')+'.',
            _md(doc['continuation']['message']) if doc.get('continuation') else '',
            _md(doc['task']),'',_md(doc['assessment']['summary']) if doc['assessment'] else 'Причина не установлена. Сохранены наблюдения и следующие проверки.',
+           *summary_references,
            '', 'Проверены структура и ссылки. Причинное объяснение принадлежит указанному harness; правильность механизма инструментом не доказана.',
            *(['','Принадлежность источников для части выводов требует отдельной проверки.'] if source_review and source_review['needs_clarification'] else []),
            '', '## Контекст', '',f"Шаблон: {doc['template']['id']}, ревизия {doc['template']['revision']}. Время: {doc['time_mode']}. Масштаб: {doc['scale']}.",
@@ -333,7 +338,9 @@ def render(doc):
         for item in source_review['dependencies']:
             if item['unresolved_source_links']:lines.append('- '+item['conclusion_id']+': вывод зависит от неподтверждённых связей '+', '.join(item['unresolved_source_links'])+'.')
     lines+=['','## Гипотезы и противоречия','']
-    for item in doc['hypotheses']:lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
+    for item in doc['hypotheses']:
+        lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
+        lines.extend(report_references.markdown(link,item['id'],_md,prefix='  - ') for link in citations[item['id']])
     for item in doc['contradictions']:lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
     lines+=['','## Доказательства','']
     for item in doc['attachments']:lines.append('- '+item['id']+': '+item['kind']+' / '+item['target_id']+'; origin='+_md(item['source_origin'])+'; report_sha256='+item['report_sha256'])
@@ -344,9 +351,14 @@ def render(doc):
             lines+=['','### '+item['id']+' · '+_md(item['goal']),'']
             for key in ('kind','basis','prerequisites','expected_effect','verification','limitations','risk','rollback'):
                 if key in item:lines.append(_md(key)+': '+_md(item[key])+'  ')
+            if citations[item['id']]:
+                lines.append('')
+                lines.extend(report_references.markdown(link,item['id'],_md) for link in citations[item['id']])
         lines+=['','## Ограничения','']+['- '+_md(x) for x in doc['assessment']['limitations']]
-        lines+=['','## Ссылки','']
-        for item in doc['assessment']['references']:lines.append('- '+_md(item['purpose'])+': <'+item['url']+'>; '+_md(item['applicability']))
+        if citations['legacy']:
+            lines+=['','## Ссылки','']
+            for item in citations['legacy']:
+                lines.append('- '+_md(item['purpose'])+': <'+item['url']+'>; '+_md(item['applicability']))
     lines+=['','## Проверка исправления','',_md(json.dumps(doc['improvement'],ensure_ascii=False)),
             '', '## План наблюдения','',_md(json.dumps(doc['observation_plan'],ensure_ascii=False)),
             '', '## Версии и ограничения учёта','',_md(json.dumps(doc['versions'],ensure_ascii=False)),

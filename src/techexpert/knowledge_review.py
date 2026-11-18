@@ -44,7 +44,10 @@ def pin_use(state_dir,card_ids,*,root=None,purpose='recommendation',environment=
 
 def _snapshot(state_dir,artifact_id):
     from .artifacts import load_artifact
-    report=load_artifact(state_dir,artifact_id)
+    return checked_snapshot(load_artifact(state_dir,artifact_id))
+
+
+def checked_snapshot(report):
     if report['kind']!='knowledge_use':raise InputError('artifact is not a knowledge-use snapshot')
     result=report.get('result')
     if (not isinstance(result,dict) or type(result.get('schema_version')) is not int or result['schema_version']!=1

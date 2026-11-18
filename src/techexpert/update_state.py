@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import context_excerpt, context_intake, context_program, operation_state as fs, operations
+from . import context_excerpt, context_intake, context_program, operation_state as fs, operations, report_references
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -20,7 +20,7 @@ _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionEr
 
 def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
              tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
-             context_program_schemas=()):
+             context_program_schemas=(), report_reference_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -37,6 +37,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             return False
     return (set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
             and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas)
+            and set(observed.get('report-references', ())) <= set(report_reference_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
             and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
             and set(observed.get('context-intake', ())) <= set(context_intake_schemas)
@@ -57,6 +58,7 @@ def inspect_state(state):
     schemas = {name:set() for name in FORMATS}
     schemas['case-source-retirements'] = set()
     schemas['investigation-report-retirements'] = set()
+    schemas['report-references'] = set()
     schemas['tj-reference-windows'] = set()
     schemas['context-disclosure'] = set()
     schemas['context-intake'] = set()
@@ -177,7 +179,12 @@ def inspect_state(state):
                     if not revisions or any(not _REVISION.fullmatch(path.name) for path in revisions):
                         raise InputError('revision history is incomplete')
                     for path in revisions:
-                        schema(kind,document(path/'report.json'))
+                        report = document(path/'report.json')
+                        schema(kind,report)
+                        if kind == 'investigations':
+                            version = report_references.observed_format(report)
+                            if version is not None:
+                                schemas['report-references'].add(version)
                 else:
                     report = document(folder/'report.json')
                     schema(kind,report)

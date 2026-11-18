@@ -342,7 +342,11 @@ def _content(doc,excluded):
             not_reached='Не достигнута',observed='Наблюдалось',not_observed_in_window='Не наблюдалось в указанном окне')
         lines+=['','## Проверка исправления','']+['- '+label+': '+statuses[doc['improvement'][key]] for key,label in labels.items()]
         lines+=['- Окно проверки: '+(doc['improvement']['window'] or 'Не указано')]
-    if 'references' not in excluded:lines+=['','## Ссылки','']+['- '+r['purpose']+': '+r['url']+'; '+r['applicability'] for r in assessment.get('references',[])]
+    if 'references' not in excluded:
+        lines+=['','## Ссылки','']
+        for reference in assessment.get('references',[]):
+            if reference.get('kind') in (None,'documentation','publication'):
+                lines.append('- '+reference['purpose']+': '+reference['url']+'; '+reference['applicability'])
     return '\n'.join(lines).strip()+'\n'
 
 def _with_excerpts(body,excerpts):
