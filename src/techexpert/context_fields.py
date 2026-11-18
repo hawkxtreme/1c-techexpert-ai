@@ -23,6 +23,7 @@ SOURCE_FORMATS = ('1c-tj-text-v1', 'normalized-events-v1', '1c-job-runtime-v1',
                   'sc01-http-service-v1', 'sc01-run-capture-v1')
 PARSE_STATES = ('empty', 'not_parsed', 'invalid', 'partial', 'parsed', 'complete', 'skipped')
 RECORD_ID = re.compile(r's[1-9][0-9]{0,2}:r?[1-9][0-9]{0,8}')
+SQLITE_ROW_ID = re.compile(r'[1-9][0-9]{0,18}')
 SOURCE_ID = re.compile(r's[1-9][0-9]{0,2}')
 ATTACHMENT_ID = re.compile(r'A-[A-Za-z0-9-]{1,60}')
 DATE = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}'
@@ -74,6 +75,8 @@ def proof(value):
     if 'original_location' in value:
         result['original_location'] = measurements(value['original_location'],
                                                     ('line', 'end_line', 'byte_start', 'byte_end'))
+    if value.get('evidence_kind')=='sqlite_row_projection':
+        result.update(evidence_kind='sqlite_row_projection', sqlite_row_id=identifier(value.get('sqlite_row_id'),SQLITE_ROW_ID))
     return result
 
 

@@ -223,7 +223,7 @@ def main(argv=None):
     retention_save.add_argument('--expected-revision',type=int,required=True)
     retention_save.add_argument('--category',choices=retention_categories,default=DEFAULT_CATEGORY)
     jr=commands.add_parser('jr-import')
-    jr.add_argument('path',type=Path);jr.add_argument('--platform-version',required=True)
+    jr.add_argument('path',type=Path);jr.add_argument('--platform-version')
     jr.add_argument('--utc-offset')
     jr.add_argument('--consistency',choices=('unknown','stopped_writer','provided_snapshot'),default='unknown')
     jr_events=commands.add_parser('jr-events');jr_events.add_argument('artifact_id')

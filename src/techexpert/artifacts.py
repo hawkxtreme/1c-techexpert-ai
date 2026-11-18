@@ -128,6 +128,9 @@ def load_artifact(state_dir,artifact_id):
 def artifact_evidence(state_dir,artifact_id,source_id):
     report=load_artifact(state_dir,artifact_id)
     if report['kind']=='context_excerpt':raise InputError('use the reviewed excerpt context view')
+    if report['kind']=='native-jr':
+        from .native_jr_sqlite import PROFILE
+        if report['result'].get('profile')==PROFILE:raise InputError('use jr.record for LGD row evidence')
     source=next((s for s in report['sources'] if s['id']==source_id),None)
     if source is None:raise InputError('unknown artifact evidence source')
     path=source_path(artifact_folder(state_dir,artifact_id),source)

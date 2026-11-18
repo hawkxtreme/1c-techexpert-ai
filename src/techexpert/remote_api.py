@@ -82,6 +82,12 @@ def pin(state,operation,args,data,add):
         report=add(kind,data[key]);parent=add('artifacts',args['capture_id']);remote_intake.validate_capture(parent)
         intake=report.get('input_intake') if kind=='cases' else report['result'].get('input_intake')
         if type(intake) is not dict or intake.get('artifact_id')!=args['capture_id'] or intake.get('plan_report_digest')!=fs.digest(parent):raise InputError('remote parser capture binding changed')
+        if args['adapter']=='jr':
+            from .native_jr_sqlite import PROFILE as LGD_PROFILE
+            if report['result'].get('profile')==LGD_PROFILE:
+                reference = remote_intake.checked_lgd_catalogue(state,parent,args['settings']['members'][0])
+                if _tag(state,add('artifacts',reference['id']))!=reference:
+                    raise InputError('LGD remote catalogue changed before result commit')
         return
     report=add('artifacts',data['artifact_id'])
     if operation in ('remote.plan','remote.profile_plan'):plan=report

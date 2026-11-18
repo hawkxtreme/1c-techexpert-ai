@@ -21,7 +21,7 @@ REASONS = (
     'kernel_memory_limit', 'worker_failed_before_sealed_result', 'kernel_admission_integrity',
     'context_intake_incomplete',
 )
-SUFFIXES = ('.log', '.lgf', '.lgp', '.json', '.jsonl', '.txt', '.csv')
+SUFFIXES = ('.log', '.lgf', '.lgp', '.lgd', '.json', '.jsonl', '.txt', '.csv')
 AVAILABILITY = ('captured', 'not_found', 'access_denied', 'read_error', 'changed_during_read', 'byte_limit')
 
 

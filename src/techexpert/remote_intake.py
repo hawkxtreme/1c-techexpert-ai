@@ -58,7 +58,7 @@ def settings_schema(cap,adapter):
     properties={} if adapter=='os' else deepcopy(cap.ROUTES[adapter+'.import']['input_schema']['properties'])
     for key in ('path','measurements','input_plan','members'):properties.pop(key,None)
     properties['members']=dict(type='array',minItems=1,maxItems=32 if adapter=='jr' else 1,items=cap.string(4,pattern='m[1-9][0-9]{0,2}'))
-    return cap.obj(properties,['members']+(['platform_version'] if adapter=='jr' else ['target_seconds'] if adapter=='apdex' else []))
+    return cap.obj(properties,['members']+(['target_seconds'] if adapter=='apdex' else []))
 
 
 def normalize(adapter,settings):
@@ -72,6 +72,40 @@ def normalize(adapter,settings):
     return value
 
 
+def checked_lgd_catalogue(state, capture, member_id):
+    from . import native_jr, remote_sources, remote_transfers
+
+    result = capture['result']
+    reference,plan,source = (result.get(key) for key in ('catalogue','plan','source_id'))
+    if (any(type(tag) is not dict or not re.fullmatch('[a-f0-9]{32}',str(tag.get('id','')))
+            for tag in (reference,plan)) or type(source) is not str):
+        raise InputError('LGD requires a pinned remote catalogue')
+    catalogue = remote_transfers.read_catalogue(state,reference['id'],plan['id'],source)
+    saved = catalogue['result']
+    if reference!=remote_transfers.dependency(state,catalogue) or saved.get('plan')!=plan:
+        raise InputError('LGD remote catalogue binding changed')
+    entries = saved.get('members')
+    if (saved.get('listing_complete') is not True or saved.get('truncated') is not False or saved.get('excluded')!=[]
+            or type(entries) is not list or not 1<=len(entries)<=remote_sources.LIMITS['max_files']):
+        raise InputError('LGD requires a complete retained remote catalogue')
+    matches = []
+    paths = []
+    for entry in entries:
+        if type(entry) is not dict:
+            raise InputError('invalid LGD remote catalogue member')
+        path = entry.get('relative_path')
+        input_files.name_parts(path)
+        paths.append(path)
+        if entry.get('id')==member_id:
+            matches.append(entry)
+    selected = next((item for item in result['members'] if item['id']==member_id),None)
+    if (selected is None or len(matches)!=1 or matches[0].get('importable') is not True
+            or any(matches[0].get(key)!=selected[key] for key in ('relative_path','bytes'))):
+        raise InputError('LGD capture member differs from its retained remote catalogue')
+    native_jr.reject_catalogue_sidecars(selected['relative_path'],paths)
+    return reference
+
+
 def parse(state,output,capture_id,adapter,settings):
     from .input_intake import read_plan,selected_members,capture_selected,analyze
     settings=normalize(adapter,settings);plan=read_plan(state,capture_id);validate_capture(plan)
@@ -81,12 +115,13 @@ def parse(state,output,capture_id,adapter,settings):
         return analyze(state,output,path,capture_id)
     members=settings['members'];selection=selected_members(plan,members,flat=adapter=='jr')
     if adapter=='jr':
-        names=[Path(m['relative_path']).name.lower() for m in selection]
-        if len({str(Path(m['relative_path']).parent) for m in selection})!=1 or names.count('1cv8.lgf')!=1 or len(names)<2 or any(n!='1cv8.lgf' and not n.endswith('.lgp') for n in names):raise InputError('select one sequential JR dictionary and its LGP group')
+        from . import native_jr
+        profile,_ = native_jr.check_catalogue_selection(plan,selection,settings)
+        if profile==native_jr.lgd.PROFILE:
+            checked_lgd_catalogue(state,plan,members[0])
     folder,captured,intake=capture_selected(state,output,capture_id,members,flat=adapter=='jr',expected_plan_digest=fs.digest(plan))
     if adapter=='jr':
-        from .native_jr import read_journal
-        return read_journal(output,folder,**{k:v for k,v in settings.items() if k!='members'},intake=intake)
+        return native_jr.read_journal(output,folder,**{k:v for k,v in settings.items() if k!='members'},intake=intake)
     path=captured[members[0]]['path']
     if adapter=='os':
         from .os_metrics import import_os

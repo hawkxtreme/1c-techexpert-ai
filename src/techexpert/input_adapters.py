@@ -36,16 +36,13 @@ def import_selected(operation,args,state,output):
     original=args['path' if operation=='jr.import' else 'measurements'];plan=read_plan(state,args['input_plan'])
     selection=selected_members(plan,args['members'],expected_root=original,flat=operation=='jr.import')
     if operation=='jr.import':
-        names=[Path(m['relative_path']).name.lower() for m in selection]
-        groups={(m['root'],str(Path(m['relative_path']).parent)) for m in selection}
-        if (len(groups)!=1 or names.count('1cv8.lgf')!=1 or len(names)<2
-            or any(n!='1cv8.lgf' and not n.endswith('.lgp') for n in names)):
-            raise InputError('select one sequential JR group with1Cv8.lgf and1..31 LGP parts')
+        from . import native_jr
+        _,original_file=native_jr.check_catalogue_selection(plan,selection,args)
     stage,captured,intake=capture_selected(state,output,args['input_plan'],args['members'],expected_root=original,
         flat=operation=='jr.import',expected_plan_digest=digest(plan))
     if operation=='jr.import':
-        from .native_jr import read_journal
-        return read_journal(output,stage,**{k:v for k,v in args.items() if k not in ('path','input_plan','members')},intake=intake)
+        if original_file is not None:native_jr.reject_sidecars(original_file)
+        return native_jr.read_journal(output,stage,**{k:v for k,v in args.items() if k not in ('path','input_plan','members')},intake=intake)
     path=captured[args['members'][0]]['path']
     if operation=='os.import':
         from .os_metrics import import_os

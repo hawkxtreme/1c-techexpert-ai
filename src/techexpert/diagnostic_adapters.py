@@ -20,8 +20,9 @@ def source_schema(cap):
 
 
 def journal_schema(cap):
-    return cap.obj(dict(path=cap.FILE,platform_version=cap.string(32,enum=['8.3.27.1989']),
-        utc_offset=cap.string(6),consistency=cap.string(32,enum=['unknown','stopped_writer','provided_snapshot'],default='unknown')),['path','platform_version'])
+    from .native_jr import PLATFORM_VERSION
+    return cap.obj(dict(path=cap.FILE,platform_version=cap.string(32,pattern=PLATFORM_VERSION),
+        utc_offset=cap.string(6),consistency=cap.string(32,enum=['unknown','stopped_writer','provided_snapshot'],default='unknown')),['path'])
 
 
 def testpilot_schema(cap):
@@ -70,7 +71,7 @@ def routes(cap):
         'apdex.import':route(dict(measurements=cap.FILE,target_seconds=dict(type='number',minimum=0,maximum=31536000),
             operation=cap.string(256),start=cap.string(80),end=cap.string(80),**input_fields(cap,single=True)),['measurements','target_seconds'],
             ['explicit normalized APDEX measurements and target'],'save measured APDEX; no BSP/native export compatibility claim',outputs),
-        'jr.import':route(dict(journal_schema(cap)['properties'],**input_fields(cap)),['path','platform_version'],['selected sequential LGF/LGP directory or approved catalogue group'],
+        'jr.import':route(dict(journal_schema(cap)['properties'],**input_fields(cap)),['path'],['selected LGF/LGP group or verified standalone LGD snapshot'],
             'save bounded native journal snapshot; no database/run identity inference',outputs),
         'jr.events':route(dict(**artifact,event=cap.string(2000),window=cap.WINDOW,offset=cap.integer(0,100000,0),limit=cap.integer(1,100,20)),['artifact_id'],
             ['verified native JR artifact'],'read bounded page and observe timestamps in an optional half-open interval',
@@ -100,7 +101,9 @@ def routes(cap):
             'fixed read-only query; private snapshot, unavailable visibility remains unknown',outputs,timeout=35 if kind=='rac' else 25)
     for name,value in result.items():
         if name.startswith('jr.'):
-            value['compatibility']=dict(profile='1c-jr-sequential-8.3.27.1989-v1',other_versions='unverified',LGD=False,XML_export=False)
+            from .native_jr import PROFILE, lgd
+            value['compatibility']=dict(profile=PROFILE,other_versions='unverified',XML_export=False,
+                LGD=dict(profile=lgd.PROFILE,input='standalone supplied snapshot',writer_build='unknown'))
         elif name.startswith('source.'):
             value['compatibility']=dict(profile='onec-source-snapshot-v1',inputs=['XML/BSL directory','complete local Git'],executed_code=False,runtime_correspondence='unknown until separately verified')
         elif name.startswith('apdex.'):

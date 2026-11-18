@@ -19,6 +19,7 @@ INVESTIGATION_PROGRESS_FORMAT = 'src/techexpert/assets/investigation-progress-fo
 CHECK_HISTORY_FORMAT = 'src/techexpert/assets/check-history-format.json'
 INVESTIGATION_TASK_FORMAT = 'src/techexpert/assets/investigation-task-format.json'
 OS_OBSERVATION_FORMAT = 'src/techexpert/assets/os-observation-format.json'
+JR_LGD_FORMAT = 'src/techexpert/assets/jr-lgd-format.json'
 TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
 CONTEXT_DISCLOSURE_FORMAT = 'src/techexpert/assets/context-disclosure-format.json'
 CONTEXT_INTAKE_FORMAT = 'src/techexpert/assets/context-intake-format.json'
@@ -133,6 +134,7 @@ def read_package(path):
         check_history_schemas=_additional_schemas(contents, listed, CHECK_HISTORY_FORMAT, 'check_history'),
         investigation_task_schemas=_additional_schemas(contents, listed, INVESTIGATION_TASK_FORMAT, 'investigation_task'),
         os_observation_schemas=_additional_schemas(contents, listed, OS_OBSERVATION_FORMAT, 'os_observation'),
+        jr_lgd_schemas=_additional_schemas(contents, listed, JR_LGD_FORMAT, 'jr_lgd'),
         tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'),
         context_disclosure_schemas=_additional_schemas(contents, listed, CONTEXT_DISCLOSURE_FORMAT, 'context_disclosure'),
         context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'),
