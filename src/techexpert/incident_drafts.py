@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=10
+SANITIZER_VERSION=11
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -201,6 +201,10 @@ def _known(doc,state_dir):
                     category=fields.get(key)
                     if category:add(category,value)
                     if key=='role' and report.get('kind')=='postgresql':add('USER',value)
+                    if report.get('kind')=='sqlserver':
+                        if key in ('server_name','machine_name','instance_name','host_name'):add('NODE',value)
+                        elif key=='login_name':add('USER',value)
+                        elif key=='program_name':add('ID',value)
                     if isinstance(value,(dict,list)):stack.append((value,depth+1))
             elif isinstance(item,list):stack.extend((value,depth+1) for value in item)
         if len(values)>2048:raise InputError('incident identifier catalogue exceeds bounds')
@@ -225,6 +229,8 @@ def _json_secrets(text,privacy):
             for key,child in item.items():
                 if re.fullmatch(SECRET_NAME,key,re.I):
                     item[key]='[SECRET_REMOVED]';privacy.counts['secret']+=1
+                elif key in ('query','query_text','batch_text','query_sql_text','sql_text','statement','query_plan') and isinstance(child,str):
+                    item[key]='[SQL_TEXT_OMITTED]';privacy.counts['sql_text']+=1
                 elif isinstance(child,(dict,list)):stack.append((child,depth+1))
         elif isinstance(item,list):stack.extend((child,depth+1) for child in item)
     return json.dumps(value,ensure_ascii=False)

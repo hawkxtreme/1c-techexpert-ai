@@ -36,6 +36,7 @@ class InitServer(ThreadingHTTPServer):
         self.deadline = time.monotonic() + ttl
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
+        self.saved_profile_revision = None
         super().__init__(('127.0.0.1', 0), InitHandler)
         self.origin = f'http://127.0.0.1:{self.server_port}'
         self.url = f'{self.origin}/#token={self.token}'
@@ -236,9 +237,16 @@ class InitHandler(BaseHTTPRequestHandler):
             elif self.path=='/api/context':
                 from .investigations import revise
                 if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
-                if set(data)-{'expected_revision','template_id','template_revision','variant','time_mode','scale','profile_revision'}:raise ValueError('Недопустимое поле контекста.')
-                patch={k:v for k,v in data.items() if k!='expected_revision'}
-                result=self._context(revise(self.server.state_dir,self.server.investigation_id,patch,expected_revision=data.get('expected_revision')))
+                if set(data)!={'expected_revision','profile_revision'}:raise ValueError('Помощник связывает сохранённые настройки. Вопросы об инциденте уточняются в чате.')
+                with self.server.profile_lock:
+                    number=data['profile_revision']
+                    profile=profiles.load_profile(self.server.state_dir)
+                    if (type(number) is not int or number!=self.server.saved_profile_revision
+                        or profile is None or number!=profile['revision']):
+                        raise ValueError('Для привязки требуется актуальная ревизия, сохранённая в этом помощнике.')
+                    result=self._context(revise(self.server.state_dir,self.server.investigation_id,
+                        {'profile_revision':number},expected_revision=data['expected_revision']))
+                    self.server.saved_profile_revision=None
             elif self.path=='/api/ras':
                 if set(data)-{'endpoint','executable','docker_container','cluster','infobase'}:raise ValueError('Unsupported RAS parameter')
                 if type(data.get('endpoint')) is not str or ('executable' in data and type(data['executable']) is not str):raise ValueError('RAS endpoint and executable must be text')
@@ -280,7 +288,12 @@ class InitHandler(BaseHTTPRequestHandler):
                 expected=self._expected_profile_revision()
                 if expected is None:return
                 with self.server.profile_lock:
+                    if self.server.investigation_id:
+                        from .investigations import load
+                        pinned=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
+                        if pinned!=profiles.load_profile(self.server.state_dir):raise profiles.ProfileRevisionConflict('pinned profile differs')
                     result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
+                    self.server.saved_profile_revision=result['revision']
             self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
         except profiles.ProfileRevisionConflict:
             self._error(409,'Профиль изменён агентом, в другом окне или относится к иной закреплённой ревизии. Настройки не сохранены. Вернитесь в текущий чат, чтобы сопоставить изменения; автоматической перезаписи нет.')

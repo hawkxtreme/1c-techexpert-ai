@@ -2,10 +2,11 @@
 from pathlib import Path
 
 from .inputs import InputError
+from .sqlserver_queries import OPERATIONS as SQL_QUERIES
 
 OPERATIONS=('artifact.evidence','apdex.import','jr.import','jr.events','jr.record',
-    'source.snapshot','source.search','source.read','rac.observe','postgresql.observe')
-CREATORS={'apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe'}
+    'source.snapshot','source.search','source.read','rac.observe','postgresql.observe','sqlserver.observe')
+CREATORS={'apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe'}
 ARTIFACT_READS={'artifact.evidence','jr.events','jr.record','source.search','source.read'}
 RAC_QUERIES=('clusters','infobases','sessions','connections','processes','servers','infobase_info')
 PG_QUERIES=('capabilities','activity','locks','database_stats','statements')
@@ -23,15 +24,20 @@ def journal_schema(cap):
 
 def connection_schema(cap,kind):
     if kind=='rac':return cap.obj(dict(endpoint=cap.string(300),executable=cap.string(default='rac'),docker_container=cap.string(128)),['endpoint'])
+    if kind=='sqlserver':return cap.obj(dict(database=cap.string(128),host=cap.string(253),port=cap.integer(1,65535,1433),
+        user=cap.string(128),auth=cap.string(16,enum=['integrated','sql'],default='integrated'),executable=cap.string(1024,default='sqlcmd'),
+        docker_container=cap.string(128),client_variant=cap.string(16,enum=['auto','go','odbc18'],default='auto'),
+        trust_server_certificate=dict(type='boolean',default=False)),['database','host'])
     return cap.obj(dict(database=cap.string(128),host=cap.string(253),port=cap.integer(1,65535,5432),
         user=cap.string(128),executable=cap.string(default='psql'),docker_container=cap.string(128)),['database'])
 
 
 def scope_schemas(cap):
     profiles={}
-    for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES)]:
+    for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES),('sqlserver',SQL_QUERIES)]:
         fields=dict(settings=connection_schema(cap,kind),queries=cap.array(cap.string(32,enum=list(queries)),len(queries)),max_calls=cap.integer(1,64,6 if kind=='rac' else len(queries)))
         if kind=='rac':fields.update(clusters=cap.array(cap.string(36),100),any_cluster=dict(type='boolean',default=False),infobases=dict(type='array',items=cap.string(36),maxItems=100))
+        if kind=='sqlserver':fields['windows']=cap.array(cap.WINDOW,16)
         profiles[kind]=cap.array(cap.obj(fields,['settings']),8)
     return dict(source_snapshots=cap.array(source_schema(cap),32),journals=cap.array(journal_schema(cap),32),**profiles)
 
@@ -69,9 +75,10 @@ def routes(cap):
             ['verified saved source artifact'],'bounded source lines; static code does not establish runtime execution',
             ['artifact_id','path','sha256','lines','total_lines','has_more'],dict(path=dict(type='string'),lines=dict(type='array'),total_lines=dict(type='integer'),has_more=dict(type='boolean'))),
     }
-    for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES)]:
+    for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES),('sqlserver',SQL_QUERIES)]:
         settings=connection_schema(cap,kind);args=dict(settings['properties'],query=cap.string(32,enum=list(queries)))
         if kind=='rac':args.update(cluster=cap.string(36),infobase=cap.string(36))
+        if kind=='sqlserver':args['window']=cap.WINDOW
         result[kind+'.observe']=route(args,settings['required']+['query'],['explicit existing '+kind+' connection and read rights'],
             'fixed read-only query; private snapshot, unavailable visibility remains unknown',outputs,timeout=35 if kind=='rac' else 25)
     for name,value in result.items():
@@ -87,6 +94,10 @@ def routes(cap):
         elif name=='postgresql.observe':
             value['compatibility']=dict(profile='PostgreSQL16 fixed monitoring queries',other_versions='unverified',statements='requires existing public.pg_stat_statements views')
             value['rights']+=['connect to selected database with existing libpq account','SELECT monitoring views; pg_read_all_stats optional for wider visibility; no grants or extension setup']
+        elif name=='sqlserver.observe':
+            value['compatibility']=dict(profile='sqlserver-2022-monitor-v1',other_versions='unverified',clients='Go sqlcmd1.10.x or ODBC sqlcmd18; fixed version probe')
+            value['rights']+=['existing SQLCMDPASSWORD session profile or current integrated account; no password argument',
+                'SQL2022 VIEW SERVER PERFORMANCE STATE for server DMVs; VIEW DATABASE PERFORMANCE STATE for Query Store; no grants or setup']
     return result
 
 
@@ -103,6 +114,9 @@ def normalize_connection(kind,args):
     if kind=='rac':
         from .rac import RacClient
         RacClient(**result)
+    elif kind=='sqlserver':
+        from .sqlserver import SqlcmdClient
+        SqlcmdClient(**result)
     else:
         from .postgresql import PsqlClient
         PsqlClient(**result)
@@ -131,9 +145,13 @@ def normalize(operation,args):
         upper=instant(result['end']) if 'end' in result else None
         if lower is not None and upper is not None and lower>=upper:raise InputError('APDEX start must precede end')
         result['measurements']=str(Path(result['measurements']).absolute())
-    elif operation in ('rac.observe','postgresql.observe'):
-        kind=operation.split('.')[0];query=result['query'];settings={k:v for k,v in result.items() if k not in ('query','cluster','infobase')}
+    elif operation in ('rac.observe','postgresql.observe','sqlserver.observe'):
+        kind=operation.split('.')[0];query=result['query'];settings={k:v for k,v in result.items() if k not in ('query','cluster','infobase','window')}
         normalize_connection(kind,settings)
+        if kind=='sqlserver':
+            from .sqlserver_queries import script,normalize_window
+            script(query,window=result.get('window'))
+            if 'window' in result:result['window']=normalize_window(result['window'])
         if kind=='rac':
             from .rac import RacClient
             RacClient(**settings).command(query,cluster=result.get('cluster'),infobase=result.get('infobase'))
@@ -176,14 +194,17 @@ def execute(operation,args,state,output,*,stop=None):
     elif operation=='postgresql.observe':
         from .postgresql import PsqlClient,observe
         data=observe(output,PsqlClient(**{k:v for k,v in args.items() if k!='query'}),args['query'],should_stop=stop)
+    elif operation=='sqlserver.observe':
+        from .sqlserver import SqlcmdClient,observe
+        data=observe(output,SqlcmdClient(**{k:v for k,v in args.items() if k not in ('query','window')}),args['query'],window=args.get('window'),should_stop=stop)
     else:raise InputError('unsupported diagnostic adapter')
     return data,[dict(kind='artifacts',id=data['artifact_id'])]
 
 
 def result_status(operation,data):
     status=data.get('result',{}).get('status')
-    if status=='cancelled' and operation in ('rac.observe','postgresql.observe'):return 'cancelled','cancelled'
+    if status=='cancelled' and operation in ('rac.observe','postgresql.observe','sqlserver.observe'):return 'cancelled','cancelled'
     if (operation=='apdex.import' and status in ('empty','incomplete') or operation=='jr.import' and status=='partial'
-        or operation in ('rac.observe','postgresql.observe') and status=='unavailable'):
+        or operation in ('rac.observe','postgresql.observe','sqlserver.observe') and status=='unavailable'):
         return 'partial',operation.split('.')[0]+'_'+status
     return 'succeeded',None

@@ -37,7 +37,7 @@ def doctor(state_dir=None):
                                   job_correlation='controlled_file_job_markers_8.3.27.1989_only', native_jr='sequential_lgf_lgp_8.3.27.1989_only; lgd_not_supported',
                                   order_load='controlled_windows_file_8.3.27.1989_only',
                                   fix_comparison='sc01_order_load_five_pairs_only',
-                                  sql='postgresql_fixed_read_only_catalogue; sql_server_not_implemented',
+                                  sql='postgresql_fixed_read_only_catalogue; sqlserver_2022_fixed_read_only_catalogue',
                                   local_os_collection='windows_pdh_linux_proc; counters_require_actual_check',
                                   remote_os_collection='ssh_winrm_launchers; existing_access_and_remote_python_required',
                                   apdex='normalized_measurements_only',source_snapshot='bounded_xml_bsl_catalog_or_local_git_commit',

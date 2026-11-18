@@ -116,6 +116,14 @@ def main(argv=None):
     pg.add_argument('--user')
     pg.add_argument('--executable',default='psql')
     pg.add_argument('--docker-container')
+    sql=commands.add_parser('sqlserver')
+    sql.add_argument('operation',choices=('capabilities','requests','waits','locks','query_store'))
+    sql.add_argument('--database',required=True);sql.add_argument('--host',required=True)
+    sql.add_argument('--port',type=int,default=1433);sql.add_argument('--user')
+    sql.add_argument('--auth',choices=('integrated','sql'),default='integrated')
+    sql.add_argument('--executable',default='sqlcmd');sql.add_argument('--docker-container')
+    sql.add_argument('--client-variant',choices=('auto','go','odbc18'),default='auto')
+    sql.add_argument('--trust-server-certificate',action='store_true');sql.add_argument('--start');sql.add_argument('--end')
     source_snapshot=commands.add_parser('source-snapshot')
     source_snapshot.add_argument('path',type=Path)
     source_snapshot.add_argument('--kind',choices=('catalog','git'),default='catalog')
@@ -283,6 +291,12 @@ def main(argv=None):
             from .postgresql import PsqlClient,observe
             result=observe(args.state_dir,PsqlClient(database=args.database,host=args.host,port=args.port,
                 user=args.user,executable=args.executable,docker_container=args.docker_container),args.operation)
+        elif args.command=='sqlserver':
+            from .sqlserver import SqlcmdClient,observe
+            if bool(args.start)!=bool(args.end):raise InputError('SQL history start/end must be supplied together')
+            result=observe(args.state_dir,SqlcmdClient(database=args.database,host=args.host,port=args.port,user=args.user,
+                auth=args.auth,executable=args.executable,docker_container=args.docker_container,client_variant=args.client_variant,
+                trust_server_certificate=args.trust_server_certificate),args.operation,window=dict(start=args.start,end=args.end) if args.start else None)
         elif args.command=='source-snapshot':
             from .source_code import snapshot_source
             result=snapshot_source(args.state_dir,args.path,kind=args.kind,ref=args.ref,encoding=args.encoding)
@@ -387,9 +401,9 @@ def main(argv=None):
             from .knowledge import search
             result=search(args.query)
         emit(result)
-        if args.command in ('rac','postgresql','apdex','jr-import','os-import','os-collect'):
+        if args.command in ('rac','postgresql','sqlserver','apdex','jr-import','os-import','os-collect'):
             from .capabilities import outcome
-            operation={'rac':'rac.observe','postgresql':'postgresql.observe','apdex':'apdex.import',
+            operation={'rac':'rac.observe','postgresql':'postgresql.observe','sqlserver':'sqlserver.observe','apdex':'apdex.import',
                 'jr-import':'jr.import','os-import':'os.import','os-collect':'os.collect'}[args.command]
             status,_=outcome(operation,result)
             return {'succeeded':0,'partial':1,'cancelled':130}[status]

@@ -58,9 +58,12 @@ def normalize(arguments):
     result['scope']['source_snapshots']=[drivers.normalize_source(p) for p in result['scope']['source_snapshots']]
     result['scope']['journals']=[drivers.normalize('jr.import',p) for p in result['scope']['journals']]
     from .rac import UUID
-    for kind in ('rac','postgresql'):
+    for kind in ('rac','postgresql','sqlserver'):
         for profile in result['scope'][kind]:
             profile['settings']=drivers.normalize_connection(kind,profile['settings'])
+            if kind=='sqlserver':
+                from .sqlserver_queries import normalize_window
+                profile['windows']=[normalize_window(w) for w in profile['windows']]
             if kind=='rac' and any(not UUID.fullmatch(c) for c in profile['clusters']):raise CodeError('invalid_program','Invalid scoped cluster UUID.')
             if kind=='rac' and any(not UUID.fullmatch(c) for c in profile.get('infobases',[])):raise CodeError('invalid_program','Invalid scoped infobase UUID.')
     return result
@@ -72,7 +75,7 @@ class Scope:
         self.ids={kind:set(value[kind]) for kind in ('cases','artifacts','comparisons')}
         self.investigations={(item['id'],item['revision']) for item in value.get('investigations',[])}
         self.imported=set();self.collector_runs=[0]*len(value['collectors']);self.products=[]
-        self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql')}
+        self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql','sqlserver')}
         self.intake_runs=[0]*len(value.get('intakes',[]))
         self.logcfg_runs={field:[0]*len(value.get(field,[])) for field in ('logcfg_plans','logcfg_rollbacks')}
         self.remote_plan_runs=[0]*len(value.get('remote_plans',[]))
@@ -136,10 +139,11 @@ class Scope:
             identity=import_key(arguments['path'])
             if identity in self.imported:raise CodeError('scope_denied','Repeated source capture requires a separately reviewed plan.')
             self.imported.add(identity)
-        elif operation in ('rac.observe','postgresql.observe'):
-            kind=operation.split('.')[0];connection={k:v for k,v in arguments.items() if k not in ('query','cluster','infobase')};selected=None
+        elif operation in ('rac.observe','postgresql.observe','sqlserver.observe'):
+            kind=operation.split('.')[0];connection={k:v for k,v in arguments.items() if k not in ('query','cluster','infobase','window')};selected=None
             for index,profile in enumerate(self.value[kind]):
                 if profile['settings']!=connection or arguments['query'] not in profile['queries']:continue
+                if kind=='sqlserver' and arguments['query']=='query_store' and arguments['window'] not in profile['windows']:continue
                 if kind=='rac' and arguments.get('cluster') and not profile['any_cluster'] and arguments['cluster'] not in profile['clusters']:continue
                 if kind=='rac' and arguments['query']=='infobase_info' and arguments['infobase'] not in profile.get('infobases',[]):continue
                 if self.observation_runs[kind][index]<profile['max_calls']:selected=index;break
@@ -177,7 +181,7 @@ class Scope:
             field,kind=('case_id','cases') if 'case_id' in data else ('artifact_id','artifacts')
         else:
             field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
+                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

@@ -42,6 +42,7 @@ python techexpert.py init --investigation INVESTIGATION_ID
 python techexpert.py rac clusters --endpoint server:1545
 python techexpert.py rac infobases --endpoint server:1545 --cluster CLUSTER_UUID
 python techexpert.py postgresql capabilities --database DATABASE --host SERVER --user OBSERVER
+python techexpert.py sqlserver capabilities --database DATABASE --host SERVER
 python techexpert.py os-plan --duration 300 --interval 1
 python techexpert.py os-collect --duration 300 --interval 1
 python techexpert.py os-import "путь/measurements.json"

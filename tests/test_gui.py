@@ -26,8 +26,9 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertEqual(len(book['templates']),11)
         status,_,raw=self.request('GET','/api/context')
         self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_title'],'Retained')
-        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_id='USR-lost',
-                                template_revision=1,time_mode='current'))
+        status,_,raw=self.request('POST','/api/profile',self.profile)
+        self.assertEqual(status,200,raw)
+        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,profile_revision=json.loads(raw)['revision']))
         self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_revision'],1)
         self.assertEqual(load(self.state_dir,case['investigation_id'])['template'],first['template'])
         self.assertFalse(head.exists(),'GUI reconstructed private template history')
@@ -54,28 +55,33 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertEqual(found['title'],'<script>window.unsafe=1</script>')
         self.assertFalse((self.state_dir/'cases').exists());self.assertFalse((self.state_dir/'artifacts').exists())
 
-    def test_gui_context_selects_an_exact_template_revision_and_preserves_its_title(self):
+    def test_gui_saves_sources_and_leaves_incident_questions_to_the_chat(self):
         from src.techexpert.incident_templates import save_custom
         from src.techexpert.investigations import create,load
         first=save_custom(self.state_dir,dict(id='USR-local',base_template_id='TPL-00',base_template_revision=1,
                           title='First'),expected_revision=0)
-        case=create(self.state_dir,dict(task='Task',template_id='USR-local',template_revision=1))
+        case=create(self.state_dir,dict(task='Task',template_id='USR-local',template_revision=1,time_mode='past',scale='one'))
         self.server.investigation_id=case['investigation_id']
         save_custom(self.state_dir,dict(id='USR-local',title='Second'),expected_revision=1)
         status,_,raw=self.request('GET','/api/context');context=json.loads(raw)
         self.assertEqual(status,200);self.assertEqual(context.get('template_revision'),1)
         self.assertEqual(context.get('template_title'),'First')
-        # A save of the displayed old choice must not adopt the new private head.
-        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_id='USR-local',
-                                    template_revision=1,time_mode='current',scale='one'))
-        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_revision'],1)
-        self.assertEqual(load(self.state_dir,case['investigation_id'])['template'],first['template'])
-        status,_,raw=self.request('POST','/api/context',dict(expected_revision=2,template_id='USR-local',template_revision=2))
-        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_title'],'Second')
-        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_revision=1))
-        self.assertEqual(status,400)  # Existing context-conflict contract; profile conflicts use 409.
-        self.assertIn('revision',json.loads(raw)['error'])
-        self.assertEqual(load(self.state_dir,case['investigation_id'])['template']['revision'],2)
+        status,_,raw=self.request('GET','/');self.assertEqual(status,200)
+        for field in ('incident-template','incident-time','incident-scale','incident-variant'):
+            self.assertNotIn(('id="'+field+'"').encode(),raw)
+        self.assertEqual(self.request('POST','/api/context',dict(expected_revision=1,template_revision=2))[0],400)
+        self.assertEqual(self.request('POST','/api/context',dict(expected_revision=1,profile_revision=1))[0],400)
+        status,_,raw=self.request('POST','/api/profile',self.profile)
+        self.assertEqual(status,200,raw);saved=json.loads(raw)
+        link=dict(expected_revision=1,profile_revision=saved['revision'])
+        self.assertEqual(self.request('POST','/api/context',dict(link,time_mode='current'))[0],400)
+        self.assertEqual(self.request('POST','/api/context',link)[0],200)
+        current=load(self.state_dir,case['investigation_id'])
+        self.assertEqual(current['template'],first['template'])
+        self.assertEqual((current['time_mode'],current['scale']),('past','one'))
+        self.assertEqual(current['profile_snapshot'],saved)
+        self.assertEqual(load(self.state_dir,case['investigation_id'],revision=1),case)
+        self.assertEqual(self.request('POST','/api/context',link)[0],400)
 
     def test_ras_invalid_types_are_rejected_before_any_connection(self):
         from unittest.mock import patch
@@ -283,7 +289,7 @@ class GuiHTTPTests(unittest.TestCase):
             self.assertTrue(json.loads(body)['sources']['source']['export_help']['request_in_chat'])
             prepare.assert_not_called();launch.assert_not_called();self.assertFalse(self.state_dir.exists())
 
-    def test_investigation_context_requires_auth_and_only_edits_selected_investigation(self):
+    def test_investigation_profile_link_requires_auth_and_only_updates_selected_investigation(self):
         from src.techexpert.investigations import create,load
         investigation=create(self.state_dir,dict(task='Загрузка медленная',template_id='TPL-02',time_mode='past',scale='background'))
         self.server.investigation_id=investigation['investigation_id']
@@ -293,7 +299,9 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('GET','/api/templates',token=False)[0],401)
         status,_,body=self.request('GET','/api/templates');self.assertEqual(status,200)
         self.assertEqual(len(json.loads(body)['templates']),11)
-        body=dict(expected_revision=1,template_id='TPL-01',variant='document-posting',time_mode='current',scale='one')
+        status,_,raw=self.request('POST','/api/profile',self.profile)
+        self.assertEqual(status,200,raw)
+        body=dict(expected_revision=1,profile_revision=json.loads(raw)['revision'])
         self.assertEqual(self.request('POST','/api/context',body,origin=False)[0],403)
         self.assertEqual(self.request('POST','/api/context',dict(body,investigation_id='other'))[0],400)
         status,_,result=self.request('POST','/api/context',body);self.assertEqual(status,200,result)
