@@ -1,6 +1,5 @@
 """Reviewed removal of the owned database copy of a completed Windows export."""
 from contextlib import ExitStack
-from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import re
@@ -153,13 +152,7 @@ def locate_working_copy(state, artifact_id, report_sha, working_directory, *, re
 
 
 def _policy(state, result):
-    choice = retention_policy.load(state)
-    days = choice['source_export_work_copy_days']
-    finished = datetime.fromisoformat(result['finished_at'])
-    if finished.utcoffset() is None:
-        raise InputError('export completion time requires a time zone')
-    ready = days is not None and datetime.now(timezone.utc) - finished >= timedelta(days=days)
-    return choice, ready
+    return retention_policy.eligibility(state, result['finished_at'])
 
 
 def _file_key(identity):
@@ -183,27 +176,8 @@ def _same_file(left, right):
 
 
 def _check_references(state, folder, target, identity):
-    from .discovery import connection_parameters
-    from .profile_resources import effective_profile
-    profile_path = fs.safe(Path(state) / 'profiles/current.json')
-    try:
-        saved = fs.read(profile_path, 1024**2)
-    except FileNotFoundError:
-        pass
-    else:
-        profile = effective_profile(saved)
-        addresses = [item['path'] for item in profile['sources']
-                     if item['path'] and item['settings'].get('transport') != 'sftp']
-        for base in profile['bases']:
-            if base['mode'] != 'file' or not base['connection']:
-                continue
-            connection = base['connection']
-            if '=' in connection and not Path(connection).is_absolute():
-                connection = connection_parameters(connection).get('file')
-            if connection:
-                addresses.append(connection)
-        if any(Path(os.path.normpath(address)) in (target, target.parent) for address in addresses):
-            raise InputError('working copy is configured as an active environment source')
+    from .profiles import require_unconfigured_path
+    require_unconfigured_path(state, target)
     for count, candidate in enumerate(fs.safe(folder.parent).iterdir(), 1):
         if count > 1024:
             raise InputError('source export reference scan exceeds its bound')

@@ -1,42 +1,65 @@
 """Revisioned local retention choices. Saving a choice does not run cleanup."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import operation_state as fs
 from .inputs import InputError
 
-FIELDS = {'schema_version', 'source_export_work_copy_days'}
+CATEGORIES = {
+    'export-work-copies': ('policy.json', 'source_export_work_copy_days'),
+    'case-inputs': ('case-input-policy.json', 'case_input_days'),
+}
+DEFAULT_CATEGORY = 'export-work-copies'
 
 
-def _validate(value):
-    if (type(value) is not dict or set(value) != FIELDS
+def _policy_fields(category):
+    if category not in CATEGORIES:
+        raise InputError('unknown retention category')
+    return CATEGORIES[category]
+
+
+def _validate(value, field):
+    if (type(value) is not dict or set(value) != {'schema_version', field}
             or type(value['schema_version']) is not int or value['schema_version'] != 1):
         raise InputError('invalid retention policy properties')
-    days = value['source_export_work_copy_days']
+    days = value[field]
     if days is not None and (type(days) is not int or not 0 <= days <= 36500):
-        raise InputError('source_export_work_copy_days must be null or an integer 0..36500')
+        raise InputError(field + ' must be null or an integer 0..36500')
 
 
-def load(state):
-    path = fs.safe(Path(state) / 'retention' / 'policy.json')
+def load(state, *, category=DEFAULT_CATEGORY):
+    filename, field = _policy_fields(category)
+    path = fs.safe(Path(state) / 'retention' / filename)
     try:
         value = fs.read(path, 8192)
     except FileNotFoundError:
-        return dict(schema_version=1, revision=0, source_export_work_copy_days=None)
+        return dict(schema_version=1, revision=0, **{field: None})
     if type(value) is not dict or type(value.get('revision')) is not int or value['revision'] < 1:
         raise InputError('invalid saved retention policy revision')
-    _validate({key: item for key, item in value.items() if key != 'revision'})
+    _validate({key: item for key, item in value.items() if key != 'revision'}, field)
     return value
 
 
-def save(state, request, *, expected_revision):
-    _validate(request)
+def save(state, request, *, expected_revision, category=DEFAULT_CATEGORY):
+    filename, field = _policy_fields(category)
+    _validate(request, field)
     if type(expected_revision) is not int or expected_revision < 0:
         raise InputError('expected retention policy revision required')
     folder = fs.private(Path(state) / 'retention')
     with fs.writer(folder):
-        previous = load(state)
+        previous = load(state, category=category)
         if previous['revision'] != expected_revision:
             raise InputError('retention policy revision changed; reload before saving')
         value = dict(request, revision=expected_revision + 1)
-        fs.write(folder / 'policy.json', value)
+        fs.write(folder / filename, value)
         return value
+
+
+def eligibility(state, recorded_at, *, category=DEFAULT_CATEGORY):
+    _, field = _policy_fields(category)
+    policy = load(state, category=category)
+    timestamp = datetime.fromisoformat(recorded_at)
+    if timestamp.utcoffset() is None:
+        raise InputError('retention age requires a recorded time zone')
+    days = policy[field]
+    return policy, days is not None and datetime.now(timezone.utc) - timestamp >= timedelta(days=days)

@@ -155,10 +155,21 @@ def main(argv=None):
     cleanup_apply=commands.add_parser('source-export-cleanup-apply')
     cleanup_apply.add_argument('document',type=Path)
     cleanup_apply.add_argument('--expected-sha256',required=True)
-    commands.add_parser('retention-policy',help='show the local retention choice')
+    case_cleanup=commands.add_parser('case-source-cleanup-plan',help='review one saved case snapshot and affected evidence')
+    case_cleanup.add_argument('case_id');case_cleanup.add_argument('source_id')
+    case_cleanup.add_argument('--use-policy',action='store_true')
+    case_cleanup_apply=commands.add_parser('case-source-cleanup-apply')
+    case_cleanup_apply.add_argument('document',type=Path)
+    case_cleanup_apply.add_argument('--expected-sha256',required=True)
+    case_cleanup_status=commands.add_parser('case-source-cleanup-status')
+    case_cleanup_status.add_argument('case_id');case_cleanup_status.add_argument('source_id')
+    from .retention_policy import CATEGORIES as retention_categories, DEFAULT_CATEGORY
+    policy=commands.add_parser('retention-policy',help='show the local retention choice')
+    policy.add_argument('--category',choices=retention_categories,default=DEFAULT_CATEGORY)
     retention_save=commands.add_parser('retention-policy-save')
     retention_save.add_argument('document',type=Path)
     retention_save.add_argument('--expected-revision',type=int,required=True)
+    retention_save.add_argument('--category',choices=retention_categories,default=DEFAULT_CATEGORY)
     jr=commands.add_parser('jr-import')
     jr.add_argument('path',type=Path);jr.add_argument('--platform-version',required=True)
     jr.add_argument('--utc-offset')
@@ -392,14 +403,14 @@ def main(argv=None):
             result=view(args.state_dir,args.investigation_id,revision=args.revision,
                         category=args.category,offset=args.offset,limit=args.limit)
         elif args.command in ('investigation-create','investigation-update','investigation'):
-            from .investigations import create,revise,load,revision_folder
+            from .investigations import create,revise,read_for_display,revision_folder
             from .inputs import read_snapshot,json_value
             if args.command=='investigation-create':
                 result=create(args.state_dir,json_value(read_snapshot(args.request,1024*1024).decode('utf-8-sig'),reject_duplicates=True))
             elif args.command=='investigation-update':
                 result=revise(args.state_dir,args.investigation_id,
                     json_value(read_snapshot(args.patch,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
-            else:result=load(args.state_dir,args.investigation_id,revision=args.revision)
+            else:result=read_for_display(args.state_dir,args.investigation_id,revision=args.revision)
             folder=revision_folder(args.state_dir,result['investigation_id'],result['revision']).absolute()
             result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
             from .knowledge_review import review_investigation
@@ -431,11 +442,21 @@ def main(argv=None):
         elif args.command in ('retention-policy','retention-policy-save'):
             from . import retention_policy
             if args.command=='retention-policy':
-                result=retention_policy.load(args.state_dir)
+                result=retention_policy.load(args.state_dir,category=args.category)
             else:
                 from .inputs import read_snapshot,json_value
                 document=json_value(read_snapshot(args.document,8192).decode('utf-8-sig'),reject_duplicates=True)
-                result=retention_policy.save(args.state_dir,document,expected_revision=args.expected_revision)
+                result=retention_policy.save(args.state_dir,document,expected_revision=args.expected_revision,category=args.category)
+        elif args.command in ('case-source-cleanup-plan','case-source-cleanup-apply','case-source-cleanup-status'):
+            from . import case_retention
+            if args.command=='case-source-cleanup-plan':
+                result=case_retention.preview(args.state_dir,args.case_id,args.source_id,use_policy=args.use_policy)
+            elif args.command=='case-source-cleanup-status':
+                result=case_retention.status(args.state_dir,args.case_id,args.source_id) or dict(status='not_recorded')
+            else:
+                from .inputs import read_snapshot,json_value
+                document=json_value(read_snapshot(args.document,case_retention.MAX_PLAN_BYTES).decode('utf-8-sig'),reject_duplicates=True)
+                result=case_retention.apply(args.state_dir,document,expected_sha256=args.expected_sha256)
         elif args.command in ('source-export-cleanup-plan','source-export-cleanup-apply'):
             from . import export_retention
             if args.command=='source-export-cleanup-plan':

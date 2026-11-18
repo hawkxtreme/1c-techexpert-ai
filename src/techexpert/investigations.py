@@ -394,15 +394,35 @@ def _revision_chain(state_dir, investigation_id, head, revision):
         yield current
 
 
-def load(state_dir,investigation_id,*,revision=None):
+def _committed_revision(state_dir, investigation_id, revision):
     head=_read_head(state_dir,investigation_id)
     chain=_revision_chain(state_dir,investigation_id,head,revision)
     doc=next(chain)
     for _ in chain:
         pass
+    return doc
+
+
+def load(state_dir,investigation_id,*,revision=None):
+    doc = _committed_revision(state_dir, investigation_id, revision)
     original=_digest(doc);_validate(state_dir,doc)
     if _digest(doc)!=original:raise InputError('investigation computed fields integrity mismatch')
     return doc
+
+
+def read_for_display(state_dir, investigation_id, *, revision=None):
+    from .case_retention import SnapshotRetirement, for_report
+    try:
+        return load(state_dir, investigation_id, revision=revision)
+    except SnapshotRetirement:
+        doc = _committed_revision(state_dir, investigation_id, revision)
+        losses = for_report(state_dir, doc)
+        if not losses:
+            raise
+        return dict(doc, reproducibility=dict(
+            status='intentionally_incomplete' if all(loss['status'] == 'removed' for loss in losses)
+                   else 'retirement_outcome_unverified',
+            scope='sealed_historical_report_remaining_evidence_not_reverified', retired_sources=losses))
 
 def source_context(state_dir,investigation_id,*,revision=None):
     from .source_passports import context
@@ -456,7 +476,8 @@ def revise(state_dir,investigation_id,patch,*,expected_revision):
         with lock.open('x',encoding='ascii') as stream:stream.write(str(os.getpid()))
     except FileExistsError as exc:raise InputError('investigation writer is active or interrupted; inspect its lock before retrying') from exc
     try:
-        previous=load(state_dir,investigation_id)
+        previous = read_for_display(state_dir, investigation_id)
+        previous.pop('reproducibility', None)
         if previous['revision']!=expected_revision:raise InputError('investigation revision changed; reload before editing')
         if expected_revision>=1000:raise InputError('investigation revision limit reached; retain history and start a linked investigation')
         doc=deepcopy(previous);changes=deepcopy(patch)
@@ -503,5 +524,7 @@ def revise(state_dir,investigation_id,patch,*,expected_revision):
         if basis!=previous['analysis_basis_sha256'] and 'improvement' not in patch:doc['improvement']=None
         doc['analysis_basis_sha256']=basis
         _validate(state_dir,doc)
-        return _persist(state_dir,doc)
+        from .case_retention import attachment_case_ids, case_writers
+        with case_writers(state_dir, attachment_case_ids(state_dir, doc['attachments'])):
+            return _persist(state_dir,doc)
     finally:lock.unlink()

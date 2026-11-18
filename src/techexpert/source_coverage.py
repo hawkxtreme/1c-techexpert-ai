@@ -168,6 +168,7 @@ def _case_member(folder,name):
 
 def inspect_case(state_dir,case_id,*,window=None,required_events=(),required_fields=()):
     validate_request(window=window,required_events=required_events,required_fields=required_fields)
+    from .case_retention import require_available
     from .storage import load_case,case_folder
     from .inputs import json_value
     folder=case_folder(state_dir,case_id)
@@ -188,6 +189,7 @@ def inspect_case(state_dir,case_id,*,window=None,required_events=(),required_fie
             source['collection']=validate_collection({k:v for k,v in collection.items() if k!='status'})
         else:raise InputError('invalid saved collection declaration')
         if source.get('format')=='1c-tj-text-v1':
+            require_available(state_dir,case_id,source_id)
             data=read_snapshot(_case_member(folder,'sources/'+source_id+'.bin'),min(MAX_FILE_BYTES,MAX_TOTAL_BYTES-total));total+=len(data)
             if len(data)!=source.get('size') or hashlib.sha256(data).hexdigest()!=source.get('sha256'):raise InputError('saved TJ snapshot integrity mismatch')
             budget=source.get('record_budget',0)

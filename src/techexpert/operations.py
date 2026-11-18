@@ -1,4 +1,5 @@
 """Durable single-owner SC01 runs. Repeated keys reuse evidence, never repeat work."""
+from contextlib import nullcontext
 import hashlib
 import os
 from pathlib import Path
@@ -101,14 +102,20 @@ def _promote(state,folder,worker):
         if kind not in ('cases','artifacts','comparisons'):raise InputError('unexpected managed product kind')
         source=fs.safe(folder/'work-state'/kind/identifier);destination=fs.safe(Path(state)/kind/identifier)
         root=folder/'work-state' if source.exists() else state
-        loaded=_verify_target(root,kind,identifier,inputs=state)
-        if fs.digest(loaded)!=fs.digest(worker['data']):raise InputError('operation product disagrees with sealed worker output')
-        if source.exists():
-            if destination.exists():raise InputError('operation product target already exists; refusing replacement')
-            fs.private(destination.parent);os.rename(source,destination)
-            from .windows_native import protect_directory
-            protect_directory(destination)
-        _verify_target(state,kind,identifier)
+        if kind == 'comparisons':
+            from .case_retention import case_writers
+            guard = case_writers(state, (item['case_id'] for item in worker['data']['input_reports']))
+        else:
+            guard = nullcontext()
+        with guard:
+            loaded=_verify_target(root,kind,identifier,inputs=state)
+            if fs.digest(loaded)!=fs.digest(worker['data']):raise InputError('operation product disagrees with sealed worker output')
+            if source.exists():
+                if destination.exists():raise InputError('operation product target already exists; refusing replacement')
+                fs.private(destination.parent);os.rename(source,destination)
+                from .windows_native import protect_directory
+                protect_directory(destination)
+            _verify_target(state,kind,identifier)
 
 def _snapshots(state,operation,args,data,*,output=None):
     if data is None:return []

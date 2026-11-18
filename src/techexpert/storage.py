@@ -171,6 +171,12 @@ def case_folder(state_dir, case_id):
     return Path(state_dir) / 'cases' / case_id
 
 
+def case_source_path(state_dir, case_id, source_id):
+    from .case_retention import require_available
+    require_available(state_dir, case_id, source_id)
+    return case_folder(state_dir, case_id) / 'sources' / (source_id + '.bin')
+
+
 def load_case(state_dir, case_id, *, with_digest=False):
     folder = case_folder(state_dir, case_id)
     try:
@@ -198,14 +204,14 @@ def read_evidence(state_dir, case_id, evidence_id):
         raise InputError('unknown evidence source')
     if source['format']=='1c-tj-text-v1':
         found=None
-        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(match[1]+'.bin'),source['sha256'],expected_size=source.get('size')) as stream:
+        with open_verified_snapshot(case_source_path(state_dir,case_id,match[1]),source['sha256'],expected_size=source.get('size')) as stream:
             scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
             for record in scan:
                 if record['line']==int(match[2]):found=(record,scan.raw_record)
         if found is None:raise InputError('evidence id is not the start of a parsed native record')
         record,raw=found;text=raw.decode('utf-8-sig').rstrip('\r\n')
         return dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True,text=text[:4096],truncated=len(text)>4096)
-    data = read_snapshot(case_folder(state_dir, case_id) / 'sources' / (match[1] + '.bin'))
+    data = read_snapshot(case_source_path(state_dir, case_id, match[1]))
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise InputError('evidence snapshot integrity mismatch')
     number = int(match[2])
@@ -246,7 +252,7 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
         for source in report['sources']:
             if source['format']=='1c-job-runtime-v1':
                 if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
-                with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')):pass
+                with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')):pass
     sources = [s for s in report['sources'] if s['format']=='1c-tj-text-v1']
     if source_id is not None:
         sources = [s for s in sources if s['id']==source_id]
@@ -255,7 +261,7 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
     matched, page, statuses = 0, [], []
     for source in sources:
         if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
-        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')) as stream:
+        with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')) as stream:
             scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
             for record in scan:
                 record['evidence']=dict(id=f"{source['id']}:{record['line']}",source=source['id'],sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
@@ -280,7 +286,7 @@ def verified_case(state_dir, case_id, *, with_digest=False):
     for source in report['sources']:
         if not re.fullmatch(r's[1-9][0-9]*',source['id']):
             raise InputError('invalid saved evidence source')
-        with open_verified_snapshot(case_folder(state_dir,case_id)/'sources'/(source['id']+'.bin'),source['sha256'],expected_size=source.get('size')):pass
+        with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')):pass
     return (report,digest) if with_digest else report
 
 
@@ -321,12 +327,15 @@ def compare_cases(state_dir, before_ids, after_ids, *, output_state_dir=None):
     report['input_reports']=[dict(case_id=item['case_id'],sha256=digest) for item,digest in before_inputs+after_inputs]
     if len(json.dumps(report,ensure_ascii=False,allow_nan=False).encode('utf-8'))>MAX_REPORT_BYTES:
         raise InputError('comparison report exceeds size limit')
-    folder=comparison_folder(state_dir if output_state_dir is None else output_state_dir,report['comparison_id']);folder.mkdir(parents=True,exist_ok=False)
-    write_json(folder/'report.json',report)
-    (folder/'report.md').write_text(comparison_markdown(report),encoding='utf-8',newline='\n')
-    write_json(folder/'receipt.json',dict(schema_version=1,
-        report_sha256=hashlib.sha256((folder/'report.json').read_bytes()).hexdigest(),
-        markdown_sha256=hashlib.sha256((folder/'report.md').read_bytes()).hexdigest()))
+    from .case_retention import case_writers
+    folder = comparison_folder(state_dir if output_state_dir is None else output_state_dir, report['comparison_id'])
+    with case_writers(state_dir, before_ids + after_ids):
+        folder.mkdir(parents=True, exist_ok=False)
+        write_json(folder / 'report.json', report)
+        (folder / 'report.md').write_text(comparison_markdown(report), encoding='utf-8', newline='\n')
+        write_json(folder / 'receipt.json', dict(schema_version=1,
+            report_sha256=hashlib.sha256((folder / 'report.json').read_bytes()).hexdigest(),
+            markdown_sha256=hashlib.sha256((folder / 'report.md').read_bytes()).hexdigest()))
     return report
 
 

@@ -231,3 +231,28 @@ def load_profile(state_dir):
     value = json_value(read_snapshot(path, 1024*1024).decode('utf-8'))
     validate_profile(value)
     return value
+
+
+def require_unconfigured_path(state_dir, target):
+    """Check current local addresses without opening any configured source."""
+    from .discovery import connection_parameters
+    from .operation_state import read
+    from .profile_resources import effective_profile
+
+    try:
+        saved = read(Path(state_dir) / 'profiles/current.json', 1024**2)
+    except FileNotFoundError:
+        return
+    profile = effective_profile(saved)
+    addresses = [source['path'] for source in profile['sources']
+                 if source['path'] and source['settings'].get('transport') != 'sftp']
+    for base in profile['bases']:
+        if base['mode'] != 'file' or not base['connection']:
+            continue
+        address = base['connection']
+        if '=' in address and not Path(address).is_absolute():
+            address = connection_parameters(address).get('file')
+        if address:
+            addresses.append(address)
+    if any(Path(os.path.normpath(address)) in (target, target.parent) for address in addresses):
+        raise InputError('retained file is configured as an active environment source')

@@ -101,6 +101,47 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(select(self.state, preview['plan'],
             expected_sha256=preview['plan_sha256'])['status'], 'selected_for_install')
 
+    def test_case_source_registry_is_active_only_during_owned_write(self):
+        from src.techexpert import case_retention, operation_state as fs
+        from src.techexpert.update_state import inspect_state
+
+        identifier = '1' * 32
+        registry = case_retention.registry(self.state, identifier)
+        self.assertEqual(inspect_state(self.state)['activity'], 'idle_observed')
+        self.assertFalse(registry.exists())
+        with fs.writer(fs.private(registry)):
+            current = inspect_state(self.state)
+            self.assertEqual(current['activity'], 'active')
+            self.assertIn(dict(kind='case-sources', id=identifier, status='active'), current['problems'])
+        self.assertEqual(inspect_state(self.state)['activity'], 'idle_observed')
+
+    def test_observed_retirement_requires_a_compatible_reader_after_a_completed_write(self):
+        from src.techexpert import case_retention, operation_state as fs
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.update_state import inspect_state, supports
+
+        case_id = '2' * 32
+        target = self.state / 'cases' / case_id / 'sources/s1.bin'
+        registry = fs.private(case_retention.registry(self.state, case_id) / 's1')
+        plan = dict(schema_version=1, kind='case_source_snapshot_v1', case_id=case_id, source_id='s1',
+                    policy=None, report_sha256='a'*64, file=dict(path=str(target), identity=dict(bytes=12), sha256='b'*64),
+                    impact=dict(investigations=[], comparisons=[]))
+        intent = dict(schema_version=1, plan=plan, plan_sha256=fs.digest(plan), admitted_at=fs.stamp())
+        fs.write(registry/'intent.json', intent)
+        unresolved = inspect_state(self.state)
+        self.assertEqual(unresolved['activity'], 'unresolved')
+        self.assertEqual(unresolved['schemata']['case-source-retirements'], [1])
+        record = dict(schema_version=1, status='removed', intent_sha256=fs.digest(intent),
+                      removed_at=fs.stamp(), logical_bytes_removed=12)
+        fs.write(registry/'receipt.json', dict(record=record, sha256=fs.digest(record)))
+        observed = inspect_state(self.state)
+        self.assertEqual(observed['activity'], 'idle_observed')
+        package = read_package(self.bundle)
+        self.assertFalse(supports(package['metadata'], observed['schemata']))
+        self.assertTrue(supports(package['metadata'], observed['schemata'],
+                                 case_retirement_schemas=package['case_retirement_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

@@ -113,14 +113,14 @@ def _inputs(kind, report):
     return result
 
 
-def _uses(doc):
+def _uses(doc, *, limit=MAX_USES_PER_EVIDENCE):
     counts = defaultdict(int)
     pairs = defaultdict(list)
     hypotheses = {item['id']: item['evidence'] for item in doc['hypotheses']}
 
     def append(reference, kind, identity=None):
         counts[reference] += 1
-        if len(pairs[reference]) < MAX_USES_PER_EVIDENCE:
+        if limit is None or len(pairs[reference]) < limit:
             pairs[reference].append(dict(kind=kind) if identity is None else dict(kind=kind, id=identity))
 
     for field, kind in (('facts', 'fact'), ('hypotheses', 'hypothesis'), ('contradictions', 'contradiction')):
@@ -212,12 +212,14 @@ def _including_dependents(selected, parents):
 
 
 def _products(state, inventory, queue):
+    from .case_retention import status as case_retirement
     visited = {}
     expanded = set()
     validated = set()
     parents = defaultdict(set)
     source_owners = set()
     unavailable = set()
+    retirements = []
     while queue:
         link = queue.popleft()
         if link in validated:
@@ -243,14 +245,27 @@ def _products(state, inventory, queue):
         if files:
             source_owners.add(key)
         for path, size in files:
-            if inventory.file(path, 'copies', owner, expected=size)['status'] != 'present':
+            row = inventory.file(path, 'copies', owner, expected=size)
+            if key[0] == 'case':
+                try:
+                    retirement = case_retirement(state, key[1], path.stem, read=inventory.read_metadata)
+                except (OSError, ValueError, KeyError, TypeError, RecursionError):
+                    inventory.issues['case_snapshot_retirement_unavailable'] += 1
+                    row.update(status='unavailable', bytes=None)
+                    retirement = None
+                if retirement is not None:
+                    retirements.append(retirement)
+                    row.update(status='retired' if retirement['status'] == 'removed' else 'removal_unverified',
+                               bytes=None, retirement={name: retirement[name] for name in
+                                   ('status', 'plan_sha256', 'current_file_status', 'logical_bytes_removed')})
+            if row['status'] != 'present':
                 unavailable.add(key)
         if working is not None:
             _working_copy(state, inventory, key[1], hashes['file'], working)
         for child, _, _ in children:
             parents[child].add(key)
         queue.extend(children)
-    return len(visited), _including_dependents(source_owners, parents), _including_dependents(unavailable, parents)
+    return len(visited), _including_dependents(source_owners, parents), _including_dependents(unavailable, parents), retirements
 
 
 def view(state, investigation_id, *, revision=None, category=None, offset=0, limit=60):
@@ -277,9 +292,19 @@ def view(state, investigation_id, *, revision=None, category=None, offset=0, lim
                                   [('report.json', 'reports'), ('report.md', 'reports'), ('receipt.json', 'metadata')]):
             raise InputError('committed investigation revision files are unavailable')
     queue = deque()
+    revision_digests = {}
     for doc in investigations._revision_chain(state, investigation_id, head, selected):
         queue.extend(_revision_links(inventory, doc))
-    products, depends_on_copies, unavailable = _products(state, inventory, queue)
+        revision_digests[doc['revision']] = investigations._digest(doc)
+    products, depends_on_copies, unavailable, retirements = _products(state, inventory, queue)
+    lost = defaultdict(list)
+    for item in retirements:
+        for revision in item['impact']['investigations']:
+            if (revision['investigation_id'] == investigation_id
+                    and revision_digests.get(revision['revision']) == revision['report_sha256']):
+                for evidence in revision['evidence']:
+                    lost[revision['revision'], evidence['evidence_id']].append(dict(case_id=item['case_id'],
+                        source_id=item['source_id'], status=item['status'], plan_sha256=item['plan_sha256']))
     fs.safe(location / 'head.json')
     if investigations._read_head(state, investigation_id) != head:
         raise InputError('investigation head changed during inventory; reload before relying on the view')
@@ -296,6 +321,11 @@ def view(state, investigation_id, *, revision=None, category=None, offset=0, lim
             else:
                 row['depends_on_copies'] = None if product in unavailable else False
             row['material_status'] = 'unavailable_dependency' if product in unavailable else 'present'
+            affected = lost.get((row['revision'], row['evidence_id']))
+            if affected:
+                row['retired_sources'] = affected
+                row['material_status'] = ('retired_dependency' if all(item['status'] == 'removed' for item in affected)
+                                          else 'retirement_unverified')
             summary['unavailable'] += product in unavailable
             summary['references'] += 1
         else:

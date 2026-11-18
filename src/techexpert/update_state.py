@@ -18,7 +18,7 @@ _TEMPLATE = re.compile(r'USR-[a-z0-9][a-z0-9-]{0,47}')
 _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
-def supports(metadata, observed):
+def supports(metadata, observed, *, case_retirement_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -33,7 +33,7 @@ def supports(metadata, observed):
         if (type(versions) is not list or not versions or any(type(item) is not int or item not in FORMATS[name] for item in versions)
             or not set(observed[name]) <= set(versions)):
             return False
-    return True
+    return set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
 
 
 def _exists(path):
@@ -48,6 +48,7 @@ def inspect_state(state):
     """Inspect saved metadata and markers. Operation originals are never opened."""
     state = fs.safe(state)
     schemas = {name:set() for name in FORMATS}
+    schemas['case-source-retirements'] = set()
     problems = []
     remaining_bytes = 64*1024**2
     remaining_entries = 8192
@@ -73,9 +74,9 @@ def inspect_state(state):
                 found.append(Path(item.path))
         return sorted(found)
 
-    def document(path):
+    def document(path, limit=16*1024**2):
         nonlocal remaining_bytes
-        data = read_snapshot(fs.safe(path),min(remaining_bytes,16*1024**2),share_delete=True)
+        data = read_snapshot(fs.safe(path),min(remaining_bytes,limit),share_delete=True)
         remaining_bytes -= len(data)
         value = json_value(data.decode('utf-8'),reject_duplicates=True)
         if type(value) is not dict:
@@ -169,6 +170,25 @@ def inspect_state(state):
             marker(folder/'run.lock','source-exports')
             if _exists(folder/'started.json') and not _exists(folder/'execution.json'):
                 problems.append(dict(kind='source-exports',id=folder.name,status='stop_unverified'))
+        retention = state / 'retention'
+        if fs.writer_active(retention):
+            problems.append(dict(kind='retention', status='active'))
+        from .case_retention import status as retirement_status
+        for folder in children(retention / 'case-sources'):
+            if not _ID.fullmatch(folder.name):
+                raise InputError('unexpected case source registry entry')
+            if fs.writer_active(folder):
+                problems.append(dict(kind='case-sources', id=folder.name, status='active'))
+            for entry in children(folder):
+                if entry.name == 'writer.lock':
+                    continue
+                receipt = retirement_status(state, folder.name, entry.name, read=document)
+                if receipt is None:
+                    continue
+                schema('case-source-retirements', receipt)
+                if receipt['status'] == 'outcome_unverified':
+                    problems.append(dict(kind='case-sources', id=folder.name, source_id=entry.name,
+                                         status='retirement_outcome_unverified'))
         marker(state/'incident-drafts/write.lock','incident-drafts')
         for folder in children(state/'incident-drafts'):
             if _ID.fullmatch(folder.name):
