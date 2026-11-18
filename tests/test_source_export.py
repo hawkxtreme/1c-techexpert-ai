@@ -217,5 +217,203 @@ class SourceExportTests(unittest.TestCase):
             self.assertEqual(load_profile(state)['sources'][0]['path'],str(ready))
             self.assertEqual(json.loads(run.stdout)['capability_status'],'configured_not_connected')
 
+    def cleanup_cli(self, state, *args, expected=0):
+        cli = Path(__file__).resolve().parents[1] / 'techexpert.py'
+        run = subprocess.run(
+            [sys.executable, '-B', '-X', 'utf8', str(cli), '--state-dir', str(state), *map(str, args)],
+            capture_output=True, encoding='utf-8', timeout=20,
+        )
+        self.assertEqual(run.returncode, expected, run.stdout + run.stderr)
+        return json.loads(run.stdout)
+
+    def completed_for_cleanup(self, root):
+        def modifies_work_copy(argv, **kwargs):
+            result = self.designer(argv, **kwargs)
+            work = Path(argv[argv.index('/F') + 1]) / '1Cv8.1CD'
+            work.write_bytes(b'Designer updated its private copy')
+            return result
+        state = root / 'state'
+        request = self.request(root)
+        with self.runtime(modifies_work_copy):
+            plan = self.api.prepare(state, request)
+            result = self.api.execute(state, plan['plan_id'], expected_sha256=plan['plan_sha256'])
+        self.assertEqual(result['status'], 'completed')
+        return state, plan, result
+
+    @unittest.skipUnless(os.name == 'nt', 'verified file-export cleanup uses Windows handles')
+    def test_reviewed_cleanup_removes_only_current_private_export_copy_once(self):
+        from src.techexpert.investigations import create, revise
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state, export, result = self.completed_for_cleanup(root)
+            target = Path(export['working_directory']) / '1Cv8.1CD'
+            self.assertNotEqual(hashlib.sha256(target.read_bytes()).hexdigest(), result['copy']['sha256'])
+            extra = target.with_name('later-user-file.txt')
+            extra.write_bytes(b'keep')
+            original = Path(export['source_file'])
+            export_file = Path(export['output_directory']) / 'Configuration.xml'
+            preserved = {path: path.read_bytes() for path in (original, export_file, extra)}
+            investigation = create(state, dict(task='Проверить материалы выгрузки'))['investigation_id']
+            revise(state, investigation, dict(
+                attachments=[dict(id='A-1', kind='artifact', target_id=result['artifact_id'])],
+                evidence=[dict(id='E-1', attachment='A-1', record='s1')],
+            ), expected_revision=1)
+            materials = self.cleanup_cli(state, 'investigation-materials', investigation, '--category', 'working_copies')
+            self.assertEqual(materials['entries'][0]['path'], str(target))
+            self.assertEqual(materials['entries'][0]['export_plan_id'], export['plan_id'])
+            self.assertEqual(materials['categories']['working_copies']['observed_bytes'], target.stat().st_size)
+            preview = self.cleanup_cli(state, 'source-export-cleanup-plan', export['plan_id'])
+            self.assertEqual(preview['status'], 'ready')
+            self.assertEqual(preview['plan']['file']['sha256'], hashlib.sha256(target.read_bytes()).hexdigest())
+            self.assertTrue(target.exists())
+            document = root / 'reviewed-plan.json'
+            document.write_text(json.dumps(preview['plan']), encoding='utf-8')
+            self.cleanup_cli(state, 'source-export-cleanup-apply', document, '--expected-sha256', '0' * 64, expected=2)
+            self.assertTrue(target.exists())
+            applied = self.cleanup_cli(state, 'source-export-cleanup-apply', document,
+                                       '--expected-sha256', preview['plan_sha256'])
+            self.assertEqual(applied['status'], 'removed')
+            self.assertFalse(target.exists())
+            self.assertEqual({path: path.read_bytes() for path in preserved}, preserved)
+            verified = self.cleanup_cli(state, 'source-export-status', export['plan_id'])
+            self.assertEqual(verified['source_artifact_id'], result['source_artifact_id'])
+            self.assertEqual(verified['work_copy_cleanup']['status'], 'removed')
+            materials = self.cleanup_cli(state, 'investigation-materials', investigation, '--category', 'working_copies')
+            self.assertEqual(materials['entries'][0]['status'], 'removed')
+            self.assertEqual(materials['categories']['working_copies']['observed_bytes'], 0)
+            self.assertEqual(materials['categories']['evidence']['unavailable'], 0)
+            target.write_bytes(b'an unrelated later file')
+            again = self.cleanup_cli(state, 'source-export-cleanup-apply', document,
+                                     '--expected-sha256', preview['plan_sha256'])
+            self.assertTrue(again['replayed'])
+            self.assertEqual(again['current_file_status'], 'path_reoccupied')
+            self.assertEqual(target.read_bytes(), b'an unrelated later file')
+
+    def test_work_copy_policy_defaults_to_keep_and_is_saved_with_an_exact_revision(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state = root / 'state'
+            first = self.cleanup_cli(state, 'retention-policy')
+            self.assertIsNone(first['source_export_work_copy_days'])
+            self.assertEqual(first['revision'], 0)
+            self.assertFalse(state.exists())
+            document = root / 'retention.json'
+            document.write_text(json.dumps(dict(schema_version=1, source_export_work_copy_days=7)), encoding='utf-8')
+            saved = self.cleanup_cli(state, 'retention-policy-save', document, '--expected-revision', '0')
+            self.assertEqual(saved['revision'], 1)
+            self.assertEqual(saved['source_export_work_copy_days'], 7)
+            self.assertEqual(self.cleanup_cli(state, 'retention-policy'), saved)
+            self.cleanup_cli(state, 'retention-policy-save', document, '--expected-revision', '0', expected=2)
+            self.assertEqual(self.cleanup_cli(state, 'retention-policy'), saved)
+
+    @unittest.skipUnless(os.name == 'nt', 'file identity and removal use Windows handles')
+    def test_legacy_receipt_and_busy_linked_or_changed_copy_are_handled(self):
+        from src.techexpert import export_retention
+        with tempfile.TemporaryDirectory() as temp:
+            state, plan, _ = self.completed_for_cleanup(Path(temp))
+            target = Path(plan['working_directory']) / '1Cv8.1CD'
+            native = self.api.native.file_identity(target)
+            legacy = dict(device=native['volume_serial'], inode=int.from_bytes(bytes.fromhex(native['file_id']), 'little'))
+            self.assertTrue(export_retention._same_file(legacy, native))
+            with target.open('rb'), self.assertRaises(OSError):
+                export_retention.preview(state, plan['plan_id'])
+            alias = target.with_name('second-link.1CD')
+            os.link(target, alias)
+            with self.assertRaisesRegex(ValueError, 'hard-link'):
+                export_retention.preview(state, plan['plan_id'])
+            alias.unlink()
+            reviewed = export_retention.preview(state, plan['plan_id'])
+            target.write_bytes(b'changed after preview')
+            with self.assertRaisesRegex(ValueError, 'working copy changed'):
+                export_retention.apply(state, reviewed['plan'], expected_sha256=reviewed['plan_sha256'])
+            self.assertEqual(target.read_bytes(), b'changed after preview')
+            self.assertIsNone(export_retention.status(state, plan['plan_id']))
+
+    @unittest.skipUnless(os.name == 'nt', 'file identity and removal use Windows handles')
+    def test_selected_policy_is_rechecked_and_an_interrupted_receipt_is_never_retried(self):
+        from src.techexpert import export_retention, retention_policy
+        with tempfile.TemporaryDirectory() as temp:
+            state, plan, _ = self.completed_for_cleanup(Path(temp))
+            target = Path(plan['working_directory']) / '1Cv8.1CD'
+            export_id = plan['plan_id']
+            retained = export_retention.preview(state, export_id, use_policy=True)
+            self.assertEqual(retained['status'], 'retained_by_policy')
+            retention_policy.save(state, dict(schema_version=1, source_export_work_copy_days=0), expected_revision=0)
+            approved = export_retention.preview(state, export_id, use_policy=True)
+            self.assertTrue(target.is_file())
+            retention_policy.save(state, dict(schema_version=1, source_export_work_copy_days=30), expected_revision=1)
+            with self.assertRaisesRegex(ValueError, 'retention policy changed'):
+                export_retention.apply(state, approved['plan'], expected_sha256=approved['plan_sha256'])
+            self.assertTrue(target.is_file())
+            manual = export_retention.preview(state, export_id)
+            original_write = export_retention.fs.write
+
+            def fail_completion(path, value):
+                if path.name == export_retention.RECEIPT:
+                    raise OSError('simulated interruption after the file was removed')
+                original_write(path, value)
+
+            with patch.object(export_retention.fs, 'write', side_effect=fail_completion), self.assertRaises(OSError):
+                export_retention.apply(state, manual['plan'], expected_sha256=manual['plan_sha256'])
+            self.assertFalse(target.exists())
+            view = self.api.status(state, export_id)
+            self.assertEqual(view['work_copy_cleanup']['status'], 'outcome_unverified')
+            target.write_bytes(b'keep this later file')
+            retry = export_retention.apply(state, manual['plan'], expected_sha256=manual['plan_sha256'])
+            self.assertEqual(retry['status'], 'outcome_unverified')
+            self.assertTrue(retry['replayed'])
+            self.assertEqual(target.read_bytes(), b'keep this later file')
+
+    @unittest.skipUnless(os.name == 'nt', 'verified file-export cleanup uses Windows handles')
+    def test_cleanup_rechecks_known_reuse_as_a_file_base_or_an_export_input(self):
+        from src.techexpert import export_retention
+        from src.techexpert.profiles import save_profile
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            state, plan, _ = self.completed_for_cleanup(root)
+            export_id = plan['plan_id']
+            work = Path(plan['working_directory'])
+            approved = export_retention.preview(state, export_id)
+            address = f'Usr="lab";File="{work.parent / "source" / ".." / work.name}";'
+            selection = dict(schema_version=1, name='Current registration', sources=[],
+                             bases=[dict(id='local', name='Selected copy', mode='file', connection=address)])
+            save_profile(state, selection, expected_revision=0)
+            with self.assertRaisesRegex(ValueError, 'active environment source'):
+                export_retention.apply(state, approved['plan'], expected_sha256=approved['plan_sha256'])
+            original_base = dict(selection['bases'][0], connection=str(Path(plan['source_file']).parent))
+            save_profile(state, dict(selection, bases=[original_base]), expected_revision=1)
+            with self.runtime():
+                second = self.api.prepare(state, self.request(root) | {'database_path': str(work)})
+            self.assertNotEqual(second['plan_id'], export_id)
+            with self.assertRaisesRegex(ValueError, 'selected original of another source export'):
+                export_retention.apply(state, approved['plan'], expected_sha256=approved['plan_sha256'])
+            self.assertTrue((work / '1Cv8.1CD').is_file())
+            self.assertIsNone(export_retention.status(state, export_id))
+
+    @unittest.skipUnless(os.name == 'nt', 'verified file-export cleanup uses Windows handles')
+    def test_profile_writer_cannot_enter_between_reuse_check_and_disposition(self):
+        from src.techexpert import export_retention
+        from src.techexpert.profiles import save_profile
+        with tempfile.TemporaryDirectory() as temp:
+            state, plan, _ = self.completed_for_cleanup(Path(temp))
+            work = Path(plan['working_directory'])
+            approved = export_retention.preview(state, plan['plan_id'])
+            snapshot = export_retention.native.snapshot_cleanup_file
+            profile = dict(schema_version=1, name='Concurrent configuration', sources=[],
+                           bases=[dict(id='local', name='Copy', mode='file', connection=str(work))])
+
+            def overlap(path, *, before_remove, **kwargs):
+                def attempt_registration(checked):
+                    before_remove(checked)
+                    with self.assertRaisesRegex(ValueError, 'profile is being saved'):
+                        save_profile(state, profile, expected_revision=0)
+                return snapshot(path, before_remove=attempt_registration, **kwargs)
+
+            with patch.object(export_retention.native, 'snapshot_cleanup_file', side_effect=overlap):
+                done = export_retention.apply(state, approved['plan'], expected_sha256=approved['plan_sha256'])
+            self.assertEqual(done['status'], 'removed')
+            self.assertFalse((state / 'profiles/current.json').exists())
+            self.assertFalse((state / 'profiles/write.lock').exists())
+
 
 if __name__=='__main__':unittest.main()

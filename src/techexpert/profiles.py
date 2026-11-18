@@ -1,4 +1,5 @@
 """Local readiness and reusable source configuration; no connection side effects."""
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -187,9 +188,10 @@ def check_profile(value):
     return dict(status='local_preflight_only',sources=checks,connected=False,collection_started=False,logcfg_changed=False)
 
 
-def save_profile(state_dir, profile, *, expected_revision=None):
-    clean = validate_profile(profile)
-    folder = Path(state_dir) / 'profiles'
+@contextmanager
+def profile_writer(folder):
+    """Share the existing profile edit guard with a consumer that removes a source."""
+    folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     lock = folder / 'write.lock'
     try:
@@ -198,6 +200,15 @@ def save_profile(state_dir, profile, *, expected_revision=None):
     except FileExistsError as exc:
         raise InputError('profile is being saved; retry after the current writer completes') from exc
     try:
+        yield
+    finally:
+        lock.unlink()
+
+
+def save_profile(state_dir, profile, *, expected_revision=None):
+    clean = validate_profile(profile)
+    folder = Path(state_dir) / 'profiles'
+    with profile_writer(folder):
         current=load_profile(state_dir)
         if current is not None and current['schema_version']==2 and clean['schema_version']==1:
             raise ProfileRevisionConflict('profile schema downgrade is not allowed; preserve shared resources')
@@ -210,8 +221,6 @@ def save_profile(state_dir, profile, *, expected_revision=None):
             raise InputError('profile exceeds 1 MiB; reduce its size before saving')
         write_json(folder / f"{clean['revision']}.json", clean)
         write_json(folder / 'current.json', clean)
-    finally:
-        lock.unlink()
     return clean
 
 

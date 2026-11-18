@@ -160,7 +160,12 @@ def inspect_state(state):
                 else:
                     schema(kind,document(folder/'report.json'))
 
-        for folder in children(state/'source-exports'):
+        exports = state / 'source-exports'
+        if fs.writer_active(exports):
+            problems.append(dict(kind='source-exports', status='active'))
+        for folder in children(exports):
+            if folder.name == 'writer.lock':
+                continue
             marker(folder/'run.lock','source-exports')
             if _exists(folder/'started.json') and not _exists(folder/'execution.json'):
                 problems.append(dict(kind='source-exports',id=folder.name,status='stop_unverified'))

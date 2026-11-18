@@ -80,6 +80,27 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(response['installation_verified'])
         self.assertTrue(select(self.state,preview['plan'],expected_sha256=preview['plan_sha256'])['replayed'])
 
+    def test_source_export_writer_blocks_selection_only_while_held(self):
+        from src.techexpert import operation_state as fs
+        from src.techexpert.update_state import inspect_state
+        from src.techexpert.updates import select, select_plan
+
+        edition = self.stage(self.check())['release_id']
+        preview = select_plan(self.state, edition)
+        exports = self.state / 'source-exports'
+        marker = exports / 'writer.lock'
+        self.assertFalse(exports.exists())
+        exports.mkdir()
+        with fs.writer(exports):
+            self.assertEqual(inspect_state(self.state)['activity'], 'active')
+            with self.assertRaisesRegex(InputError, 'safe point'):
+                select(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        before = marker.read_bytes(), marker.stat().st_mtime_ns
+        self.assertEqual(inspect_state(self.state)['activity'], 'idle_observed')
+        self.assertEqual((marker.read_bytes(), marker.stat().st_mtime_ns), before)
+        self.assertEqual(select(self.state, preview['plan'],
+            expected_sha256=preview['plan_sha256'])['status'], 'selected_for_install')
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

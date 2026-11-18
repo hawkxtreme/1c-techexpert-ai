@@ -76,4 +76,10 @@ python techexpert.py profile-save PROFILE.json --expected-revision N
 
 Рабочая `.1CD`, выгрузка и диагностические файлы сохраняются локально до удаления пользователем или выбранной политики хранения. `.1CD` не включается в model-выдачу, артефакт исходников или публичный комплект. Диагностика остаётся частной; никакой из этих материалов автоматически не отправляется в Git/базу знаний. Если автоматический профиль неприменим, дайте ответственному программисту инструкцию штатной выгрузки прямо в каталог с ожидаемыми XML/BSL.
 
+## Хранение рабочей копии
+
+`source-export-cleanup-plan PLAN_ID` показывает путь, размер и влияние удаления рабочей `1Cv8.1CD` завершённой выгрузки. Снимок исходников и отчёт выгрузки остаются доступны. Удалённую рабочую ИБ открыть уже нельзя. Для одобренного плана сохраните объект `plan` и выполните `source-export-cleanup-apply PLAN.json --expected-sha256 HASH`. Состояние очистки показывает `source-export-status`.
+
+`retention-policy` показывает выбранный срок и ревизию. `retention-policy-save POLICY.json --expected-revision N` принимает объект с `schema_version: 1` и `source_export_work_copy_days`. Значение `null` оставляет копии на хранении, целое число дней определяет их срок. `source-export-cleanup-plan PLAN_ID --use-policy` проверяет срок перед предпросмотром. Выбранный срок применяется при отдельном вызове очистки.
+
 Основания: [иерархическая XML-выгрузка 1С](https://wonderland.v8.1c.ru/blog/razvitie-vygruzki-zagruzki-konfiguratsii-v-iz-xml/), [описание команды в API EDT](https://edt.1c.ru/dev/edt/2025.2/apidocs/com/_1c/g5/v8/dt/platform/services/core/runtimes/execution/impl/IRuntimeExecutionCommandOptions.html), [Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects). Точные комбинации подтверждаются локальной проверкой, а не одной ссылкой.

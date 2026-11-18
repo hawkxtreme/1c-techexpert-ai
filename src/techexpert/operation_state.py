@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
 from datetime import datetime,timezone
+import errno
 import hashlib
 import json
 import os
@@ -65,25 +66,56 @@ def record(folder,value,event):
     with path.open('a',encoding='utf-8',newline='\n') as stream:stream.write(row);stream.flush();os.fsync(stream.fileno())
     write(folder/'status.json',value)
 
+def _writer_lock(descriptor, *, unlock=False):
+    if os.name == 'nt':
+        import msvcrt
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        msvcrt.locking(descriptor, msvcrt.LK_UNLCK if unlock else msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(descriptor, fcntl.LOCK_UN if unlock else fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def writer_active(folder):
+    """Observe an existing lock without creating a marker or changing its contents."""
+    path = safe(folder / 'writer.lock')
+    try:
+        expected = path.lstat()
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(expected.st_mode) or expected.st_nlink != 1:
+        raise InputError('operation writer marker is not an ordinary file')
+    flags = os.O_RDONLY | getattr(os, 'O_BINARY', 0) | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_NONBLOCK', 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if not os.path.samestat(expected, opened):
+            raise InputError('operation writer marker changed during inspection')
+        try:
+            _writer_lock(descriptor)
+        except OSError as exc:
+            if exc.errno in (errno.EACCES, errno.EAGAIN):
+                return True
+            raise
+        _writer_lock(descriptor, unlock=True)
+        if not os.path.samestat(opened, path.lstat()):
+            raise InputError('operation writer marker changed during inspection')
+        return False
+    finally:
+        os.close(descriptor)
+
+
 @contextmanager
 def writer(folder):
     path=safe(folder/'writer.lock')
     with path.open('a+b') as stream:
         if stream.seek(0,2)==0:stream.write(b'0');stream.flush()
-        stream.seek(0)
         try:
-            if os.name=='nt':
-                import msvcrt
-                msvcrt.locking(stream.fileno(),msvcrt.LK_NBLCK,1)
-            else:
-                import fcntl
-                fcntl.flock(stream.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
+            _writer_lock(stream.fileno())
         except (OSError,BlockingIOError) as exc:raise InputError('operation writer is active; read status without takeover') from exc
         try:yield
         finally:
-            stream.seek(0)
-            if os.name=='nt':msvcrt.locking(stream.fileno(),msvcrt.LK_UNLCK,1)
-            else:fcntl.flock(stream.fileno(),fcntl.LOCK_UN)
+            _writer_lock(stream.fileno(), unlock=True)
 
 def process_identity(pid):
     result=dict(pid=pid,hostname=socket.gethostname(),platform=os.name,lifetime=None,state='unknown')

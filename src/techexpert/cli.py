@@ -149,6 +149,16 @@ def main(argv=None):
     export_plan=commands.add_parser('source-export-plan');export_plan.add_argument('request',type=Path)
     source_export=commands.add_parser('source-export');source_export.add_argument('plan_id');source_export.add_argument('--expected-sha256',required=True)
     export_status=commands.add_parser('source-export-status');export_status.add_argument('plan_id')
+    cleanup_plan=commands.add_parser('source-export-cleanup-plan',help='review removal of one completed export working copy')
+    cleanup_plan.add_argument('plan_id')
+    cleanup_plan.add_argument('--use-policy',action='store_true')
+    cleanup_apply=commands.add_parser('source-export-cleanup-apply')
+    cleanup_apply.add_argument('document',type=Path)
+    cleanup_apply.add_argument('--expected-sha256',required=True)
+    commands.add_parser('retention-policy',help='show the local retention choice')
+    retention_save=commands.add_parser('retention-policy-save')
+    retention_save.add_argument('document',type=Path)
+    retention_save.add_argument('--expected-revision',type=int,required=True)
     jr=commands.add_parser('jr-import')
     jr.add_argument('path',type=Path);jr.add_argument('--platform-version',required=True)
     jr.add_argument('--utc-offset')
@@ -418,6 +428,22 @@ def main(argv=None):
             if getattr(args,'summary',False):
                 result.pop('body',None)
                 if 'files' in result:result['files']=[{k:v for k,v in item.items() if k!='text'} for item in result['files']]
+        elif args.command in ('retention-policy','retention-policy-save'):
+            from . import retention_policy
+            if args.command=='retention-policy':
+                result=retention_policy.load(args.state_dir)
+            else:
+                from .inputs import read_snapshot,json_value
+                document=json_value(read_snapshot(args.document,8192).decode('utf-8-sig'),reject_duplicates=True)
+                result=retention_policy.save(args.state_dir,document,expected_revision=args.expected_revision)
+        elif args.command in ('source-export-cleanup-plan','source-export-cleanup-apply'):
+            from . import export_retention
+            if args.command=='source-export-cleanup-plan':
+                result=export_retention.preview(args.state_dir,args.plan_id,use_policy=args.use_policy)
+            else:
+                from .inputs import read_snapshot,json_value
+                document=json_value(read_snapshot(args.document,32*1024).decode('utf-8-sig'),reject_duplicates=True)
+                result=export_retention.apply(args.state_dir,document,expected_sha256=args.expected_sha256)
         elif args.command in ('source-export-plan','source-export','source-export-status'):
             from .source_export import prepare,execute,status
             if args.command=='source-export-plan':

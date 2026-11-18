@@ -132,19 +132,23 @@ def prepare(state_dir,request):
             'Extensions, server IBs, other platform versions and Linux native execution require separate verified profiles.',
             'Budgets monitor owned paths and processes; the native platform can also write its usual service logs. This is not an OS sandbox.'])
     plan['argv']=_argv(plan)
-    folder.mkdir(parents=True,exist_ok=False)
-    plan['private_storage_access']=native.protect_directory(folder)
-    data=encoded(plan,128*1024);(folder/'plan.json').write_bytes(data)
-    write_json(folder/'plan-receipt.json',dict(schema_version=1,plan_sha256=_sha(data)))
+    from .operation_state import writer
+    folder.parent.mkdir(parents=True,exist_ok=True)
+    with writer(folder.parent):
+        if _identity(source)!=identity:raise InputError('source file changed during export planning')
+        folder.mkdir(exist_ok=False)
+        plan['private_storage_access']=native.protect_directory(folder)
+        data=encoded(plan,128*1024);(folder/'plan.json').write_bytes(data)
+        write_json(folder/'plan-receipt.json',dict(schema_version=1,plan_sha256=_sha(data)))
     return dict(plan,plan_sha256=_sha(data))
 
 
 def _load(state_dir,plan_id):
     folder=_folder(state_dir,plan_id);data=read_snapshot(folder/'plan.json',128*1024)
     receipt=json_value(read_snapshot(folder/'plan-receipt.json',8192).decode('utf-8'),reject_duplicates=True)
-    if _sha(data)!=receipt.get('plan_sha256'):raise InputError('source export plan integrity mismatch')
+    if type(receipt) is not dict or _sha(data)!=receipt.get('plan_sha256'):raise InputError('source export plan integrity mismatch')
     plan=json_value(data.decode('utf-8'),reject_duplicates=True)
-    if plan.get('schema_version')!=1 or plan.get('plan_id')!=plan_id or plan.get('argv')!=_argv(plan):raise InputError('unsupported source export plan')
+    if type(plan) is not dict or plan.get('schema_version')!=1 or plan.get('plan_id')!=plan_id or plan.get('argv')!=_argv(plan):raise InputError('unsupported source export plan')
     return folder,plan,_sha(data)
 
 
@@ -215,7 +219,11 @@ def status(state_dir,plan_id):
     if result.get('source_artifact_id'):
         load_artifact(state_dir,result['source_artifact_id'])
         if _sha(read_snapshot(artifact_folder(state_dir,result['source_artifact_id'])/'report.json'))!=result['source_artifact_report_sha256']:raise InputError('linked source snapshot changed')
-    return dict(result,plan_id=plan_id,plan_sha256=digest,artifact_id=receipt['artifact_id'],artifact_sources=report['sources'])
+    response=dict(result,plan_id=plan_id,plan_sha256=digest,artifact_id=receipt['artifact_id'],artifact_sources=report['sources'])
+    from .export_retention import status as cleanup_status
+    removed=cleanup_status(state_dir,plan_id)
+    if removed is not None:response['work_copy_cleanup']=removed
+    return response
 
 
 def execute(state_dir,plan_id,*,expected_sha256):

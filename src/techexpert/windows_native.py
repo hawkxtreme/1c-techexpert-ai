@@ -83,6 +83,8 @@ def _kernel():
         'CreateFileW':([w.LPCWSTR,w.DWORD,w.DWORD,c.c_void_p,w.DWORD,w.DWORD,w.HANDLE],w.HANDLE),
         'GetFileInformationByHandle':([w.HANDLE,c.POINTER(_FileInfo)],w.BOOL),
         'GetFileInformationByHandleEx':([w.HANDLE,c.c_int,c.c_void_p,w.DWORD],w.BOOL),
+        'GetFinalPathNameByHandleW':([w.HANDLE,w.LPWSTR,w.DWORD,w.DWORD],w.DWORD),
+        'SetFileInformationByHandle':([w.HANDLE,c.c_int,c.c_void_p,w.DWORD],w.BOOL),
         'LocalFree':([c.c_void_p],c.c_void_p),
     }
     for name,(args,result) in signatures.items():
@@ -151,10 +153,12 @@ def protect_directory(path):
     return policy
 
 
-def _handle_identity(kernel,handle):
+def _handle_identity(kernel,handle,*,for_cleanup=False):
     info=_FileInfo();file_id=_FileId()
     if not kernel.GetFileInformationByHandle(handle,c.byref(info)):raise c.WinError(c.get_last_error())
     if info.attributes&(0x10|0x400):raise InputError('source must be a regular nonlinked file')
+    if for_cleanup and (info.links!=1 or info.attributes&0x1):
+        raise InputError('cleanup requires a writable file with exactly one hard-link name')
     if not kernel.GetFileInformationByHandleEx(handle,18,c.byref(file_id),c.sizeof(file_id)):
         raise InputError('full Windows file identity unavailable; use a supported local filesystem')
     def ticks(value):return (value.dwHighDateTime<<32)|value.dwLowDateTime
@@ -172,6 +176,68 @@ def file_identity(path):
     if handle==c.c_void_p(-1).value:raise c.WinError(c.get_last_error())
     try:return _handle_identity(kernel,handle)
     finally:kernel.CloseHandle(handle)
+
+
+def _cleanup_identity(kernel, handle, path):
+    identity = _handle_identity(kernel, handle, for_cleanup=True)
+    name = c.create_unicode_buffer(32768)
+    length = kernel.GetFinalPathNameByHandleW(handle, name, len(name), 0)
+    if not length:
+        raise c.WinError(c.get_last_error())
+    prefix = '\\\\?\\'
+    if length >= len(name) or not name.value.startswith(prefix) or Path(name.value[len(prefix):]) != path:
+        raise InputError('the opened file is outside the reviewed cleanup path')
+    return identity
+
+
+def snapshot_cleanup_file(path, *, max_bytes, timeout_seconds, before_remove=None):
+    """Hash the exact exclusive handle and optionally mark it for deletion on close."""
+    kernel = _kernel()
+    import msvcrt
+    path = Path(path).absolute()
+    access = 0x80000000 | (0x10000 if before_remove is not None else 0)
+    handle = kernel.CreateFileW(str(path), access, 0, None, 3, 0x00200000 | 0x08000000, None)
+    if handle == c.c_void_p(-1).value:
+        raise c.WinError(c.get_last_error())
+    fd = None
+    try:
+        identity = _cleanup_identity(kernel, handle, path)
+        if identity['bytes'] > max_bytes:
+            raise InputError('working copy exceeds its saved export byte limit')
+        fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        handle = None
+        deadline = time.monotonic() + timeout_seconds
+        digest = hashlib.sha256()
+        with os.fdopen(fd, 'rb') as source:
+            fd = None
+            total = 0
+            while True:
+                if time.monotonic() > deadline:
+                    raise InputError('working copy verification timed out')
+                block = source.read(1024**2)
+                if not block:
+                    break
+                total += len(block)
+                if total > max_bytes:
+                    raise InputError('working copy exceeds its saved export byte limit')
+                digest.update(block)
+            owned = msvcrt.get_osfhandle(source.fileno())
+            if total != identity['bytes'] or _cleanup_identity(kernel, owned, path) != identity:
+                raise InputError('working copy changed during verification')
+            snapshot = dict(identity=identity, sha256=digest.hexdigest())
+            if before_remove is not None:
+                before_remove(snapshot)
+                if _cleanup_identity(kernel, owned, path) != identity:
+                    raise InputError('working copy changed before removal')
+                disposition = w.BOOL(True)
+                if not kernel.SetFileInformationByHandle(owned, 4, c.byref(disposition), c.sizeof(disposition)):
+                    raise c.WinError(c.get_last_error())
+        return snapshot
+    finally:
+        if fd is not None:
+            os.close(fd)
+        if handle is not None:
+            kernel.CloseHandle(handle)
 
 
 def file_version(path):
@@ -248,8 +314,6 @@ def replace_shared_metadata(source,target):
         except FileNotFoundError:continue
         if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('linked metadata replacement rejected')
     kernel=_kernel()
-    kernel.SetFileInformationByHandle.argtypes=[w.HANDLE,c.c_int,c.c_void_p,w.DWORD]
-    kernel.SetFileInformationByHandle.restype=w.BOOL
     class Rename(c.Structure):_fields_=[('flags',w.DWORD),('root',w.HANDLE),('length',w.DWORD),('name',w.WCHAR*1)]
     handle=kernel.CreateFileW(str(source),0x10080,7,None,3,0x00200080,None)
     if handle==c.c_void_p(-1).value:raise c.WinError(c.get_last_error())
