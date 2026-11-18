@@ -33,7 +33,7 @@ class BlindPreparationTests(unittest.TestCase):
                 results[command]=json.loads(child.stdout)
             self.assertEqual(len(results['templates']['templates']),11)
             self.assertTrue(results['readiness']['capabilities']['run_synthetic_demo'])
-            self.assertEqual(len(results['capabilities']['operations']),37)
+            self.assertEqual(len(results['capabilities']['operations']),39)
             self.assertTrue(results['knowledge']['matches'])
             self.assertFalse(state.exists(),'Kit catalogue inspection started investigation state')
             self.assertEqual(len(list((kit/'skills').glob('*/SKILL.md'))),18)

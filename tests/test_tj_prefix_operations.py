@@ -82,7 +82,7 @@ return {"records": page["data"]["matched_count"], "method": case["data"]["source
         self.assertFalse((self.root / 'output').exists())
 
     def test_mcp_still_uses_the_same_manifest_route_without_new_tools_or_defaults(self):
-        self.assertEqual(len(mcp_tools.tools()), 42)
+        self.assertEqual(len(mcp_tools.tools()), 44)
         _, _, request = mcp_tools.prepare('techexpert_case_analyze', dict(operation_key='prefix-sdk', executor_id='fixture', arguments=dict(manifest=str(self.manifest))))
         self.assertEqual(request['arguments'], dict(manifest=str(self.manifest.absolute())))
 

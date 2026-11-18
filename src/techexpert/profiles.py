@@ -42,7 +42,8 @@ def doctor(state_dir=None):
                                   remote_os_collection='ssh_winrm_launchers; existing_access_and_remote_python_required',
                                   apdex='normalized_measurements_only',source_snapshot='bounded_xml_bsl_catalog_or_local_git_commit',
                                   source_export='windows_file_8.3.27.1989_private_copy_editable_main_only',
-                                  knowledge='bundled_offline_linked_cards',testpilot='not_implemented'))
+                                  knowledge='bundled_offline_linked_cards',client_episode='normalized_testpilot_or_manual_import',
+                                  testpilot='windows_thin_8.3.27.1989_external_1.9.2_environment; endpoint_not_checked'))
 
 
 def read_starter(path):

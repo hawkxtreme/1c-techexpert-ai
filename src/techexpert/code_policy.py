@@ -40,7 +40,7 @@ def normalize(arguments):
     # Defaults on the optional objects need validation as objects, too.
     properties=cap.ROUTES['code.execute']['input_schema']['properties']
     for field in ('scope','resources'):result[field]=cap.validate(result[field],properties[field])
-    for field in ('manifests','measurements'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
+    for field in ('manifests','measurements','client_episodes'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
     from .input_files import normalize as intake_request
     for profile in result['scope']['intakes']:profile['settings']=intake_request(profile['settings']['inputs'],profile['settings']['limits'])
     for profile in result['scope']['collectors']:
@@ -57,6 +57,7 @@ def normalize(arguments):
         for plan in result['scope'][field]:plan['settings']=logcfg_api.normalize(operation,plan['settings'])
     result['scope']['source_snapshots']=[drivers.normalize_source(p) for p in result['scope']['source_snapshots']]
     result['scope']['journals']=[drivers.normalize('jr.import',p) for p in result['scope']['journals']]
+    for plan in result['scope']['testpilot']:plan['settings']=drivers.normalize('client.observe',plan['settings'])
     from .rac import UUID
     for kind in ('rac','postgresql','sqlserver'):
         for profile in result['scope'][kind]:
@@ -76,6 +77,7 @@ class Scope:
         self.investigations={(item['id'],item['revision']) for item in value.get('investigations',[])}
         self.imported=set();self.collector_runs=[0]*len(value['collectors']);self.products=[]
         self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql','sqlserver')}
+        self.testpilot_runs=[0]*len(value.get('testpilot',[]))
         self.intake_runs=[0]*len(value.get('intakes',[]))
         self.logcfg_runs={field:[0]*len(value.get(field,[])) for field in ('logcfg_plans','logcfg_rollbacks')}
         self.remote_plan_runs=[0]*len(value.get('remote_plans',[]))
@@ -131,11 +133,22 @@ class Scope:
             for identifier in arguments['before']+arguments['after']:target('cases',identifier)
         elif operation=='comparison.show':target('comparisons',arguments['comparison_id'])
         elif operation=='artifact.show' or operation in ('artifact.evidence','jr.events','jr.record','source.search','source.read'):target('artifacts',arguments['artifact_id'])
-        elif operation in ('source.snapshot','jr.import'):
-            field='source_snapshots' if operation=='source.snapshot' else 'journals'
+        elif operation=='client.observe':
+            approved=self.value.get('testpilot',[])
+            if 'navigation' in arguments and any(self.testpilot_runs[i] and 'navigation' in plan['settings']
+                and plan['settings']['endpoint']==arguments['endpoint'] for i,plan in enumerate(approved)):
+                raise CodeError('scope_denied','One TestClient navigation per endpoint is allowed in a program, including uncertain outcomes.')
+            selected=next((i for i,p in enumerate(approved) if p['settings']==arguments and self.testpilot_runs[i]<p['max_calls']),None)
+            if selected is None:raise CodeError('scope_denied','TestClient selection, action or count exceeds the explicit approval.')
+            self.testpilot_runs[selected]+=1
+        elif operation in ('source.snapshot','jr.import','client.import'):
+            if operation=='client.import':
+                allowed=[dict(path=p) for p in self.value.get('client_episodes',[])]
+            else:
+                allowed=self.value['source_snapshots' if operation=='source.snapshot' else 'journals']
             def same(plan):
                 return path_key(plan['path'])==path_key(arguments['path']) and {k:v for k,v in plan.items() if k!='path'}=={k:v for k,v in arguments.items() if k not in ('path','input_plan','members')}
-            if not any(same(plan) for plan in self.value[field]):raise CodeError('scope_denied','Source profile is outside the approved input plan.')
+            if not any(same(plan) for plan in allowed):raise CodeError('scope_denied','Source profile is outside the approved input plan.')
             identity=import_key(arguments['path'])
             if identity in self.imported:raise CodeError('scope_denied','Repeated source capture requires a separately reviewed plan.')
             self.imported.add(identity)
@@ -181,7 +194,7 @@ class Scope:
             field,kind=('case_id','cases') if 'case_id' in data else ('artifact_id','artifacts')
         else:
             field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe')}}.get(operation,(None,None))
+                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe','client.observe','client.import')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

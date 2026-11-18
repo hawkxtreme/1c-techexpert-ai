@@ -226,6 +226,30 @@ class IncidentDraftTests(unittest.TestCase):
                 evidence=inv['evidence']+[dict(id='E-2',attachment='A-2',record='s1')]),expected_revision=2)
             with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
 
+    def test_client_caption_and_metadata_are_private_and_raw_episode_is_not_exported(self):
+        from src.techexpert.client_episode import import_episode
+        from src.techexpert.investigations import revise
+        from test_client_episode import document
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp)
+            prior=self.investigation(state)
+            trace=document()
+            caption='Private Retail Customer 0321'
+            trace['after']['caption']=caption
+            form=trace['after']['form_name']
+            path=state/'client.json'
+            path.write_text(json.dumps(trace,ensure_ascii=False),encoding='utf-8')
+            source=import_episode(state,path)
+            inv=revise(state,prior['investigation_id'],dict(
+                attachments=prior['attachments']+[dict(id='A-2',kind='artifact',target_id=source['artifact_id'])],
+                evidence=prior['evidence']+[dict(id='E-2',attachment='A-2',record='s1')],
+                open_questions=[f'Observed {caption} in {form}.']),expected_revision=2)
+            preview=self.api.prepare(state,inv['investigation_id'])
+            self.assertNotIn(caption,preview['body'])
+            self.assertNotIn(form,preview['body'])
+            with self.assertRaisesRegex(ValueError,'reviewed observations'):
+                self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-2'])
+
     def test_identifiers_from_tool_reports_are_pseudonymized_even_without_profile_entries(self):
         from src.techexpert.artifacts import save_artifact
         from src.techexpert.investigations import revise

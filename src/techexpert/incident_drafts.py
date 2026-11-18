@@ -193,6 +193,9 @@ def _known(doc,state_dir):
     visited=0
     for attachment in doc['attachments']:
         report=loaders[attachment['kind']](state_dir,attachment['target_id']);stack=[(report,0)]
+        kind=report.get('kind')
+        if kind=='client_ui':
+            add('ID',(report['result'].get('session') or {}).get('id'))
         while stack:
             item,depth=stack.pop();visited+=1
             if visited>200000 or depth>32:raise InputError('incident identifier discovery exceeds bounds')
@@ -200,11 +203,13 @@ def _known(doc,state_dir):
                 for key,value in item.items():
                     category=fields.get(key)
                     if category:add(category,value)
-                    if key=='role' and report.get('kind')=='postgresql':add('USER',value)
-                    if report.get('kind')=='sqlserver':
+                    if key=='role' and kind=='postgresql':add('USER',value)
+                    if kind=='sqlserver':
                         if key in ('server_name','machine_name','instance_name','host_name'):add('NODE',value)
                         elif key=='login_name':add('USER',value)
                         elif key=='program_name':add('ID',value)
+                    if kind=='client_ui' and key in ('caption','form_name','ready_criterion','label','lifetime'):
+                        add('ID',value)
                     if isinstance(value,(dict,list)):stack.append((value,depth+1))
             elif isinstance(item,list):stack.extend((value,depth+1) for value in item)
         if len(values)>2048:raise InputError('incident identifier catalogue exceeds bounds')
@@ -291,6 +296,8 @@ def _source_bytes(state_dir,doc,evidence_id):
             raise InputError('raw remote transfers require separate prepared text; use parsed reviewed observations, not transport bundles')
         if kind=='native-jr':
             raise InputError('native JR dictionaries, parts and serialized records require separate prepared text; use parsed observations in the proposal')
+        if kind=='client_ui':
+            raise InputError('private client episodes require separate reviewed observations; raw UI evidence is not a public excerpt')
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])
     else:
         result=dict(text=json.dumps(dict(kind='calculation',report_digest=attachment['report_sha256']),ensure_ascii=False),truncated=False)

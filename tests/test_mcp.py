@@ -67,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),42)
+        tools=self.tools();self.assertEqual(len(tools),44)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -80,7 +80,7 @@ class MCPTests(unittest.TestCase):
     def test_program_and_direct_profiles_separate_composition_without_weakening_the_api(self):
         for profile,count,allowed,hidden in [
             ('program',7,'techexpert_code_execute','techexpert_knowledge_search'),
-            ('direct',40,'techexpert_knowledge_search','techexpert_code_execute')]:
+            ('direct',42,'techexpert_knowledge_search','techexpert_code_execute')]:
             with self.subTest(profile=profile):
                 before={str(f.relative_to(self.state)):hashlib.sha256(f.read_bytes()).hexdigest() for f in self.state.rglob('*') if f.is_file()}
                 p,q=self.start(profile=profile);self.send(p,'tools/list')
@@ -115,7 +115,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),42);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),44);self.assertFalse(self.state.exists())
 
     def test_modern_metadata_required_on_every_request_and_not_borrowed_from_previous(self):
         p,q=self.start();self.send(p,'server/discover');self.receive(q)

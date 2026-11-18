@@ -61,7 +61,7 @@ class AdapterOperationTests(unittest.TestCase):
         self.assertEqual(value['data']['result']['missing_samples'],1);self.assertTrue(value['kernel_call_id']);self.assertEqual(len(value['snapshots']),2)
 
     def test_mcp_arguments_use_same_pair_validation_and_no_additional_tools(self):
-        self.assertEqual(len(mcp_tools.tools()),42)
+        self.assertEqual(len(mcp_tools.tools()),44)
         for op in ('jr.import','os.import','apdex.import'):
             name='techexpert_'+op.replace('.','_');args=self.arguments(op)
             _,_,request=mcp_tools.prepare(name,dict(operation_key='sdk-selected',executor_id='harness',arguments=args));self.assertEqual(request['arguments']['members'],args['members'])

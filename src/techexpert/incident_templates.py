@@ -50,7 +50,10 @@ def plan(template_id,*,variant=None,database_mode=None,time_mode=None,state_dir=
         sources.append(dict(type=kind,required=False,temporal_requirement='unknown' if time_mode=='unknown' else 'retained_history' if time_mode=='past' else 'bounded_current_or_reproduction',
                             note='Full client action can include refreshing open forms and dynamic lists.' if kind=='client' else None))
     checks=[dict(id=check,capability='harness_interpretation',status='guidance_only') for check in template['checks']]
-    if any(s['type']=='client' for s in sources):checks.append(dict(id='client-observation',capability='testpilot',status='not_implemented'))
+    if any(s['type']=='client' for s in sources):
+        checks.append(dict(id='client-observation',capability='testpilot',
+            status='requires_retained_client_episode' if time_mode=='past' else 'requires_prepared_testclient_or_trace',
+            operations=['client.import'] if time_mode=='past' else ['client.import','client.observe']))
     if any(s['type']=='sql' for s in sources):checks.append(dict(id='sql-visibility',capability='postgresql_or_sqlserver_2022_fixed_catalogue',status='requires_engine_and_access_check',sql_server='fixed_catalogue_requires_sqlcmd_and_existing_read_rights'))
     return dict(schema_version=1,template=template,variant=selected,catalogue_revision=book['revision'],catalogue_sha256=catalogue_sha256,
         defaults=defaults,untrusted_user_content=private,grants_permissions=False,

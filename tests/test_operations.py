@@ -130,6 +130,10 @@ class ManagedOperationTests(unittest.TestCase):
         call('rac.observe',endpoint='localhost:1545',query='clusters',executable=str(self.folder/'missing-rac'),expected='partial')
         call('postgresql.observe',database='test',query='activity',executable=str(self.folder/'missing-psql'),expected='partial')
         call('sqlserver.observe',database='test',host='localhost',query='requests',executable=str(self.folder/'missing-sqlcmd'),expected='partial')
+        from test_client_episode import document
+        episode=self.folder/'client.json';episode.write_text(json.dumps(document('manual')),encoding='utf-8')
+        self.assertEqual(call('client.import',path=str(episode))['result']['ready_basis'],'operator_reported_marker')
+        call('client.observe',endpoint=dict(port=1,pid=1,lifetime='1'),python=str(self.folder/'python.exe'),expected='partial')
         from src.techexpert.investigations import create
         doc=create(self.state,dict(task='Read exact saved source context'))
         call('investigation.sources',investigation_id=doc['investigation_id'],revision=1)

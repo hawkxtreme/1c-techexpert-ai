@@ -16,7 +16,7 @@ FIELDS=('base_alias','node_alias','node_identity','cluster_identity','infobase_i
     'dbms_database_identity','source_configuration_version','runtime_configuration_version',
     'extensions','source_commit','journal_identity','process_identity','session_identity',
     'clock_alignment','recorded_run')
-KINDS={'native-jr':'jr','onec_source':'source','postgresql':'sql','sqlserver':'sql','rac':'rac','os_metrics':'os','apdex':'apdex'}
+KINDS={'native-jr':'jr','onec_source':'source','postgresql':'sql','sqlserver':'sql','rac':'rac','os_metrics':'os','apdex':'apdex','client_ui':'client'}
 CASE_KINDS={'1c-tj-text-v1':'tj','1c-source-text-v1':'source','normalized-events-v1':'normalized_events'}
 
 

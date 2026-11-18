@@ -124,6 +124,8 @@ def main(argv=None):
     sql.add_argument('--executable',default='sqlcmd');sql.add_argument('--docker-container')
     sql.add_argument('--client-variant',choices=('auto','go','odbc18'),default='auto')
     sql.add_argument('--trust-server-certificate',action='store_true');sql.add_argument('--start');sql.add_argument('--end')
+    commands.add_parser('client-endpoint',help='passive identity check for an explicitly selected local TestClient port').add_argument('port',type=int)
+    commands.add_parser('client-import',help='import supplied normalized client observations').add_argument('path',type=Path)
     source_snapshot=commands.add_parser('source-snapshot')
     source_snapshot.add_argument('path',type=Path)
     source_snapshot.add_argument('--kind',choices=('catalog','git'),default='catalog')
@@ -297,6 +299,12 @@ def main(argv=None):
             result=observe(args.state_dir,SqlcmdClient(database=args.database,host=args.host,port=args.port,user=args.user,
                 auth=args.auth,executable=args.executable,docker_container=args.docker_container,client_variant=args.client_variant,
                 trust_server_certificate=args.trust_server_certificate),args.operation,window=dict(start=args.start,end=args.end) if args.start else None)
+        elif args.command=='client-endpoint':
+            from .client_endpoint import inspect_endpoint
+            result=inspect_endpoint(args.port)
+        elif args.command=='client-import':
+            from .client_episode import import_episode
+            result=import_episode(args.state_dir,args.path)
         elif args.command=='source-snapshot':
             from .source_code import snapshot_source
             result=snapshot_source(args.state_dir,args.path,kind=args.kind,ref=args.ref,encoding=args.encoding)
@@ -401,10 +409,10 @@ def main(argv=None):
             from .knowledge import search
             result=search(args.query)
         emit(result)
-        if args.command in ('rac','postgresql','sqlserver','apdex','jr-import','os-import','os-collect'):
+        if args.command in ('rac','postgresql','sqlserver','apdex','jr-import','os-import','os-collect','client-import'):
             from .capabilities import outcome
             operation={'rac':'rac.observe','postgresql':'postgresql.observe','sqlserver':'sqlserver.observe','apdex':'apdex.import',
-                'jr-import':'jr.import','os-import':'os.import','os-collect':'os.collect'}[args.command]
+                'jr-import':'jr.import','os-import':'os.import','os-collect':'os.collect','client-import':'client.import'}[args.command]
             status,_=outcome(operation,result)
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status']=='blocked' else 0

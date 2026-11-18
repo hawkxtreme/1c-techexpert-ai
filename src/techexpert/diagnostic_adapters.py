@@ -5,8 +5,10 @@ from .inputs import InputError
 from .sqlserver_queries import OPERATIONS as SQL_QUERIES
 
 OPERATIONS=('artifact.evidence','apdex.import','jr.import','jr.events','jr.record',
-    'source.snapshot','source.search','source.read','rac.observe','postgresql.observe','sqlserver.observe')
-CREATORS={'apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe'}
+    'source.snapshot','source.search','source.read','rac.observe','postgresql.observe','sqlserver.observe',
+    'client.import','client.observe')
+CREATORS={'apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe',
+          'client.import','client.observe'}
 ARTIFACT_READS={'artifact.evidence','jr.events','jr.record','source.search','source.read'}
 RAC_QUERIES=('clusters','infobases','sessions','connections','processes','servers','infobase_info')
 PG_QUERIES=('capabilities','activity','locks','database_stats','statements')
@@ -20,6 +22,14 @@ def source_schema(cap):
 def journal_schema(cap):
     return cap.obj(dict(path=cap.FILE,platform_version=cap.string(32,enum=['8.3.27.1989']),
         utc_offset=cap.string(6),consistency=cap.string(32,enum=['unknown','stopped_writer','provided_snapshot'],default='unknown')),['path','platform_version'])
+
+
+def testpilot_schema(cap):
+    endpoint=cap.obj(dict(port=dict(type='integer',minimum=1,maximum=65535),pid=dict(type='integer',minimum=1,maximum=2**32-1),
+                          lifetime=cap.string(20,pattern='[1-9][0-9]{0,19}')),['port','pid','lifetime'])
+    navigation=cap.obj(dict(link=cap.string(300),ready_form=cap.string(300)),['link','ready_form'])
+    return cap.obj(dict(endpoint=endpoint,python=cap.FILE,database_mode=cap.string(16,enum=['file','server','unknown'],default='unknown'),
+                        navigation=navigation),['endpoint','python'])
 
 
 def connection_schema(cap,kind):
@@ -39,7 +49,9 @@ def scope_schemas(cap):
         if kind=='rac':fields.update(clusters=cap.array(cap.string(36),100),any_cluster=dict(type='boolean',default=False),infobases=dict(type='array',items=cap.string(36),maxItems=100))
         if kind=='sqlserver':fields['windows']=cap.array(cap.WINDOW,16)
         profiles[kind]=cap.array(cap.obj(fields,['settings']),8)
-    return dict(source_snapshots=cap.array(source_schema(cap),32),journals=cap.array(journal_schema(cap),32),**profiles)
+    testpilot=cap.array(cap.obj(dict(settings=testpilot_schema(cap),max_calls=cap.integer(1,5,1)),['settings']),8)
+    return dict(source_snapshots=cap.array(source_schema(cap),32),journals=cap.array(journal_schema(cap),32),
+                client_episodes=cap.array(cap.FILE,32),testpilot=testpilot,**profiles)
 
 
 def routes(cap):
@@ -74,6 +86,11 @@ def routes(cap):
         'source.read':route(dict(**artifact,path=cap.FILE,start=cap.integer(1,8388608,1),limit=cap.integer(1,200,50)),['artifact_id','path'],
             ['verified saved source artifact'],'bounded source lines; static code does not establish runtime execution',
             ['artifact_id','path','sha256','lines','total_lines','has_more'],dict(path=dict(type='string'),lines=dict(type='array'),total_lines=dict(type='integer'),has_more=dict(type='boolean'))),
+        'client.import':route(dict(path=cap.FILE),['path'],['selected normalized client-episode-v1 file'],
+            'retain a private supplied Testpilot projection or operator markers, with independent readiness and counter status',outputs),
+        'client.observe':route(testpilot_schema(cap)['properties'],['endpoint','python'],
+            ['explicit existing local Windows thin TestClient and separately installed Testpilot environment'],
+            'read active client and session counters or perform one explicitly selected local list navigation; no application readiness or cause inference',outputs,timeout=50),
     }
     for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES),('sqlserver',SQL_QUERIES)]:
         settings=connection_schema(cap,kind);args=dict(settings['properties'],query=cap.string(32,enum=list(queries)))
@@ -98,6 +115,14 @@ def routes(cap):
             value['compatibility']=dict(profile='sqlserver-2022-monitor-v1',other_versions='unverified',clients='Go sqlcmd1.10.x or ODBC sqlcmd18; fixed version probe')
             value['rights']+=['existing SQLCMDPASSWORD session profile or current integrated account; no password argument',
                 'SQL2022 VIEW SERVER PERFORMANCE STATE for server DMVs; VIEW DATABASE PERFORMANCE STATE for Query Store; no grants or setup']
+        elif name=='client.observe':
+            value['compatibility']=dict(profile='Windows thin TestClient 8.3.27.1989 with Testpilot 1.9.2',
+                                        endpoint='verified local IPv4 listener identity',
+                                        navigation='existing closed-list local e1cib link with exact form predicate')
+            value['rights']+=['existing selected test-client access under current Windows account',
+                             'navigation may run application handlers and requires explicit approval for the selected link']
+        elif name=='client.import':
+            value['compatibility']=dict(profile='client-episode-v1',network=False,origins=['testpilot','manual'])
     return result
 
 
@@ -126,6 +151,10 @@ def normalize_connection(kind,args):
 def normalize(operation,args):
     result=dict(args)
     if operation=='source.snapshot':return normalize_source(result)
+    if operation=='client.observe':
+        from .testpilot_capture import normalize as testpilot
+        return testpilot(result)
+    if operation=='client.import':return dict(path=str(Path(result['path']).absolute()))
     if operation=='source.read':
         from .source_code import safe_name
         result['path']=safe_name(result['path'])
@@ -197,12 +226,21 @@ def execute(operation,args,state,output,*,stop=None):
     elif operation=='sqlserver.observe':
         from .sqlserver import SqlcmdClient,observe
         data=observe(output,SqlcmdClient(**{k:v for k,v in args.items() if k not in ('query','window')}),args['query'],window=args.get('window'),should_stop=stop)
+    elif operation=='client.import':
+        from .client_episode import import_episode
+        data=import_episode(output,args['path'])
+    elif operation=='client.observe':
+        from .testpilot_capture import observe
+        data=observe(output,lock_state=state,should_stop=stop,**args)
     else:raise InputError('unsupported diagnostic adapter')
     return data,[dict(kind='artifacts',id=data['artifact_id'])]
 
 
 def result_status(operation,data):
     status=data.get('result',{}).get('status')
+    if operation in ('client.observe','client.import'):
+        if status=='cancelled':return 'cancelled','cancelled'
+        if status in ('partial','unavailable'):return 'partial','client_'+status
     if status=='cancelled' and operation in ('rac.observe','postgresql.observe','sqlserver.observe'):return 'cancelled','cancelled'
     if (operation=='apdex.import' and status in ('empty','incomplete') or operation=='jr.import' and status=='partial'
         or operation in ('rac.observe','postgresql.observe','sqlserver.observe') and status=='unavailable'):

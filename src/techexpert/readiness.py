@@ -171,7 +171,7 @@ def check(state_dir,*,root=None,entrypoint_sha256=None,investigation_id=None):
         capabilities=dict(analyze_supplied_files=local_ready and harness_ready,run_synthetic_demo=local_ready and good['demo']),
         profile=profile,sources=dict(status='configured_not_checked' if profile.get('sources',0) else 'not_configured',paths_probed=False),
         specialized=dict(sql='not_applicable' if file_only else 'not_checked',rac='not_applicable' if file_only else 'not_checked',
-            testpilot='not_required_for_background_SC01',server_license='not_required_for_supplied_file_analysis'),
+            testpilot='optional_endpoint_and_environment_not_checked',server_license='not_required_for_supplied_file_analysis'),
         demonstration=demonstration,
         actions=dict(restore_complete_bundle='Восстановите полную совместимую поставку, сохранив частные расследования. Не собирайте базу знаний вручную.',
             read_entrypoint_in_current_harness='Агенту: прочитать точку входа этого комплекта и подтвердить её текущую ревизию в том же чате.'),

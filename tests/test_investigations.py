@@ -36,9 +36,13 @@ class InvestigationTests(unittest.TestCase):
         self.assertNotIn('sql',[s['type'] for s in plan['sources']])
         self.assertIn('client',[s['type'] for s in plan['sources']])
         self.assertFalse(plan['collection_started'])
-        self.assertTrue(any(c['capability']=='testpilot' and c['status']=='not_implemented' for c in plan['checks']))
+        past_client=next(c for c in plan['checks'] if c['capability']=='testpilot')
+        self.assertEqual(past_client['status'],'requires_retained_client_episode')
+        self.assertEqual(past_client['operations'],['client.import'])
         server=self.api.template_plan('TPL-01',database_mode='server',time_mode='current')
         self.assertIn('sql',[s['type'] for s in server['sources']])
+        current_client=next(c for c in server['checks'] if c['capability']=='testpilot')
+        self.assertEqual(current_client['operations'],['client.import','client.observe'])
 
     def test_revisions_preserve_old_report_and_reject_stale_writers(self):
         with tempfile.TemporaryDirectory() as temp:
