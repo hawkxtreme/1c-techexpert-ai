@@ -17,6 +17,7 @@ def obj(properties,required=()):return dict(type='object',properties=properties,
 def array(items,limit=16):return dict(type='array',items=items,maxItems=limit,default=[])
 
 CASE=string(32,pattern='[a-f0-9]{32}')
+SHA256=string(64,pattern='[a-f0-9]{64}')
 FILE=string()
 WINDOW=obj(dict(start=string(64),end=string(64)),('start','end'))
 COVERAGE=dict(window=WINDOW,required_events=array(string(64)),required_fields=array(string(128)))
@@ -42,7 +43,9 @@ def route(arguments,required,source,impact,fields,*,timeout=60):
         impact=impact,data_schema=data_schema,output_schema=response_schema(data_schema))
 
 ROUTES={
- 'case.analyze':route(dict(manifest=FILE,input_plan=CASE),['manifest'],['selected manifest and stable files, explicit bounded TJ prefixes or approved catalogue members'],'private case snapshot; no database connection',['case_id','sources','durations_seconds']),
+ 'case.analyze':dict(route(dict(manifest=FILE,input_plan=CASE,reference_sha256=SHA256),['manifest'],
+     ['selected manifest and stable files, explicit bounded TJ prefixes, approved external TJ windows or catalogue members'],
+     'private case snapshot; no database connection',['case_id','sources','durations_seconds'],timeout=180),default_timeout_seconds=60),
  'case.show':route(dict(case_id=CASE),['case_id'],['verified saved case'],'read retained case; no original-path access',['case_id','sources']),
  'case.coverage':route(dict(case_id=CASE,**COVERAGE),['case_id'],['verified saved TJ'],'derive coverage from retained bytes',['sources','limitations']),
  'case.events':route(dict(case_id=CASE,source_id=string(16,pattern='s[1-9][0-9]*'),event=string(64),
@@ -55,7 +58,8 @@ ROUTES={
  'case.compare':route(dict(before=dict(type='array',items=CASE,minItems=1,maxItems=20),after=dict(type='array',items=CASE,minItems=1,maxItems=20)),
      ['before','after'],['verified saved cases'],'save comparison; no database mutation',['comparison_id','input_reports','performance']),
  'comparison.show':route(dict(comparison_id=CASE),['comparison_id'],['verified saved comparison and case inputs'],'read saved comparison',['comparison_id','input_reports']),
- 'source.check':route(dict(manifest=FILE,**COVERAGE),['manifest'],['explicitly selected manifest and TJ'],'read-only inspection; source bytes are not retained',['sources','limitations']),
+ 'source.check':route(dict(manifest=FILE,reference_preview=dict(type='boolean'),**COVERAGE),['manifest'],
+     ['explicitly selected manifest and TJ'],'read-only inspection or metadata-only external reference preview',['sources','limitations']),
  'knowledge.search':route(dict(query=string(500),limit=integer(1,20,5)),['query'],['bundled offline knowledge'],'candidate references only; no source fetch',['knowledge_revision','matches']),
  'knowledge.card':route(dict(card_id=string(128),offset=integer(0,65536,0),limit=integer(1,8192,6000)),['card_id'],['bundled authored card'],
      'bounded authored note; no independent diagnosis',['id','body','content_sha256']),
@@ -194,9 +198,13 @@ def normalize_request(value):
     if operation in ('source.check','case.coverage'):
         from .source_coverage import validate_request as coverage_request
         args.update(coverage_request(**{k:args[k] for k in COVERAGE if k in args}))
+    if operation=='source.check' and args.get('reference_preview') and any(args.get(k) for k in COVERAGE):
+        raise InputError('external TJ preview uses the window declared in the manifest without extra filters')
     if operation=='case.events' and 'window' in args:
         from .source_coverage import validate_request as coverage_request
         args['window']=coverage_request(window=args['window'])['window']
+    if operation=='case.analyze' and args.get('reference_sha256') and args.get('input_plan'):
+        raise InputError('choose external TJ reference review or catalogue intake')
     if operation=='input.inspect':
         from .input_files import normalize
         args=normalize(args['inputs'],args['limits'])
@@ -215,12 +223,21 @@ def normalize_request(value):
         from .code_policy import normalize as code_request
         args=code_request(args)
     if operation in _diagnostics.OPERATIONS:args=_diagnostics.normalize(operation,args)
-    timeout=args.get('duration_seconds',0)+30 if operation=='os.collect' else ROUTES[operation].get('default_timeout_seconds',ROUTES[operation]['timeout_seconds'])
+    ceiling=timeout_limit(operation,args)
+    timeout=ceiling if operation=='case.analyze' else ROUTES[operation].get('default_timeout_seconds',ceiling)
+    if operation=='os.collect':timeout=args.get('duration_seconds',0)+30
     budget=dict(timeout_seconds=timeout,max_result_bytes=MAX_RESULT)
     budget.update(result.get('budget',{}))
-    if budget['timeout_seconds']>ROUTES[operation]['timeout_seconds']:raise InputError('operation timeout exceeds catalogue')
+    if budget['timeout_seconds']>ceiling:raise InputError('operation timeout exceeds catalogue')
     result.update(arguments={key:value for key,value in args.items() if value is not None},budget=budget)
     return result
+
+def timeout_limit(operation, arguments):
+    route = ROUTES[operation]
+    if operation == 'case.analyze' and not (isinstance(arguments, dict) and arguments.get('reference_sha256')):
+        return route['default_timeout_seconds']
+    return route['timeout_seconds']
+
 
 def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
     from . import storage
@@ -229,6 +246,9 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
         if 'input_plan' in args:
             from .input_intake import analyze
             data=analyze(state,output,args['manifest'],args['input_plan'])
+        elif 'reference_sha256' in args:
+            data=storage.investigate(args['manifest'],output,reference_sha256=args['reference_sha256'],
+                                     reference_state=state,should_stop=stop)
         else:data=storage.investigate(args['manifest'],output)
         targets=[dict(kind='cases',id=data['case_id'])]
     elif operation=='input.inspect':
@@ -237,6 +257,11 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
     elif operation=='case.show':
         from .knowledge_review import review_legacy_report
         data=storage.verified_case(state,args['case_id']);data=dict(data,knowledge_review=review_legacy_report(data))
+    elif operation=='source.check' and args.get('reference_preview'):
+        from .tj_reference import plan
+        preview=plan(args['manifest'],state)
+        data=dict(sources=preview['plan']['sources'],reference_preview=preview,
+                  limitations=['Preview observes file metadata. The original bytes are verified during capture.'])
     elif operation in ('case.coverage','source.check'):
         from .source_coverage import inspect_case,inspect_manifest
         options={k:args[k] for k in COVERAGE if k in args}

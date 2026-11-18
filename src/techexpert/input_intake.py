@@ -134,6 +134,7 @@ def analyze(state,output,manifest,input_plan):
     if any(type(s) is not dict or type(s.get('format')) is not str or s['format'] not in formats or type(s.get('path')) is not str for s in requested['sources']):raise InputError('unsupported selected diagnostic format or member')
     ids=[s['path'] for s in requested['sources']];selection=selected_members(plan,ids)
     for source,member in zip(requested['sources'],selection):
+        if 'external_window' in source:raise InputError('external TJ capture requires an approved reference preview of the original path')
         if source.get('read_mode','stable')!='stable':raise InputError('catalogue member analysis requires stable read mode; TJ prefix reads use explicit original paths')
         if plan['result']['roots'][member['root']]['kind']=='zip' and source['format']=='1c-source-text-v1':raise InputError('source-code archives are excluded')
         try:

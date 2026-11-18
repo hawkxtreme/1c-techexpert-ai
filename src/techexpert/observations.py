@@ -18,6 +18,9 @@ def native_report():
 def with_evidence(record, source):
     record['evidence'] = dict(id=f"{source['id']}:{record['line']}", source=source['id'], sha256=source['sha256'],
                               **{key:record[key] for key in ('line','end_line','byte_start','byte_end')})
+    if 'reference_capture' in source:
+        from .tj_reference import original_location
+        record['evidence']['original_location'] = original_location(source, record)
     return record
 
 

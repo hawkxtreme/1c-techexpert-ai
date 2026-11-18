@@ -18,7 +18,7 @@ _TEMPLATE = re.compile(r'USR-[a-z0-9][a-z0-9-]{0,47}')
 _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
-def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=()):
+def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(), tj_reference_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -34,7 +34,8 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             or not set(observed[name]) <= set(versions)):
             return False
     return (set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
-            and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas))
+            and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas)
+            and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas))
 
 
 def _exists(path):
@@ -51,6 +52,7 @@ def inspect_state(state):
     schemas = {name:set() for name in FORMATS}
     schemas['case-source-retirements'] = set()
     schemas['investigation-report-retirements'] = set()
+    schemas['tj-reference-windows'] = set()
     problems = []
     remaining_bytes = 64*1024**2
     remaining_entries = 8192
@@ -146,6 +148,7 @@ def inspect_state(state):
             if path.name=='current.json' or re.fullmatch(r'[0-9]+\.json',path.name):
                 schema('profiles',document(path))
 
+        from .tj_reference import has_saved_reference
         for kind in ('cases','artifacts','comparisons','investigations','custom-templates'):
             for folder in children(state/kind):
                 if kind=='custom-templates' and folder.name=='writer.lock':
@@ -161,7 +164,10 @@ def inspect_state(state):
                     for path in revisions:
                         schema(kind,document(path/'report.json'))
                 else:
-                    schema(kind,document(folder/'report.json'))
+                    report = document(folder/'report.json')
+                    schema(kind,report)
+                    if kind == 'cases' and has_saved_reference(report):
+                        schemas['tj-reference-windows'].add(1)
 
         exports = state / 'source-exports'
         if fs.writer_active(exports):

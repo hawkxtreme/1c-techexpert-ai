@@ -163,13 +163,15 @@ def _staged(state, release_id):
     except (OSError,ValueError) as exc:
         raise InputError('staged package failed integrity verification') from exc
     return dict(value, case_retirement_schemas=archive['case_retirement_schemas'],
-                report_retirement_schemas=archive['report_retirement_schemas'])
+                report_retirement_schemas=archive['report_retirement_schemas'],
+                tj_reference_schemas=archive['tj_reference_schemas'])
 
 
 def _supports(package, observed):
     return supports(package['metadata'], observed['schemata'],
                     case_retirement_schemas=package['case_retirement_schemas'],
-                    report_retirement_schemas=package['report_retirement_schemas'])
+                    report_retirement_schemas=package['report_retirement_schemas'],
+                    tj_reference_schemas=package['tj_reference_schemas'])
 
 
 def _presentation(state, record):

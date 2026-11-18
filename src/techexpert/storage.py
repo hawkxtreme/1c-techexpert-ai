@@ -97,8 +97,10 @@ def job_report(bundle):
                             'Проверить причины задержки по дополнительным свидетельствам; очередь пока неизвестна.'])
 
 
-def investigate(manifest_path, state_dir, *, intake=None):
-    bundle = load_manifest(manifest_path)
+def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None, should_stop=None):
+    bundle = load_manifest(manifest_path, reference_sha256=reference_sha256,
+                           reference_state=state_dir if reference_state is None else reference_state,
+                           should_stop=should_stop)
     if intake is not None:
         selected=intake['selected']
         if len(selected)!=len(bundle['sources']):raise InputError('selected input capture is incomplete')
@@ -116,6 +118,7 @@ def investigate(manifest_path, state_dir, *, intake=None):
     result['source_coverage']=summarize_bundle(bundle)
     result['source_acquisition']=bundle['source_attempts']
     if intake is not None:result['input_intake']=intake
+    if reference_sha256 is not None:result['reference_plan_sha256']=reference_sha256
     if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
         result['order_load']=analyze_order_load(bundle,result)
     native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']
@@ -151,6 +154,13 @@ def investigate(manifest_path, state_dir, *, intake=None):
     if len((json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode('utf-8')) > MAX_REPORT_BYTES:
         raise InputError('report exceeds the resumable case size limit; narrow the input')
     folder = Path(state_dir) / 'cases' / result['case_id']
+    if reference_sha256 is not None:
+        from .operation_state import private, safe
+        if should_stop and should_stop():
+            raise InputError('external TJ observation stopped before saving the case')
+        folder = safe(folder)
+        folder.mkdir(parents=True, exist_ok=False)
+        private(folder)
     (folder / 'sources').mkdir(parents=True, exist_ok=False)
     if os.name != 'nt':
         folder.chmod(0o700)
@@ -189,6 +199,8 @@ def load_case(state_dir, case_id, *, with_digest=False):
         report = json_value(report_data.decode('utf-8'))
         if type(report) is not dict or report.get('schema_version') != 1 or report.get('case_id') != case_id:
             raise InputError('unsupported saved case schema')
+        from .tj_reference import has_saved_reference
+        has_saved_reference(report)
         return (report, hashlib.sha256(report_data).hexdigest()) if with_digest else report
     except (OSError, KeyError, ValueError, TypeError) as exc:
         raise InputError(f'Cannot resume case: {exc}') from exc
@@ -210,7 +222,11 @@ def read_evidence(state_dir, case_id, evidence_id):
                 if record['line']==int(match[2]):found=(record,scan.raw_record)
         if found is None:raise InputError('evidence id is not the start of a parsed native record')
         record,raw=found;text=raw.decode('utf-8-sig').rstrip('\r\n')
-        return dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True,text=text[:4096],truncated=len(text)>4096)
+        proof = dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True,text=text[:4096],truncated=len(text)>4096)
+        if 'reference_capture' in source:
+            from .tj_reference import original_location
+            proof['original_location'] = original_location(source, record)
+        return proof
     data = read_snapshot(case_source_path(state_dir, case_id, match[1]))
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise InputError('evidence snapshot integrity mismatch')
@@ -295,6 +311,9 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
                 job_correlation=link.get('status','not_established') if linked_run else 'not_established',
                 selection_basis='verified_marker_window_only_not_full_job' if linked_run else 'exact_properties_only_not_job_identity')
     if window:result.update(window=window,time_selection_basis='recorded_timestamp_half_open_not_operation_overlap',clock_alignment='not_verified')
+    if any('reference_capture' in source for source in sources):
+        from .tj_reference import view
+        result['reference_windows'] = [view(source) for source in sources if 'reference_capture' in source]
     return result
 
 

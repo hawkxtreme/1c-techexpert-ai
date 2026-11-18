@@ -14,6 +14,7 @@ PLUGIN = '1c-techexpert-ai'
 FORMAT = 'src/techexpert/assets/update-format.json'
 CASE_RETIREMENT_FORMAT = 'src/techexpert/assets/case-retirement-format.json'
 REPORT_RETIREMENT_FORMAT = 'src/techexpert/assets/report-retirement-format.json'
+TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
 MIB = 1024**2
 ARCHIVE_LIMIT = 16*MIB
 LIMITS = dict(max_depth=12, max_files=512, max_file_bytes=MIB, max_total_bytes=16*MIB)
@@ -60,7 +61,7 @@ def _allowed(name, listed):
     return any(name.startswith(folder) and suffix in suffixes for folder, suffixes in _FILES.items())
 
 
-def _retirement_schemas(contents, listed, filename, field):
+def _additional_schemas(contents, listed, filename, field):
     if filename not in contents:
         return []
     declared = _json(contents[filename])
@@ -70,7 +71,7 @@ def _retirement_schemas(contents, listed, filename, field):
             or type(versions) is not list or not versions
             or any(type(version) is not int or not 1 <= version <= 2**31-1 for version in versions)
             or len(set(versions)) != len(versions)):
-        raise InputError('invalid retirement compatibility declaration')
+        raise InputError('invalid supplemental state compatibility declaration')
     return versions
 
 
@@ -117,8 +118,9 @@ def read_package(path):
     return dict(path=str(path), identity=identity, metadata=dict(version=version, knowledge_revision=revision,
         knowledge_schema=book.get('schema_version'), state_contract=contract), inventory=inventory, files=contents,
         hashes={name:dict(sha256=_digest(value), bytes=len(value)) for name, value in contents.items()},
-        archive=data, case_retirement_schemas=_retirement_schemas(contents, listed, CASE_RETIREMENT_FORMAT, 'case_source_retirements'),
-        report_retirement_schemas=_retirement_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'))
+        archive=data, case_retirement_schemas=_additional_schemas(contents, listed, CASE_RETIREMENT_FORMAT, 'case_source_retirements'),
+        report_retirement_schemas=_additional_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'),
+        tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'))
 
 
 def installed_inventory(root):

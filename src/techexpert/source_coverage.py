@@ -10,6 +10,7 @@ from . import __version__
 from .analysis import parse_time
 from .inputs import InputError,load_manifest,read_snapshot,MAX_FILE_BYTES,MAX_TOTAL_BYTES,MAX_EVENTS,MAX_RECORD_BYTES
 from .native_tj import parse_tj
+from .observations import with_evidence
 
 EVENT=re.compile(r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}\Z')
 
@@ -90,6 +91,9 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
         if not source or attempt['availability']!='captured':results.append(result);continue
         result.update(sha256=source['sha256'],bytes=source['size'],parse_status=source.get('parse_status','unknown'))
         if 'acquisition' in source:result['acquisition']=source['acquisition']
+        if 'reference_capture' in source:
+            from .tj_reference import view
+            result['reference_window'] = view(source)
         if not native:results.append(result);continue
         observed=records[attempt['id']]
         period,selected=_period(observed,request['window'])
@@ -134,13 +138,17 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
                 evidence_preview=list(islice((r['evidence'] for r in candidates if field in r['properties'] and field not in r.get('ambiguous_properties',{}) and r['properties'][field].strip()),3)))
         result['requirements']=dict(events=event_checks,fields=field_checks)
         result['assessment']='observations_available' if selected else 'insufficient_data'
-        if selected and source.get('parse_status')!='parsed':result['assessment']='partial_observations'
+        original_parse = source.get('reference_capture', {}).get('original_parse_status', 'parsed')
+        if selected and (source.get('parse_status')!='parsed' or original_parse!='parsed'):
+            result['assessment']='partial_observations'
         results.append(result)
     usable=[s for s in results if s['assessment'] in ('observations_available','partial_observations')]
     status=('no_usable_tj_records_in_scope' if not usable else 'partial_observations' if
         any(s['assessment']=='partial_observations' or s['availability'] not in ('captured','duplicate_source') for s in results) else 'observations_available')
+    reference_captured = any('reference_window' in item for item in results)
     return dict(schema_version=1,status=status,scope='native_TJ_only' if bundle['manifest'].get('schema')==2 else 'SC01_native_TJ_only',request=request,sources=results,
-        record_selection='all_parsed_records_in_each_explicit_file; not_a_job_identity_filter',
+        record_selection=('parsed_records_in_retained_windows_and_whole_snapshots; not_a_job_identity_filter' if reference_captured
+                          else 'all_parsed_records_in_each_explicit_file; not_a_job_identity_filter'),
         can_establish_absence=False,requires_ai_interpretation=True,
         limitations=['First/last recorded timestamps and a span intersection do not prove collection completeness.',
             'A declared time zone does not establish clock alignment; comparisons are numeric only.',
@@ -199,9 +207,7 @@ def inspect_case(state_dir,case_id,*,window=None,required_events=(),required_fie
                 records_seen+=parsed['records_seen']
                 source['parse_status']=parsed['status']
                 for record in parsed['records']:
-                    record['evidence']=dict(source=source_id,id=source_id+':'+str(record['line']),sha256=source['sha256'],
-                        **{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
-                    records.append(record)
+                    records.append(with_evidence(record, source))
                 issues.extend(dict(issue,source=source_id) for issue in parsed['limitations'])
                 if 'record_budget' not in source:issues.append(dict(code='original_record_budget_unknown',source=source_id))
             except (ValueError,KeyError):

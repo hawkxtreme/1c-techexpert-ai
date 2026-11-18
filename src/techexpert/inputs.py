@@ -116,7 +116,7 @@ def runtime_profile(spec):
 
 def _schema2_source(spec):
     allowed={'path','format','platform_version','encoding','placement','timestamp_format','read_mode','context','collection',
-             'utc_offset','file_hour','rotation_hours'}
+             'utc_offset','file_hour','rotation_hours','external_window'}
     if set(spec)-allowed:raise InputError('unsupported schema=2 native TJ source fields')
     path=spec.get('path')
     if not isinstance(path,str) or not path or '\x00' in path:raise InputError('source path required')
@@ -125,6 +125,11 @@ def _schema2_source(spec):
         or mode=='minute' and 'utc_offset' in spec):raise InputError('native TJ time fields conflict with timestamp_format')
     validate_profile(spec,path)
     if spec.get('read_mode','stable') not in ('stable','tj-prefix-v1'):raise InputError('unsupported source read mode')
+    if 'external_window' in spec:
+        if spec.get('read_mode','stable') != 'stable':
+            raise InputError('external_window requires a stable file, without live prefix mode')
+        from .tj_reference import window_spec
+        window_spec(spec['external_window'])
     context=spec.get('context',{})
     if (not isinstance(context,dict) or set(context)-{'node','process','epoch'}
         or any(not isinstance(v,str) or not 1<=len(v)<=256 for v in context.values())):
@@ -160,7 +165,7 @@ def _manifest_profile(manifest,*,tolerant_sources=False):
         for source in sources:_schema2_source(source)
 
 
-def load_manifest(path,*,tolerant_sources=False):
+def read_manifest(path, *, tolerant_sources=False):
     path = Path(path).resolve()
     try:
         raw = read_snapshot(path, 1024 * 1024)
@@ -168,6 +173,11 @@ def load_manifest(path,*,tolerant_sources=False):
     except (OSError, UnicodeError, ValueError) as exc:
         raise InputError(f'Cannot read case manifest: {exc}') from exc
     _manifest_profile(manifest,tolerant_sources=tolerant_sources)
+    return path, raw, manifest
+
+
+def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, reference_state=None, should_stop=None):
+    path, raw, manifest = read_manifest(path, tolerant_sources=tolerant_sources)
     from .source_coverage import validate_collection
     selection = manifest.get('selection')
     correlation=manifest.get('correlation_profile')
@@ -185,6 +195,21 @@ def load_manifest(path,*,tolerant_sources=False):
     specs = manifest.get('sources')
     if not isinstance(specs, list) or not 1 <= len(specs) <= 32:
         raise InputError('sources must contain 1..32 explicit files')
+    references = {}
+    has_reference = any(type(spec) is dict and 'external_window' in spec for spec in specs)
+    if has_reference and manifest['schema'] != 2:
+        raise InputError('external_window requires the native TJ schema=2 manifest')
+    if has_reference and not tolerant_sources:
+        from . import tj_reference
+        from .operation_state import digest as plan_digest
+        if not isinstance(reference_sha256, str) or not re.fullmatch('[a-f0-9]{64}', reference_sha256) or reference_state is None:
+            raise InputError('external TJ requires an approved reference preview before capture')
+        reference_review = tj_reference.build_review(path, raw, manifest, reference_state)
+        if plan_digest(reference_review) != reference_sha256:
+            raise InputError('reference preview changed; inspect the current file and storage plan')
+        references = {item['id']: item for item in reference_review['sources']}
+    elif reference_sha256 is not None:
+        raise InputError('reference preview can only be used with an external TJ capture')
     events, native_events, sources, limits, seen, total = [], [], [], [], {}, 0
     lifecycle_documents=[]
     attempts=[];seen_ids={}
@@ -233,6 +258,9 @@ def load_manifest(path,*,tolerant_sources=False):
             if not tolerant_sources:raise
             attempt['availability']='unsupported_profile'
             continue
+        if 'external_window' in spec and tolerant_sources:
+            attempt.update(availability='reference_review_required', next_action='tj-reference-plan')
+            continue
         context = spec.get('context', {})
         if (not isinstance(context, dict) or set(context) - {'node', 'process', 'epoch'} or
                 any(not isinstance(v, str) or not 1 <= len(v) <= 256 for v in context.values())):
@@ -240,13 +268,14 @@ def load_manifest(path,*,tolerant_sources=False):
                 attempt['availability']='unsupported_profile'
                 continue
             raise InputError('source context supports bounded node, process and epoch labels')
-        try:source_path=source_path.absolute() if read_mode=='tj-prefix-v1' else source_path.resolve()
+        reference = references.get(source_id)
+        try:source_path=Path(reference['path']) if reference else source_path.absolute() if read_mode=='tj-prefix-v1' else source_path.resolve()
         except (OSError,ValueError) as exc:
             attempt['availability']='access_denied' if isinstance(exc,PermissionError) else 'read_error'
             limits.append(dict(code='source_unavailable',source=source_id,detail=str(exc)))
             continue
         identity = os.path.normcase(str(source_path))
-        interpretation = (spec['format'], profile, job_profile, context,collection,read_mode)
+        interpretation = (spec['format'], profile, job_profile, context,collection,read_mode,spec.get('external_window'))
         if identity in seen:
             if seen[identity] != interpretation:
                 if tolerant_sources:
@@ -257,15 +286,20 @@ def load_manifest(path,*,tolerant_sources=False):
             continue
         seen[identity] = interpretation
         seen_ids[identity]=source_id
+        acquisition = reference_capture = None
         try:
-            acquisition=None
             maximum=min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total)
-            if read_mode=='tj-prefix-v1':
+            if reference:
+                data, reference_capture = tj_reference.capture(source_path, reference, profile, max_retained=maximum,
+                                                                max_records=MAX_EVENTS - records_seen, should_stop=should_stop)
+            elif read_mode=='tj-prefix-v1':
                 from .tj_capture import read_prefix
                 data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen))
             else:data = read_snapshot(source_path,maximum)
             total += len(data)
         except (OSError, InputError) as exc:
+            if reference:
+                raise
             attempt['availability']=('not_found' if isinstance(exc,FileNotFoundError) else 'access_denied' if isinstance(exc,PermissionError)
                 else exc.code if isinstance(exc,SnapshotReadError) else 'read_error')
             limits.append(dict(code='source_unavailable', source=source_id, detail=str(exc)))
@@ -275,6 +309,10 @@ def load_manifest(path,*,tolerant_sources=False):
         source = dict(id=source_id, path=str(source_path), sha256=digest, size=len(data),
                       format=spec['format'], data=data,collection=collection)
         if acquisition is not None:source['acquisition']=acquisition
+        if reference_capture is not None:
+            source['reference_capture'] = reference_capture
+            limits.append(dict(code='external_tj_window_only', source=source_id,
+                detail='Retained records are from the selected recorded-time window of one observed external file. Collection coverage is unknown.'))
         sources.append(source)
         if is_runtime or is_auxiliary:
             source['evidence']=dict(id=f'{source_id}:1',source=source_id,sha256=digest,line=1,
@@ -312,16 +350,17 @@ def load_manifest(path,*,tolerant_sources=False):
                                             platform_utc_offset=job_profile['platform_utc_offset']))
             continue
         if profile is not None:
-            parsed = parse_tj(data, profile, max_records=max(0, MAX_EVENTS-records_seen),
-                              max_record_bytes=MAX_RECORD_BYTES)
-            records_seen += parsed['records_seen']
+            from .observations import with_evidence
+            budget = reference_capture['selected_records'] if reference_capture is not None else max(0, MAX_EVENTS - records_seen)
+            parsed = parse_tj(data, profile, max_records=budget, max_record_bytes=MAX_RECORD_BYTES)
+            if reference_capture is not None and len(parsed['records']) != budget:
+                raise InputError('retained external TJ window does not match its capture')
+            records_seen += reference_capture['records_scanned'] if reference_capture is not None else parsed['records_seen']
             source.update(profile=profile, declared_context=context, context_status='user_declared_not_verified',
                           parse_status=parsed['status'], parsed_event_count=len(parsed['records']),
-                          record_budget=max(0, MAX_EVENTS-(records_seen-parsed['records_seen'])))
+                          record_budget=budget)
             for record in parsed['records']:
-                record['evidence'] = dict(id=f"{source_id}:{record['line']}", source=source_id,
-                    sha256=digest, **{k: record[k] for k in ('line','end_line','byte_start','byte_end')})
-                native_events.append(record)
+                native_events.append(with_evidence(record, source))
             limits.extend(dict(issue, source=source_id) for issue in parsed['limitations'])
             continue
         for number, line in enumerate(io.BytesIO(data), 1):

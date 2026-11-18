@@ -31,7 +31,187 @@ def write_manifest(root, sources):
     return path
 
 
+def write_reference_manifest(root, source, window):
+    path = root / 'case.json'
+    path.write_text(json.dumps(dict(schema=2, origin='provided',
+        sources=[dict(native_spec(source), external_window=window)])), encoding='utf-8')
+    return path
+
+
 class NativeIntegrationTests(unittest.TestCase):
+    def test_external_window_keeps_only_complete_selected_records_and_original_positions(self):
+        from hashlib import sha256
+        from src.techexpert.source_coverage import inspect_case
+        from src.techexpert.storage import list_native_events
+        from src.techexpert.tj_reference import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state'
+            source = root / '26111509.log'
+            before = b'\xef\xbb\xbf' + b'00:02.000000-1,CALL,1,Text="before\n45:02.000000-1,EXCP,1,Text=inside-quote"\n'
+            selected = NATIVE.encode('utf-8')
+            between = b'32:00.000000-4,SCALL,1\n'
+            later = b'45:30.000000-3,EXCP,1\r\n'
+            after = b'46:00.000000-2,CALL,1\n'
+            data = before + selected + between + later + after
+            source.write_bytes(data)
+            window = dict(start='2026-11-15T09:45:00+03:00', end='2026-11-15T09:46:00+03:00', max_retained_bytes=4096)
+            manifest = write_reference_manifest(root, source, window)
+            reviewed = plan(manifest, state)
+            self.assertEqual(reviewed['plan']['external_bytes'], len(data))
+            self.assertEqual(reviewed['plan']['max_retained_bytes'], 4096)
+            self.assertEqual(reviewed['plan']['state_dir'], str(state))
+            self.assertFalse(state.exists())
+            result = investigate(manifest, state, reference_sha256=reviewed['plan_sha256'])
+            self.assertEqual(result['native_observations']['by_event'], {'CALL': 1, 'EXCP': 1})
+            saved = result['sources'][0]
+            capture = saved['reference_capture']
+            self.assertEqual(capture['original_sha256'], sha256(data).hexdigest())
+            self.assertEqual(capture['original_bytes'], len(data))
+            self.assertEqual(capture['window'], dict(start='2026-11-15T06:45:00+00:00', end='2026-11-15T06:46:00+00:00'))
+            self.assertEqual(saved['size'], len(selected) + len(later))
+            self.assertEqual((state / 'cases' / result['case_id'] / 'sources' / 's1.bin').read_bytes(), selected + later)
+            source.rename(root / 'rotated.log')
+            proof = read_evidence(state, result['case_id'], 's1:3')
+            self.assertEqual(proof['original_location']['byte_start'], len(before + selected + between))
+            self.assertEqual(proof['original_location']['byte_end'], len(data) - len(after))
+            view = list_native_events(state, result['case_id'])
+            self.assertEqual(view['records'][1]['evidence']['original_location'], proof['original_location'])
+            self.assertEqual(view['reference_windows'][0]['window'], capture['window'])
+            coverage = inspect_case(state, result['case_id'])
+            self.assertTrue(coverage['native_snapshot_integrity_verified'])
+            self.assertEqual(coverage['sources'][0]['reference_window']['window'], capture['window'])
+            self.assertEqual(coverage['sources'][0]['continuity'], 'unknown')
+
+    def test_reference_requires_a_current_preview_and_never_runs_from_ordinary_source_check(self):
+        from src.techexpert.source_coverage import inspect_manifest
+        from src.techexpert.tj_reference import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state'
+            source = root / '26111509.log'
+            source.write_bytes(NATIVE.encode('utf-8'))
+            window = dict(start='2026-11-15T09:45:00+03:00', end='2026-11-15T10:00:00+03:00', max_retained_bytes=4096)
+            manifest = write_reference_manifest(root, source, window)
+            review = plan(manifest, state)
+            with patch('src.techexpert.tj_reference.capture', side_effect=AssertionError('unreviewed capture')):
+                with self.assertRaisesRegex(InputError, 'reference preview'):
+                    investigate(manifest, state)
+                coverage = inspect_manifest(manifest)
+                self.assertEqual(coverage['sources'][0]['availability'], 'reference_review_required')
+                with source.open('ab') as stream:
+                    stream.write(b'47:00.000000-0,CALL,0\n')
+                with self.assertRaisesRegex(InputError, 'reference preview changed'):
+                    investigate(manifest, state, reference_sha256=review['plan_sha256'])
+            self.assertFalse(state.exists())
+
+    def test_reference_refuses_a_changed_second_read_and_an_oversized_selection(self):
+        from src.techexpert import tj_reference
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state'
+            source = root / '26111509.log'
+            source.write_bytes(NATIVE.encode('utf-8'))
+            window = dict(start='2026-11-15T09:45:00+03:00', end='2026-11-15T10:00:00+03:00', max_retained_bytes=20)
+            manifest = write_reference_manifest(root, source, window)
+            review = tj_reference.plan(manifest, state)
+            with self.assertRaisesRegex(InputError, 'exceeds the retained byte limit'):
+                investigate(manifest, state, reference_sha256=review['plan_sha256'])
+            window['max_retained_bytes'] = 4096
+            write_reference_manifest(root, source, window)
+            review = tj_reference.plan(manifest, state)
+            open_source = tj_reference._open
+
+            class DivergingRead:
+                def __init__(self, path):
+                    self.file = open_source(path)
+                    self.repeated = False
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *args):
+                    self.file.close()
+
+                def fileno(self):
+                    return self.file.fileno()
+
+                def seek(self, offset):
+                    self.repeated = True
+                    return self.file.seek(offset)
+
+                def read(self, size):
+                    value = self.file.read(size)
+                    return (b'X' + value[1:]) if self.repeated and value else value
+
+            with patch.object(tj_reference, '_open', side_effect=DivergingRead):
+                with self.assertRaisesRegex(InputError, 'contents changed during the repeated observation'):
+                    investigate(manifest, state, reference_sha256=review['plan_sha256'])
+            self.assertFalse(state.exists())
+
+    def test_reference_compares_path_and_handle_change_times_within_their_own_observations(self):
+        from src.techexpert import tj_reference
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state'
+            source = root / '26111509.log'
+            source.write_bytes(NATIVE.encode('utf-8'))
+            window = dict(start='2026-11-15T09:45:00+03:00', end='2026-11-15T10:00:00+03:00', max_retained_bytes=4096)
+            manifest = write_reference_manifest(root, source, window)
+            observed = tj_reference._path_state(source)
+            different_path_ctime = dict(observed, ctime_ns=str(int(observed['ctime_ns'])-1))
+            with patch.object(tj_reference, '_path_state', return_value=different_path_ctime):
+                digest = tj_reference.plan(manifest, state)['plan_sha256']
+                report = investigate(manifest, state, reference_sha256=digest)
+            self.assertEqual(report['sources'][0]['reference_capture']['selected_records'], 1)
+
+    def test_managed_reference_is_an_explicit_grant_and_replays_after_rotation(self):
+        from src.techexpert import capabilities, code_policy, operations
+        from src.techexpert.code_values import CodeError
+        from src.techexpert.tj_reference import plan
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state = root / 'state'
+            source = root / '26111509.log'
+            source.write_bytes(NATIVE.encode('utf-8'))
+            window = dict(start='2026-11-15T09:45:00+03:00', end='2026-11-15T10:00:00+03:00', max_retained_bytes=4096)
+            manifest = write_reference_manifest(root, source, window)
+            digest = plan(manifest, state)['plan_sha256']
+            prepared = operations.run(state, dict(schema_version=1, operation='source.check', executor_id='reference-test',
+                operation_key='preview-reference', arguments=dict(manifest=str(manifest), reference_preview=True)))
+            self.assertEqual(prepared['data']['reference_preview']['plan_sha256'], digest)
+            self.assertFalse(prepared['data']['reference_preview']['source_bytes_read'])
+            args = dict(manifest=str(manifest), reference_sha256=digest)
+            operation = dict(schema_version=1, operation='case.analyze', executor_id='reference-test',
+                             operation_key='reviewed-reference', arguments=args)
+            program = dict(schema_version=1, operation='code.execute', executor_id='reference-test',
+                           operation_key='reference-grant', arguments=dict(program='return 0',
+                               scope=dict(operations=['case.analyze'], manifests=[str(manifest)])))
+            scope = capabilities.normalize_request(program)['arguments']['scope']
+            with self.assertRaisesRegex(CodeError, 'External TJ review'):
+                code_policy.Scope(scope, ['case.analyze']).authorize('case.analyze', args)
+            program['arguments']['scope']['reference_reviews'] = [dict(manifest=str(manifest), sha256=digest)]
+            granted = capabilities.normalize_request(program)['arguments']['scope']
+            code_policy.Scope(granted, ['case.analyze']).authorize('case.analyze', args)
+            program['arguments'].update(program='return api("case.analyze", selected)["data"]["case_id"]',
+                                        bindings=dict(selected=args))
+            from_program = operations.run(state, program)
+            self.assertEqual(from_program['status'], 'succeeded', from_program)
+            self.assertEqual(load_case(state, from_program['data']['value'])['reference_plan_sha256'], digest)
+            first = operations.run(state, operation)
+            self.assertEqual(first['status'], 'succeeded', first)
+            self.assertEqual(first['data']['reference_plan_sha256'], digest)
+            source.rename(root / 'rotated.log')
+            manifest.rename(root / 'stored-request.json')
+            replay = operations.run(state, operation)
+            self.assertTrue(replay['replayed'])
+            self.assertEqual(replay['data'], first['data'])
+
     def test_native_call_is_observation_not_whole_background_job(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

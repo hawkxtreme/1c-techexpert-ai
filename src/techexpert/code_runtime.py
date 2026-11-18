@@ -182,7 +182,7 @@ class Runtime:
             if index>self.resources['max_calls']:raise CodeError('call_limit','The program API-call budget was reached.')
             if operation not in capabilities.CODE_API or operation not in self.scope.operations:raise CodeError('scope_denied','Operation is outside the approved API scope.')
             remaining=self.resources['max_api_bytes']-self.metrics['api_response_bytes']
-            seconds=min(capabilities.ROUTES[operation]['timeout_seconds'],self.deadline-time.monotonic())
+            seconds=min(capabilities.timeout_limit(operation,arguments),self.deadline-time.monotonic())
             if remaining<16384:raise CodeError('api_byte_limit','The cumulative API-result byte budget was reached.')
             if seconds<.1:raise CodeError('timeout','No program time remains for a new API job.')
             request=dict(schema_version=1,operation_key='code-'+self.folder.name+'-'+str(index),executor_id=self.plan['request']['executor_id'],

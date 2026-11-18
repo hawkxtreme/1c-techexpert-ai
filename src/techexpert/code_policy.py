@@ -19,6 +19,7 @@ def schemas(cap,api_operations):
         cases=cap.array(cap.CASE,100),artifacts=cap.array(cap.CASE,100),comparisons=cap.array(cap.CASE,100),
         investigations=cap.array(cap.obj(dict(id=cap.CASE,revision=cap.integer(1,1000,1)),['id','revision']),100),
         manifests=cap.array(cap.FILE,64),measurements=cap.array(cap.FILE,64),
+        reference_reviews=dict(type='array', maxItems=64, items=cap.obj(dict(manifest=cap.FILE,sha256=cap.SHA256),['manifest','sha256'])),
         collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8),
         intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap),**logcfg_schemas(cap),**remote_schemas(cap)))
     return dict(program=dict(type='string',minLength=1,maxLength=65536,x_multiline=True),
@@ -41,6 +42,7 @@ def normalize(arguments):
     properties=cap.ROUTES['code.execute']['input_schema']['properties']
     for field in ('scope','resources'):result[field]=cap.validate(result[field],properties[field])
     for field in ('manifests','measurements','client_episodes'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
+    for item in result['scope'].get('reference_reviews', []):item['manifest']=str(Path(item['manifest']).absolute())
     from .input_files import normalize as intake_request
     for profile in result['scope']['intakes']:profile['settings']=intake_request(profile['settings']['inputs'],profile['settings']['limits'])
     for profile in result['scope']['collectors']:
@@ -173,6 +175,10 @@ class Scope:
             field='measurements' if operation=='os.import' else 'manifests'
             key=path_key(arguments['measurements' if operation=='os.import' else 'manifest'])
             if key not in {path_key(p) for p in self.value[field]}:raise CodeError('scope_denied','Input path is outside the caller-selected source scope.')
+            if operation=='case.analyze' and 'reference_sha256' in arguments:
+                if not any(path_key(item['manifest']) == key and item['sha256'] == arguments['reference_sha256']
+                           for item in self.value.get('reference_reviews', [])):
+                    raise CodeError('scope_denied','External TJ review is outside the caller-selected source scope.')
             if operation!='source.check':
                 identity=import_key(arguments['measurements']) if operation=='os.import' else (operation,key)
                 if identity in self.imported:raise CodeError('scope_denied','Repeated import requires a separately reviewed plan, not an automatic new run.')

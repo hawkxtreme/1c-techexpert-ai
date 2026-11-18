@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 FORMAT = '1c-tj-text-v1'
 PLATFORM_VERSION = '8.3.27.1989'
 MAX_INPUT_BYTES = 16 * 1024 * 1024
+MAX_REFERENCE_SCAN_BYTES = 256 * 1024 * 1024
 MAX_RECORDS = 100_000
 MAX_RECORD_BYTES = 16 * 1024 * 1024
 BOM = b'\xef\xbb\xbf'
@@ -151,14 +152,15 @@ def _record(text, profile):
 
 
 class _TJScan:
-    def __init__(self,stream,profile,max_records,max_record_bytes,chunk_size):
+    def __init__(self,stream,profile,max_records,max_record_bytes,chunk_size,max_input_bytes):
         from .native_tj_stream import Frames,MAX_CHUNK_BYTES
         if type(max_records) is not int or not 0<=max_records<=MAX_RECORDS:raise ValueError('max_records must be an integer from 0 through 100000')
         if type(max_record_bytes) is not int or not 1<=max_record_bytes<=MAX_RECORD_BYTES:raise ValueError('max_record_bytes must be an integer from 1 through 16777216')
         if type(chunk_size) is not int or not 1<=chunk_size<=MAX_CHUNK_BYTES:raise ValueError('chunk_size must be an integer from 1 through 65536')
+        if type(max_input_bytes) is not int or not 1<=max_input_bytes<=MAX_REFERENCE_SCAN_BYTES:raise ValueError('TJ scan byte limit is outside supported bounds')
         if not callable(getattr(stream,'read',None)):raise ValueError('TJ input requires a binary stream')
         self.profile=validate_profile(profile,'');self.max_records=max_records;self.max_record_bytes=max_record_bytes
-        self.frames=Frames(stream,chunk_size=chunk_size,max_input_bytes=MAX_INPUT_BYTES,max_record_bytes=max_record_bytes)
+        self.frames=Frames(stream,chunk_size=chunk_size,max_input_bytes=max_input_bytes,max_record_bytes=max_record_bytes)
         self.records_seen=0;self.accepted=0;self.limitations=[];self.omitted=0;self.omitted_by_code={}
         self.raw_record=None;self._summary=None;self._iterator=self._scan()
 
@@ -203,20 +205,21 @@ class _TJScan:
         finally:frames.close()
         self.frames.finish();self.raw_record=None
         if cursor<self.frames.scan_size:self.limited('record_limit','Record-attempt budget reached; remaining bytes were not parsed.',byte_start=cursor)
-        if self.frames.seen>MAX_INPUT_BYTES:self.limited('input_byte_limit','Input exceeds the 16 MiB adapter scan limit.',byte_start=MAX_INPUT_BYTES)
+        if self.frames.seen>self.frames.limit:self.limited('input_byte_limit','Input exceeds the adapter scan byte limit.',byte_start=self.frames.limit)
         if self.omitted:self.limitations.append(dict(code='additional_limitations',count=self.omitted,counts_by_code=self.omitted_by_code,message='Additional limitation details were omitted.'))
         status=('empty' if self.frames.seen==self.frames.start else 'not_parsed' if not self.records_seen else 'invalid' if not self.accepted else 'partial' if self.limitations else 'parsed')
         self._summary=dict(limitations=self.limitations,records_seen=self.records_seen,status=status)
 
 
-def iter_tj(stream,profile,max_records=100000,max_record_bytes=262144,*,chunk_size=65536):
+def iter_tj(stream,profile,max_records=100000,max_record_bytes=262144,*,chunk_size=65536,max_input_bytes=None):
     """Yield bounded native observations; summary is final only after exhaustion.
 
     The caller owns the binary stream and source integrity verification. A scan
-    reads at most the existing16MiB input budget plus one lookahead byte. Raw
+    reads at most the explicit input budget plus one lookahead byte. Raw
     evidence for the current accepted record is available as raw_record.
     """
-    return _TJScan(stream,profile,max_records,max_record_bytes,chunk_size)
+    limit = MAX_INPUT_BYTES if max_input_bytes is None else max_input_bytes
+    return _TJScan(stream,profile,max_records,max_record_bytes,chunk_size,limit)
 
 
 def parse_tj(data,profile,max_records=100000,max_record_bytes=262144):

@@ -160,6 +160,30 @@ class UpdateTests(unittest.TestCase):
                                  report_retirement_schemas=package['report_retirement_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 
+    def test_saved_reference_window_requires_a_reader_that_preserves_the_selection(self):
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.storage import investigate
+        from src.techexpert.tj_reference import plan
+        from src.techexpert.update_state import inspect_state, supports
+
+        package = read_package(self.bundle)
+        self.assertTrue(supports(package['metadata'], inspect_state(self.state)['schemata']))
+        source = self.root / 'outside.log'
+        source.write_bytes(b'2026-11-15T09:04:00.000000-1,CALL,0\n')
+        manifest = self.root / 'request.json'
+        spec = dict(path=str(source), format='1c-tj-text-v1', platform_version='8.3.27.1989',
+                    encoding='utf-8', placement='plain', timestamp_format='iso', utc_offset='+00:00',
+                    external_window=dict(start='2026-11-15T09:00:00Z', end='2026-11-15T09:05:00Z', max_retained_bytes=4096))
+        manifest.write_text(json.dumps(dict(schema=2, origin='provided', sources=[spec])), encoding='utf-8')
+        receipt = plan(manifest, self.state)
+        investigate(manifest, self.state, reference_sha256=receipt['plan_sha256'])
+        source.rename(self.root / 'rotated.log')
+        seen = inspect_state(self.state)
+        self.assertEqual(seen['schemata']['tj-reference-windows'], [1])
+        self.assertFalse(supports(package['metadata'], seen['schemata']))
+        self.assertTrue(supports(package['metadata'], seen['schemata'], tj_reference_schemas=package['tj_reference_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

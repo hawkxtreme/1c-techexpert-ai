@@ -51,6 +51,8 @@ def main(argv=None):
     commands.add_parser('demo')
     analyze = commands.add_parser('analyze')
     analyze.add_argument('manifest', type=Path)
+    analyze.add_argument('--reference-sha256')
+    commands.add_parser('tj-reference-plan', help='review a local external TJ window without reading its records').add_argument('manifest',type=Path)
     show = commands.add_parser('show')
     show.add_argument('case_id')
     for operation in ('source-check','coverage'):
@@ -298,7 +300,10 @@ def main(argv=None):
             if args.command=='demo':
                 from .readiness import run_demo
                 result=run_demo(args.state_dir)
-            else:result=investigate(args.manifest,args.state_dir)
+            else:result=investigate(args.manifest,args.state_dir,reference_sha256=args.reference_sha256)
+        elif args.command=='tj-reference-plan':
+            from .tj_reference import plan
+            result=plan(args.manifest,args.state_dir)
         elif args.command == 'show':
             result = load_case(args.state_dir, args.case_id)
             from .knowledge_review import review_legacy_report
