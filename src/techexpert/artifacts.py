@@ -30,12 +30,16 @@ def _file_name(value):
     return value
 
 
+def source_name(source):
+    if type(source) is not dict or not re.fullmatch(r's(?:[1-9]|[12][0-9]|3[0-2])',str(source.get('id',''))):
+        raise InputError('invalid artifact source identity')
+    return _file_name(source.get('file_name',source['id']+'.bin'))
+
+
 def source_path(folder, source):
     """Resolve a sealed leaf, never an original input path or supplied directory."""
     from .operation_state import safe
-    if type(source) is not dict or not re.fullmatch(r's(?:[1-9]|[12][0-9]|3[0-2])',str(source.get('id',''))):
-        raise InputError('invalid artifact source identity')
-    return safe(Path(folder)/'sources'/_file_name(source.get('file_name',source['id']+'.bin')))
+    return safe(Path(folder)/'sources'/source_name(source))
 
 
 def save_artifact(state_dir, kind, request, sources, result, *, input_intake=None, source_names=None):
@@ -79,16 +83,18 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
     return report
 
 
-def load_artifact(state_dir,artifact_id):
+def read_artifact_record(state_dir,artifact_id):
+    """Check the saved report and request receipts. Source bytes are separate."""
     folder=artifact_folder(state_dir,artifact_id)
     receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'),reject_duplicates=True)
+    if type(receipt) is not dict:raise InputError('invalid saved artifact receipt')
     report_data=read_snapshot(folder/'report.json',MAX_REPORT_BYTES)
     request_data=read_snapshot(folder/'request.json',1024*1024)
     for name,data in (('report',report_data),('request',request_data)):
         if hashlib.sha256(data).hexdigest()!=receipt.get(name+'_sha256'):
             raise InputError('saved artifact '+name+' integrity mismatch')
     report=json_value(report_data.decode('utf-8'),reject_duplicates=True)
-    if report.get('schema_version') not in (1,2) or report.get('artifact_id')!=artifact_id:
+    if type(report) is not dict or report.get('schema_version') not in (1,2) or report.get('artifact_id')!=artifact_id:
         raise InputError('unsupported artifact schema')
     evidence=report.get('sources')
     if not isinstance(evidence,list) or len(evidence)>32:raise InputError('invalid artifact evidence')
@@ -96,12 +102,23 @@ def load_artifact(state_dir,artifact_id):
     for i,source in enumerate(evidence,1):
         if type(source) is not dict or source.get('id')!=f's{i}':raise InputError('invalid artifact evidence identity')
         if ('file_name' in source)!=(report['schema_version']==2):raise InputError('invalid artifact source schema')
-        path=source_path(folder,source)
-        if path.name.casefold() in names:raise InputError('duplicate artifact source file name')
-        names.add(path.name.casefold())
-        data=read_snapshot(path)
-        total+=len(data)
-        if total>MAX_TOTAL_BYTES or len(data)!=source.get('bytes') or hashlib.sha256(data).hexdigest()!=source.get('sha256'):
+        name=source_name(source).casefold()
+        if name in names:raise InputError('duplicate artifact source file name')
+        names.add(name)
+        size=source.get('bytes');sha256=source.get('sha256')
+        if type(size) is not int or not 0<=size<=MAX_FILE_BYTES or not isinstance(sha256,str) or not re.fullmatch('[a-f0-9]{64}',sha256):
+            raise InputError('invalid artifact source metadata')
+        total+=size
+        if total>MAX_TOTAL_BYTES:raise InputError('invalid artifact source byte total')
+    return report,receipt['report_sha256']
+
+
+def load_artifact(state_dir,artifact_id):
+    report,_=read_artifact_record(state_dir,artifact_id)
+    folder=artifact_folder(state_dir,artifact_id)
+    for source in report['sources']:
+        data=read_snapshot(source_path(folder,source))
+        if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:
             raise InputError('saved artifact evidence integrity mismatch')
     return report
 

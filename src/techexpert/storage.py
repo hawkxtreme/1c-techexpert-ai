@@ -181,7 +181,7 @@ def load_case(state_dir, case_id, *, with_digest=False):
         if hashlib.sha256(read_snapshot(folder / 'manifest.json', 1024*1024)).hexdigest() != receipt['manifest_sha256']:
             raise InputError('saved manifest integrity mismatch')
         report = json_value(report_data.decode('utf-8'))
-        if report.get('schema_version') != 1 or report.get('case_id') != case_id:
+        if type(report) is not dict or report.get('schema_version') != 1 or report.get('case_id') != case_id:
             raise InputError('unsupported saved case schema')
         return (report, hashlib.sha256(report_data).hexdigest()) if with_digest else report
     except (OSError, KeyError, ValueError, TypeError) as exc:
@@ -330,16 +330,23 @@ def compare_cases(state_dir, before_ids, after_ids, *, output_state_dir=None):
     return report
 
 
-def load_comparison(state_dir, comparison_id, *, input_state_dir=None):
+def read_comparison_record(state_dir, comparison_id):
+    """Check the saved comparison receipt independently of its input cases."""
     folder=comparison_folder(state_dir,comparison_id)
     receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'))
+    if type(receipt) is not dict:raise InputError('invalid saved comparison receipt')
     data=read_snapshot(folder/'report.json',MAX_REPORT_BYTES)
     if (hashlib.sha256(data).hexdigest()!=receipt['report_sha256'] or
             hashlib.sha256(read_snapshot(folder/'report.md',MAX_REPORT_BYTES)).hexdigest()!=receipt['markdown_sha256']):
         raise InputError('saved comparison integrity mismatch')
     report=json_value(data.decode('utf-8'))
-    if report.get('schema_version')!=1 or report.get('comparison_id')!=comparison_id:
+    if type(report) is not dict or report.get('schema_version')!=1 or report.get('comparison_id')!=comparison_id:
         raise InputError('unsupported saved comparison')
+    return report,receipt['report_sha256']
+
+
+def load_comparison(state_dir, comparison_id, *, input_state_dir=None):
+    report,_=read_comparison_record(state_dir,comparison_id)
     for item in report['input_reports']:
         _,digest=verified_case(state_dir if input_state_dir is None else input_state_dir,item['case_id'],with_digest=True)
         if digest!=item['sha256']:

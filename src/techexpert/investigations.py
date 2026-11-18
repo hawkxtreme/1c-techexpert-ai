@@ -368,24 +368,38 @@ def _persist(state_dir,doc):
 def _read_revision(state_dir,iid,revision):
     folder=revision_folder(state_dir,iid,revision)
     receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'),reject_duplicates=True)
+    if type(receipt) is not dict:raise InputError('invalid saved investigation receipt')
     data=read_snapshot(folder/'report.json',MAX_DOCUMENT);markdown=read_snapshot(folder/'report.md',MAX_DOCUMENT)
     if hashlib.sha256(data).hexdigest()!=receipt.get('report_sha256') or hashlib.sha256(markdown).hexdigest()!=receipt.get('markdown_sha256'):raise InputError('investigation report integrity mismatch')
     doc=json_value(data.decode('utf-8'),reject_duplicates=True)
-    if type(doc.get('schema_version')) is not int or doc['schema_version'] not in (1,2) or doc.get('investigation_id')!=iid or doc.get('revision')!=revision:raise InputError('unsupported investigation schema or identity')
+    if type(doc) is not dict or type(doc.get('schema_version')) is not int or doc['schema_version'] not in (1,2) or doc.get('investigation_id')!=iid or doc.get('revision')!=revision:raise InputError('unsupported investigation schema or identity')
     return doc,receipt
 
-def load(state_dir,investigation_id,*,revision=None):
+def _read_head(state_dir, investigation_id):
     first=revision_folder(state_dir,investigation_id,1).parent.parent
-    head=json_value(read_snapshot(first/'head.json',8192).decode('utf-8'),reject_duplicates=True)
+    return json_value(read_snapshot(first/'head.json',8192).decode('utf-8'),reject_duplicates=True)
+
+
+def _revision_chain(state_dir, investigation_id, head, revision):
+    if type(head) is not dict or type(head.get('revision')) is not int:raise InputError('invalid investigation head')
     selected=head['revision'] if revision is None else revision
-    if type(head.get('revision')) is not int or type(selected) is not int or selected>head['revision']:raise InputError('investigation revision not committed')
-    doc,receipt=_read_revision(state_dir,investigation_id,selected)
-    if selected==head['revision'] and receipt['report_sha256']!=head.get('report_sha256'):raise InputError('investigation head integrity mismatch')
-    current=doc
-    for number in range(selected-1,0,-1):
-        parent,_=_read_revision(state_dir,investigation_id,number)
-        if current.get('parent_sha256')!=_digest(parent):raise InputError('investigation history integrity mismatch')
-        current=parent
+    if type(selected) is not int or selected>head['revision']:raise InputError('investigation revision not committed')
+    revision_folder(state_dir, investigation_id, selected)
+    expected_parent=None
+    for number in range(selected,0,-1):
+        current,receipt=_read_revision(state_dir,investigation_id,number)
+        if number==head['revision'] and receipt['report_sha256']!=head.get('report_sha256'):raise InputError('investigation head integrity mismatch')
+        if number!=selected and expected_parent!=_digest(current):raise InputError('investigation history integrity mismatch')
+        expected_parent=current.get('parent_sha256')
+        yield current
+
+
+def load(state_dir,investigation_id,*,revision=None):
+    head=_read_head(state_dir,investigation_id)
+    chain=_revision_chain(state_dir,investigation_id,head,revision)
+    doc=next(chain)
+    for _ in chain:
+        pass
     original=_digest(doc);_validate(state_dir,doc)
     if _digest(doc)!=original:raise InputError('investigation computed fields integrity mismatch')
     return doc

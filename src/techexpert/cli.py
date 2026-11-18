@@ -166,6 +166,13 @@ def main(argv=None):
     template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'))
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
+    materials=commands.add_parser('investigation-materials',help='view retained files and evidence links for an investigation')
+    materials.add_argument('investigation_id')
+    materials.add_argument('--revision',type=int)
+    from .investigation_materials import CATEGORIES
+    materials.add_argument('--category',choices=CATEGORIES)
+    materials.add_argument('--offset',type=int,default=0)
+    materials.add_argument('--limit',type=int,default=60)
     source_context=commands.add_parser('source-context');source_context.add_argument('investigation_id');source_context.add_argument('--revision',type=int,required=True)
     investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
     investigation_update.add_argument('patch',type=Path);investigation_update.add_argument('--expected-revision',type=int,required=True)
@@ -370,6 +377,10 @@ def main(argv=None):
         elif args.command=='source-context':
             from .investigations import source_context
             result=source_context(args.state_dir,args.investigation_id,revision=args.revision)
+        elif args.command=='investigation-materials':
+            from .investigation_materials import view
+            result=view(args.state_dir,args.investigation_id,revision=args.revision,
+                        category=args.category,offset=args.offset,limit=args.limit)
         elif args.command in ('investigation-create','investigation-update','investigation'):
             from .investigations import create,revise,load,revision_folder
             from .inputs import read_snapshot,json_value
