@@ -41,13 +41,16 @@ def main(folder,memory_bytes):
         time.sleep(.01)
     permit=fs.read(directory/'start-permit.json',8192)
     if permit.get('plan_sha256')!=fs.digest(plan) or permit.get('child')!=fs.process_identity(os.getpid()):raise InputError('kernel permit process identity mismatch')
-    from . import capabilities,operations,kernel
+    from . import capabilities,operations,kernel,context_intake
     started=time.monotonic();admitted_at=started;response_limit=kernel.MAX_RESPONSE;run_id=None
+    request=None
     try:
         action=plan['action'];args=kernel._arguments(action,plan['arguments']);request=None;run_id=args.get('run_id')
         timeout=plan['limits']['query_seconds']
-        if action=='run':
-            request=capabilities.normalize_request(json_value(read_snapshot(args['request'],128*1024).decode('utf-8-sig'),reject_duplicates=True))
+        if action in kernel._RUN_ACTIONS:
+            raw=json_value(read_snapshot(args['request'],128*1024).decode('utf-8-sig'),reject_duplicates=True)
+            request=(context_intake.prepare(raw) if action=='context-intake' else
+                     capabilities.normalize_request(raw))
             timeout=request['budget']['timeout_seconds'];response_limit=request['budget']['max_result_bytes']
             run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest()
         active['deadline']=plan['started_monotonic']+timeout
@@ -56,6 +59,8 @@ def main(folder,memory_bytes):
         if context.stop():raise TimeoutError(context.stop())
         state=Path(plan['state_dir'])
         if action=='run':value=operations.run(state,request)
+        elif action=='context-intake':value=context_intake.acquire(state,request)
+        elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':
             from .context_disclosure import read
             value=read(state,json_value(args['selection'],reject_duplicates=True))
@@ -69,7 +74,8 @@ def main(folder,memory_bytes):
         cancelled=str(exc)=='cancelled'
         value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-        message='The selected local context view could not be prepared.' if plan['action']=='context-read' else str(exc)[:512]
+        private=plan['action'].startswith('context-') or (type(request) is dict and context_intake.protects(request))
+        message='The selected local context request could not be completed.' if private else str(exc)[:512]
         value=dict(status='error',message=message,data=None);code=2
     dispatch_finished=time.monotonic()
     try:

@@ -202,6 +202,28 @@ class UpdateTests(unittest.TestCase):
                                  context_disclosure_schemas=package['context_disclosure_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 
+    def test_retained_intake_requires_its_reader_even_before_policy_approval(self):
+        from src.techexpert import context_intake, investigations, operations
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.storage import ROOT
+        from src.techexpert.update_state import inspect_state, supports
+
+        doc = investigations.create(self.state, {'task':'Первичный импорт'})
+        request = context_intake.prepare(dict(schema_version=1,operation='case.analyze',
+            operation_key='reader-check',executor_id='tests',
+            arguments=dict(manifest=str(ROOT/'examples/sc01/case.json')),
+            context=dict(investigation_id=doc['investigation_id'],expected_revision=1)))
+        saved = operations.run(self.state, request)
+        self.assertEqual(saved['status'], 'succeeded')
+        observed = inspect_state(self.state)
+        self.assertEqual(observed['schemata']['context-intake'], [1])
+        self.assertEqual(observed['schemata']['context-disclosure'], [])
+        package = read_package(self.bundle)
+        self.assertFalse(supports(package['metadata'], observed['schemata']))
+        self.assertTrue(supports(package['metadata'], observed['schemata'],
+                                 context_intake_schemas=package['context_intake_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

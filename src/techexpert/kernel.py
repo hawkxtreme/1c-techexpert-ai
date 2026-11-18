@@ -18,7 +18,9 @@ MAX_RESPONSE=16*1024**2
 MAX_MCP_RESPONSE=64*1024**2
 DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
-    'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'}}
+    'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'},
+    'context-intake':{'request'},'context-attach':{'run_id','revision'}}
+_RUN_ACTIONS=('run','context-intake')
 
 
 def _limits(value):
@@ -39,11 +41,13 @@ def _arguments(action,value):
     if 'run_id' in value and not re.fullmatch('[a-f0-9]{64}',value['run_id']):raise InputError('invalid operation run ID')
     if 'call_id' in value and not re.fullmatch('[a-f0-9]{32}',value['call_id']):raise InputError('invalid kernel call ID')
     if 'executor_id' in value and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}',value['executor_id']):raise InputError('invalid executor ID')
+    if 'revision' in value and (not re.fullmatch('[1-9][0-9]{0,3}',value['revision']) or
+                                int(value['revision'])>1000):raise InputError('invalid investigation revision')
     if action=='context-read':
         from .context_disclosure import compact,validate_request
         from .inputs import json_value
         return dict(selection=compact(validate_request(json_value(value['selection'],reject_duplicates=True))))
-    return dict(value,request=str(Path(value['request']).absolute())) if action=='run' else dict(value)
+    return dict(value,request=str(Path(value['request']).absolute())) if action in _RUN_ACTIONS else dict(value)
 
 
 def _space(path):
@@ -145,13 +149,13 @@ def _worker_observation(state,run_id,controller):
 
 def _admission(directory,plan):
     value=fs.read(directory/'admitted.json',16384)
-    high=1830 if plan['action']=='run' else plan['limits']['query_seconds']
+    high=1830 if plan['action'] in _RUN_ACTIONS else plan['limits']['query_seconds']
     if (not isinstance(value,dict) or set(value)!={'plan_sha256','run_id','timeout_seconds'}
         or value.get('plan_sha256')!=fs.digest(plan)
         or type(value.get('timeout_seconds')) not in (int,float)
         or not math.isfinite(value['timeout_seconds']) or not 0<value['timeout_seconds']<=high
         or value.get('run_id') is not None and (not isinstance(value['run_id'],str) or not re.fullmatch('[a-f0-9]{64}',value['run_id']))
-        or plan['action']!='run' and value.get('run_id')!=plan['arguments'].get('run_id')):
+        or plan['action'] not in _RUN_ACTIONS and value.get('run_id')!=plan['arguments'].get('run_id')):
         raise InputError('kernel_admission_integrity')
     return value
 
@@ -162,7 +166,7 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
         if wire_version not in VERSIONS:raise InputError('unsupported MCP wire version')
     if request_document is not None:
         from .capabilities import normalize_request
-        if action!='run':raise InputError('inline request requires the run action')
+        if action not in _RUN_ACTIONS:raise InputError('inline request requires a managed run action')
         request_document=normalize_request(request_document)
         if len(fs.encode(request_document))>128*1024:raise InputError('inline operation request exceeds byte limit')
     if cancel_event is not None and cancel_event.is_set():raise InputError('cancelled before admission')
@@ -218,13 +222,16 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
         response=_response(directory,plan)
     except (OSError,ValueError,KeyError,TypeError):
         reason=reason or 'kernel_process_failure'
+        if action.startswith('context-'):
+            from .context_intake import safe_reason
+            reason=safe_reason(reason)
         cancelled=reason=='cancelled'
         value=dict(schema_version=1,status='cancelled' if cancelled else 'failed',run_id=admitted.get('run_id') if admitted else None,
             kernel_call_id=call_id,stop_reason=reason,data=None,snapshots=[],evidence=[],truncated=False,
             stop_verified=process['tree_finished'] if os.name=='nt' else False,
             limitations=['Controller failure is not an incident root cause. Sealed operation files are retained; repeat the original operation key or inspect its saved run.'])
         response=_write_response(directory/'error-response.json',value,130 if cancelled else 3,plan)
-    worker=_worker_observation(state,admitted.get('run_id') if admitted and action=='run' else None,current.get('child') or {})
+    worker=_worker_observation(state,admitted.get('run_id') if admitted and action in _RUN_ACTIONS else None,current.get('child') or {})
     receipt=dict(schema_version=1,call_id=call_id,status='finished',action=action,owner=owner,limits=limits,controller=process,
         response=response,worker_observation=worker,operation_run_id=admitted.get('run_id') if admitted else None,model_tokens=None,harness_memory_bytes=None,
         transport=dict(elapsed_before_delivery_seconds=time.monotonic()-started,full_response_json_decoded=False,
@@ -238,7 +245,7 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
             result_availability='incomplete_invocation_receipt',stop_reason='kernel_receipt_commit_failed',data=None,
             kind='kernel_invocation',data_omitted=True,snapshots=[],evidence=[],truncated=True,
             controller_response=response,controller_response_was_verified=True,
-            message='The local invocation receipt could not be recorded.' if action=='context-read' else str(exc)[:512],
+            message='The local invocation receipt could not be recorded.' if action.startswith('context-') else str(exc)[:512],
             limitations=['Original controller response and operation files are retained. Invocation metrics were not committed; no operation was repeated.'])
         call.update(exit_code=1,diagnostics=['Final invocation receipt was not committed.'])
         try:

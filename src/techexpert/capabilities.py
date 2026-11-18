@@ -180,9 +180,11 @@ def catalogue(operation=None):
         not_yet_managed=['source export execution','investigation/profile mutations','knowledge-use','incident drafts'])
 
 def normalize_request(value):
+    from .context_intake import PRESENTATION, validate as validate_intake
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
     schema=obj(dict(schema_version=dict(type='integer',minimum=1,maximum=1),operation_key=identity,executor_id=identity,operation=string(64),
         arguments=dict(type='object',maxProperties=32,additionalProperties={}),
+        presentation=string(24,enum=[PRESENTATION]),
         budget=obj(dict(timeout_seconds=dict(type='number',minimum=.1,maximum=1830),max_result_bytes=integer(16384,MAX_RESULT,MAX_RESULT))),
         context=obj(dict(investigation_id=CASE,expected_revision=integer(1,1000,1)),('investigation_id','expected_revision'))),
         ('schema_version','operation_key','executor_id','operation','arguments'))
@@ -230,6 +232,8 @@ def normalize_request(value):
     budget.update(result.get('budget',{}))
     if budget['timeout_seconds']>ceiling:raise InputError('operation timeout exceeds catalogue')
     result.update(arguments={key:value for key,value in args.items() if value is not None},budget=budget)
+    if 'presentation' in result:
+        validate_intake(result)
     return result
 
 def timeout_limit(operation, arguments):

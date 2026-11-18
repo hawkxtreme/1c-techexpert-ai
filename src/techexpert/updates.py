@@ -165,7 +165,8 @@ def _staged(state, release_id):
     return dict(value, case_retirement_schemas=archive['case_retirement_schemas'],
                 report_retirement_schemas=archive['report_retirement_schemas'],
                 tj_reference_schemas=archive['tj_reference_schemas'],
-                context_disclosure_schemas=archive['context_disclosure_schemas'])
+                context_disclosure_schemas=archive['context_disclosure_schemas'],
+                context_intake_schemas=archive['context_intake_schemas'])
 
 
 def _supports(package, observed):
@@ -173,7 +174,8 @@ def _supports(package, observed):
                     case_retirement_schemas=package['case_retirement_schemas'],
                     report_retirement_schemas=package['report_retirement_schemas'],
                     tj_reference_schemas=package['tj_reference_schemas'],
-                    context_disclosure_schemas=package['context_disclosure_schemas'])
+                    context_disclosure_schemas=package['context_disclosure_schemas'],
+                    context_intake_schemas=package['context_intake_schemas'])
 
 
 def _presentation(state, record):

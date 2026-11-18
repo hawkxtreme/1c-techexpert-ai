@@ -23,6 +23,9 @@ OPERATIONS={'techexpert_'+name.replace('.','_'):name for name in cap.ROUTES}
 PROFILES=('full','direct','program','context')
 CONTEXT_TOOLS=('knowledge.search','knowledge.card')
 CONTEXT_READ='techexpert_context_read'
+CONTEXT_INTAKE='techexpert_context_intake'
+CONTEXT_ATTACH='techexpert_context_attach'
+ATTACH_SCHEMA=cap.obj(dict(run_id=RUN,revision=cap.integer(1,1000,1)),('run_id','revision'))
 
 
 def selected_operations(profile='full'):
@@ -36,7 +39,7 @@ def selected_operations(profile='full'):
 def control_names(profile):
     names = set() if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
     if profile in ('full', 'context'):
-        names.add(CONTEXT_READ)
+        names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH))
     return names
 
 
@@ -55,6 +58,18 @@ def input_schema(operation):
             max_result_bytes=cap.integer(16384,cap.MAX_RESULT,cap.MAX_RESULT))),
         context=cap.obj(dict(investigation_id=cap.CASE,expected_revision=cap.integer(1,1000,1)),['investigation_id','expected_revision'])),
         ['operation_key','executor_id','arguments'])
+
+
+def intake_schema():
+    from .context_intake import OPERATIONS
+    properties = input_schema('case.analyze')['properties']
+    properties.update(operation=cap.string(64,enum=list(OPERATIONS)),
+                      arguments=dict(type='object',maxProperties=32))
+    result = cap.obj(properties,('operation','operation_key','executor_id','arguments','context'))
+    result['oneOf'] = [dict(properties=dict(operation=dict(const=op),
+                                             arguments=deepcopy(cap.ROUTES[op]['input_schema'])))
+                       for op in OPERATIONS]
+    return result
 
 
 def tools(profile='full'):
@@ -78,6 +93,13 @@ def tools(profile='full'):
             description='Read one pinned investigation attachment through its reviewed model disclosure policy. '
                         'Rows contain typed fields and scoped aliases. Each prepared view has a local disclosure receipt.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=False)))
+    if CONTEXT_INTAKE in controls:
+        result.append(dict(name=CONTEXT_INTAKE,title='context.intake',inputSchema=intake_schema(),outputSchema=responses.schema(),
+            description='Inspect or import selected local sources. Returns operational metadata, with an investigation attachment on successful intake. Repeat the same operation key after uncertainty.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True)))
+        result.append(dict(name=CONTEXT_ATTACH,title='context.attach',inputSchema=deepcopy(ATTACH_SCHEMA),outputSchema=responses.schema(),
+            description='Link an already saved intake result to an explicit revision of its investigation in the same environment.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     return sorted(result,key=lambda t:t['name'])
 
 
@@ -85,6 +107,15 @@ def prepare(name,arguments,profile='full'):
     if name == CONTEXT_READ:
         from .context_disclosure import compact,validate_request
         return 'context-read',dict(selection=compact(validate_request(arguments))),None
+    if name == CONTEXT_INTAKE:
+        if type(arguments) is not dict or set(arguments)-intake_schema()['properties'].keys():
+            raise InputError('unsupported local intake arguments')
+        from .context_intake import prepare as prepare_intake
+        request=prepare_intake(dict(arguments,schema_version=1))
+        return 'context-intake',dict(request='inline-request.json'),request
+    if name == CONTEXT_ATTACH:
+        args=cap.validate(arguments,ATTACH_SCHEMA)
+        return 'context-attach',dict(args,revision=str(args['revision'])),None
     if name in OPERATIONS:
         operation=OPERATIONS[name]
         if not isinstance(arguments,dict):raise InputError('Tool arguments must be an object; inspect tools/list.')

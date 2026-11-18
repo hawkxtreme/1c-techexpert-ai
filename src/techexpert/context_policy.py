@@ -21,13 +21,22 @@ RULE_VERSION = 1
 SHA = re.compile(r'[a-f0-9]{64}')
 
 
-def selected_investigation(state, investigation_id, revision):
+def verified_revisions(state, investigation_id, revision):
     folder = investigations.revision_folder(state, investigation_id, revision)
     for number in range(1, revision + 1):
         candidate = folder.parent / f'{number:06d}'
         for name in ('report.json', 'report.md', 'receipt.json'):
             fs.safe(candidate / name)
-    return investigations._committed_revision(state, investigation_id, revision)
+    head = investigations._read_head(state, investigation_id)
+    return investigations._revision_chain(state, investigation_id, head, revision)
+
+
+def selected_investigation(state, investigation_id, revision):
+    chain = verified_revisions(state, investigation_id, revision)
+    doc = next(chain)
+    for _ in chain:
+        pass
+    return doc
 
 
 def scope(doc):

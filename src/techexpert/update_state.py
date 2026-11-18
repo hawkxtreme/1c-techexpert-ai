@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import operation_state as fs, operations
+from . import context_intake, operation_state as fs, operations
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -19,7 +19,7 @@ _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionEr
 
 
 def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
-             tj_reference_schemas=(), context_disclosure_schemas=()):
+             tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -37,7 +37,8 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
     return (set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
             and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
-            and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas))
+            and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
+            and set(observed.get('context-intake', ())) <= set(context_intake_schemas))
 
 
 def _exists(path):
@@ -56,6 +57,7 @@ def inspect_state(state):
     schemas['investigation-report-retirements'] = set()
     schemas['tj-reference-windows'] = set()
     schemas['context-disclosure'] = set()
+    schemas['context-intake'] = set()
     problems = []
     remaining_bytes = 64*1024**2
     remaining_entries = 8192
@@ -114,6 +116,10 @@ def inspect_state(state):
                     plan = document(folder/'plan.json')
                     schema(kind,plan)
                     fs.checked_plan(folder,plan,document(folder/'plan-receipt.json'))
+                    if 'presentation' in plan['request']:
+                        if not context_intake.protects(plan['request']):
+                            raise InputError('unknown retained operation presentation')
+                        schemas['context-intake'].add(1)
                     output = _exists(folder/'output.json')
                     receipt = _exists(folder/'output-receipt.json')
                     status = current.get('status')

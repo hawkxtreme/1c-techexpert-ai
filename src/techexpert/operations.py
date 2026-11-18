@@ -8,6 +8,7 @@ import time
 
 from . import __version__
 from . import capabilities,operation_state as fs,operation_process,kernel_context
+from . import context_intake
 from .inputs import InputError
 from .storage import ROOT
 
@@ -194,8 +195,13 @@ def _fit_view(view,budget,*,strict=False):
     return small
 
 def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
-    from .knowledge_review import review_legacy_report,review_use
     data=value['data'] or {};request=plan['request']
+    if context_intake.protects(request):
+        view=dict(context_intake.envelope(value, value['data']), integrity_verified=True,replayed=replayed,
+                  cancellation_requested=value.get('cancellation_requested',False) or
+                                         fs.safe(fs.folder(state,value['run_id'])/'cancel.json').exists())
+        return _fit_view(view,request['budget']['max_result_bytes'],strict=strict)
+    from .knowledge_review import review_legacy_report,review_use
     if request['operation']=='artifact.show' and data.get('kind')=='knowledge_use':
         knowledge_review=review_use(state,data['artifact_id'])
     else:
@@ -249,6 +255,9 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
             ('Managed CLI controller admission/replay/finalization is bounded and measured separately in kernel-call receipts; thin transport remains outside that process quota.' if kernel_context.current() else 'Direct internal engine: worker limits exclude admission, replay and final control-layer verification/commit.'),
             'Remote SSH/WinRM process stop is unknown after an interrupted connection; the remote probe has its own duration bound.',
             'Source-check and knowledge reads retain their bounded output, not an independent full source snapshot.'])
+    if context_intake.protects(request):
+        value = context_intake.seal(value, data)
+        stop_reason = value['stop_reason']
     prepared_path=folder/'prepared-output.json'
     if prepared_path.exists():
         prepared=fs.read(prepared_path)
@@ -290,6 +299,15 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
 
 def result(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
+    try:
+        return _result(state,run_id,folder,plan)
+    except (OSError,ValueError,KeyError,TypeError,RecursionError):
+        if context_intake.protects(plan['request']):
+            raise InputError('Saved intake material could not be verified.') from None
+        raise
+
+
+def _result(state,run_id,folder,plan):
     if not (folder/'output.json').exists() or not (folder/'output-receipt.json').exists():return status(state,run_id)
     value=fs.read(folder/'output.json');receipt=fs.read(folder/'output-receipt.json',8192)
     if value.get('run_id')!=run_id or fs.digest(value)!=receipt.get('sha256'):raise InputError('operation output integrity mismatch')
@@ -313,6 +331,8 @@ def status(state,run_id):
         limitations=['Heartbeat age alone does not establish process completion. No request is restarted by status.'])
     if has_output!=has_receipt:
         view.update(status='partial',execution_status=current['status'],result_availability='incomplete_commit')
+    if context_intake.protects(plan['request']):
+        view=context_intake.envelope(view,None)
     return _fit_view(view,plan['request']['budget']['max_result_bytes'])
 
 def cancel(state,run_id,*,executor_id):
@@ -427,6 +447,15 @@ def _run(state,request,admission,*,parent_guard=None):
 
 def reconcile(state,run_id):
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
+    try:
+        return _reconcile(state,run_id,folder,plan)
+    except (OSError,ValueError,KeyError,TypeError,RecursionError):
+        if context_intake.protects(plan['request']):
+            raise InputError('Saved intake could not be recovered. Check the local operation state.') from None
+        raise
+
+
+def _reconcile(state,run_id,folder,plan):
     with fs.writer(folder):
         current=fs.read(folder/'status.json',64*1024)
         if current['status'] in TERMINAL and current.get('stop_verified'):

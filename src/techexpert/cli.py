@@ -49,6 +49,10 @@ def main(argv=None):
     profile_impact=commands.add_parser('profile-impact');profile_impact.add_argument('before',type=Path);profile_impact.add_argument('after',type=Path)
     profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
     from . import context_disclosure, context_policy
+    commands.add_parser('context-intake', help='save selected diagnostics with a metadata-only response').add_argument('request',type=Path)
+    context_attach=commands.add_parser('context-attach', help='link an existing protected intake to the chosen investigation revision')
+    context_attach.add_argument('run_id')
+    context_attach.add_argument('--revision',type=int,required=True)
     for name, help_text in (
         ('context-policy', 'show allowed model data for a saved environment'),
         ('context-policy-plan', 'preview a change to model data permissions'),
@@ -221,6 +225,8 @@ def main(argv=None):
     template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'))
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
+    for command in (investigation_create,investigation):
+        command.add_argument('--handle',action='store_true',help='show only the investigation identifier and revision')
     materials=commands.add_parser('investigation-materials',help='view retained files and evidence links for an investigation')
     materials.add_argument('investigation_id')
     materials.add_argument('--revision',type=int)
@@ -257,6 +263,13 @@ def main(argv=None):
         if args.command=='capabilities':
             from .capabilities import catalogue
             result=catalogue(args.operation)
+        elif args.command in ('context-intake','context-attach'):
+            from . import kernel
+            selection = (dict(request=str(args.request)) if args.command=='context-intake' else
+                         dict(run_id=args.run_id,revision=str(args.revision)))
+            call=kernel.invoke(args.state_dir,args.command,selection)
+            kernel.emit(call,sys.stdout)
+            return call['exit_code']
         elif args.command.startswith('context-'):
             identity = (args.state_dir, args.investigation_id, args.revision)
             if args.command == 'context-policy':
@@ -466,19 +479,24 @@ def main(argv=None):
             result=view(args.state_dir,args.investigation_id,revision=args.revision,
                         category=args.category,offset=args.offset,limit=args.limit)
         elif args.command in ('investigation-create','investigation-update','investigation'):
-            from .investigations import create,revise,read_for_display,revision_folder
+            from .investigations import create,revise,read_for_display,revision_folder,_read_head
             from .inputs import read_snapshot,json_value
             if args.command=='investigation-create':
                 result=create(args.state_dir,json_value(read_snapshot(args.request,1024*1024).decode('utf-8-sig'),reject_duplicates=True))
             elif args.command=='investigation-update':
                 result=revise(args.state_dir,args.investigation_id,
                     json_value(read_snapshot(args.patch,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
+            elif args.handle:
+                selected=args.revision if args.revision is not None else _read_head(args.state_dir,args.investigation_id)['revision']
+                result=context_policy.selected_investigation(args.state_dir,args.investigation_id,selected)
             else:
                 from .investigation_retention import status as report_status
                 result=report_status(args.state_dir,args.investigation_id)
                 if result is None:
                     result=read_for_display(args.state_dir,args.investigation_id,revision=args.revision)
-            if 'revision' in result:
+            if getattr(args,'handle',False):
+                result={key:result[key] for key in ('investigation_id','revision')}
+            elif 'revision' in result:
                 folder=revision_folder(args.state_dir,result['investigation_id'],result['revision']).absolute()
                 result['local_reports']={suffix:str(folder/('report.'+suffix)) for suffix in ('json','md')}
                 from .knowledge_review import review_investigation
@@ -599,7 +617,7 @@ def main(argv=None):
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status']=='blocked' else 0
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
-        if args.command.startswith('context-'):
+        if args.command.startswith('context-') or getattr(args,'handle',False):
             emit(dict(status='error', code='context_input_or_state_error',
                       message='Verify the selected investigation, available local state and current policy plan.'))
             return 2
