@@ -58,6 +58,34 @@ class SC01ExperimentReportTests(unittest.TestCase):
         return next(group for group in report['groups']
                     if group['series'] == 'first_start' and group['method'] == 'cli')
 
+    def app_server_trace(self, name, thread, second='completed', *, second_total=150, second_kind='commandExecution'):
+        events = [dict(method='thread/started', params=dict(thread=dict(id=thread)))]
+        for turn, total, kind in (('turn-1', 100, 'mcpToolCall'), ('turn-2', second_total, second_kind)):
+            identity = dict(threadId=thread, turnId=turn)
+            events.append(dict(method='turn/started', params=dict(threadId=thread, turn=dict(id=turn, status='inProgress'))))
+            item = dict(type=kind, id='same-local-item-id', status='inProgress')
+            events.append(dict(method='item/started', params=dict(**identity, item=item)))
+            if total is not None:
+                usage = dict(totalTokens=total, inputTokens=total-12, cachedInputTokens=4,
+                             outputTokens=12, reasoningOutputTokens=2)
+                events.append(dict(method='thread/tokenUsage/updated', params=dict(**identity, tokenUsage=dict(total=usage))))
+            if turn == 'turn-2' and second == 'unterminated':
+                break
+            terminal = dict(item, status='completed')
+            if kind == 'commandExecution':
+                terminal['exitCode'] = 3
+            elif kind == 'dynamicToolCall':
+                terminal['success'] = False
+            else:
+                terminal['result'] = dict(isError=False)
+            notice = dict(method='item/completed', params=dict(**identity, item=terminal))
+            events.extend((notice, notice))
+            events.append(dict(method='turn/completed', params=dict(threadId=thread,
+                turn=dict(id=turn, status=second if turn=='turn-2' else 'completed'))))
+        raw = b''.join(json.dumps(event).encode() + b'\n' for event in events)
+        (self.root / name).write_bytes(raw)
+        return dict(path=name,sha256=hashlib.sha256(raw).hexdigest(),format='codex_app_server_v2')
+
     def test_all_planned_slots_are_retained_when_no_results_are_available(self):
         report = summarize(self.schedule)
         self.assertEqual(len(report['attempts']), 30)
@@ -126,3 +154,57 @@ class SC01ExperimentReportTests(unittest.TestCase):
         nested = '/'.join(['directory'] * 30 + ['trace.jsonl'])
         with self.assertRaisesRegex(InputError, 'trace path limit'):
             self.results(self.attempt(1, [dict(path=nested, sha256='a' * 64)]))
+
+    def test_native_two_turn_trace_counts_cumulative_usage_and_tools_once(self):
+        trace = self.app_server_trace('native.jsonl', 'native-thread')
+        report = self.results(self.attempt(1, [trace]))
+        attempt = report['attempts'][0]
+        self.assertEqual(attempt['usage']['total_tokens'], 150)
+        self.assertEqual(attempt['usage']['reasoning_output_tokens'], 2)
+        self.assertIsNone(attempt['usage']['cache_write_input_tokens'])
+        self.assertEqual(attempt['logs'][0]['observed_turns'], 2)
+        self.assertEqual(attempt['logs'][0]['observed_items'],
+                         dict(command_execution=1,mcp_tool_call=1,dynamic_tool_call=0))
+        self.assertEqual(attempt['logs'][0]['observed_failed_items']['command_execution'], 1)
+        self.assertEqual(self.first_cli(report)['metrics']['observed_mcp_tool_calls']['observed_total'], 1)
+        self.assertEqual(report['token_scope'], 'reported_cumulative_codex_app_server_0.164.0_thread')
+
+    def test_native_incomplete_or_missing_final_usage_does_not_complete_cost(self):
+        first = self.app_server_trace('interrupted.jsonl', 'interrupted-thread', 'unterminated')
+        second = self.app_server_trace('missing.jsonl', 'missing-thread', second_total=None)
+        third = self.app_server_trace('regressed.jsonl', 'regressed-thread', second_total=80)
+        report = self.results(self.attempt(1, [first], outcome='interrupted', reviewed=False),
+                              self.attempt(2, [second]), self.attempt(3, [third]))
+        by_repeat = {row['repeat']:row for row in report['attempts'] if row['method']=='cli' and row['series']=='first_start'}
+        self.assertEqual(by_repeat[1]['logs'][0]['status'], 'interrupted')
+        self.assertEqual(by_repeat[1]['logs'][0]['cumulative_usage']['total_tokens'], 150)
+        self.assertEqual(by_repeat[1]['logs'][0]['observed_unfinished_items']['command_execution'], 1)
+        self.assertEqual(by_repeat[2]['logs'][0]['cumulative_usage']['total_tokens'], 100)
+        self.assertEqual(by_repeat[3]['logs'][0]['cumulative_usage']['total_tokens'], 100)
+        self.assertTrue(all(row['usage']['total_tokens'] is None for row in by_repeat.values()))
+
+    def test_native_session_cannot_be_combined_with_another_log_for_one_attempt(self):
+        native = self.app_server_trace('native.jsonl', 'native-thread')
+        cli = self.trace('command.jsonl', 'native-thread', dict(input_tokens=3,output_tokens=1))
+        with self.assertRaisesRegex(InputError, 'one native App Server transcript'):
+            self.results(self.attempt(1, [native,cli]))
+
+    def test_native_foreign_thread_usage_cannot_complete_an_attempt(self):
+        ref = self.app_server_trace('foreign.jsonl', 'good-thread')
+        path = self.root / ref['path']
+        raw = path.read_bytes().replace(
+            b'"threadId": "good-thread", "turnId": "turn-2", "tokenUsage"',
+            b'"threadId": "other-thread", "turnId": "turn-2", "tokenUsage"')
+        self.assertNotEqual(raw, path.read_bytes())
+        path.write_bytes(raw)
+        ref['sha256'] = hashlib.sha256(raw).hexdigest()
+        result = self.results(self.attempt(1, [ref]))['attempts'][0]
+        self.assertEqual(result['logs'][0]['status'], 'malformed')
+        self.assertEqual(result['logs'][0]['cumulative_usage']['total_tokens'], 100)
+        self.assertIsNone(result['usage']['total_tokens'])
+
+    def test_native_dynamic_tool_can_return_unsuccessful_terminal_result(self):
+        trace = self.app_server_trace('dynamic.jsonl', 'dynamic-thread', second_kind='dynamicToolCall')
+        result = self.results(self.attempt(1,[trace]))['attempts'][0]['logs'][0]
+        self.assertEqual(result['observed_items']['dynamic_tool_call'], 1)
+        self.assertEqual(result['observed_failed_items']['dynamic_tool_call'], 1)
