@@ -15,7 +15,7 @@ import re
 import uuid
 
 from . import __version__
-from . import report_references
+from . import investigation_progress, report_references
 from .artifacts import load_artifact,artifact_evidence,encoded
 from .incident_templates import catalogue as templates,plan as template_plan
 from .inputs import InputError,json_value,read_snapshot
@@ -26,8 +26,11 @@ MAX_DOCUMENT=2*1024*1024
 EDITABLE={'episode','attachments','evidence','facts','hypotheses','contradictions','open_questions','tool_runs',
           'assessment','improvement','observation_plan','execution_status','harness',
           'template_id','template_revision','variant','time_mode','scale','profile_revision','workflow_stage','occurrence',
-          'source_bindings','source_links'}
+          'source_bindings','source_links','stage_decision'}
 CAUSES=('confirmed','hypothesis','insufficient_data')
+EXECUTIONS=('completed','partial','error','cancelled')
+STAGES=('initial_analysis','prepare_observation','awaiting_occurrence','analyze_episode','verify_fix','closed')
+COLLECTION_STATES=('unknown','not_started','launch_reported','receiving_data','stopped_reported')
 
 def _digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
 def _object(value,allowed,required=()):
@@ -143,7 +146,7 @@ def _source_profiles(state_dir,doc):
 def _validate(state_dir,doc):
     encoded(doc,MAX_DOCUMENT)
     if doc['time_mode'] not in ('unknown','past','current','reproduce') or doc['scale'] not in ('one','several','all','background','unknown'):raise InputError('invalid investigation time or scale')
-    if doc['execution_status'] not in ('completed','partial','error','cancelled'):raise InputError('invalid execution status')
+    if doc['execution_status'] not in EXECUTIONS:raise InputError('invalid execution status')
     _text(doc['task']);_object(doc['episode'],('description','start','end','utc_offset','database_mode','operation','user_reported_baseline','client_context','recurrence_seconds','requested_window_seconds'))
     for key,value in doc['episode'].items():
         if key in ('recurrence_seconds','requested_window_seconds'):
@@ -218,7 +221,7 @@ def _validate(state_dir,doc):
         if type(plan['max_bytes']) is not int or not 0<plan['max_bytes']<=64*1024*1024:raise InputError('invalid observation byte limit')
         if plan['status'] not in ('proposed','configured_reported','data_verified','cancelled'):raise InputError('invalid observation status')
         _references(plan.get('evidence',[]),eids,required=plan['status']=='data_verified')
-        if plan.get('collection_state','unknown') not in ('unknown','not_started','launch_reported','receiving_data','stopped_reported'):raise InputError('invalid collection state')
+        if plan.get('collection_state','unknown') not in COLLECTION_STATES:raise InputError('invalid collection state')
         if plan.get('collection_state')=='receiving_data':_references(plan.get('evidence',[]),eids,required=True)
         for key in ('collection_method','rotation'):
             if key in plan:_text(plan[key])
@@ -270,7 +273,7 @@ def _validate(state_dir,doc):
         doc['cause_state']=cause
     if 'workflow_stage' in doc:
         stage=doc['workflow_stage']
-        if stage not in ('initial_analysis','prepare_observation','awaiting_occurrence','analyze_episode','verify_fix','closed'):raise InputError('invalid investigation workflow stage')
+        if stage not in STAGES:raise InputError('invalid investigation workflow stage')
         occurrence=doc.get('occurrence')
         if occurrence is not None:
             _object(occurrence,('id','source','message','reported_at','started_at','ended_at','evidence','link_basis','status'),
@@ -294,6 +297,7 @@ def _validate(state_dir,doc):
             model_polling_required=False,same_investigation_id=doc['investigation_id'],
             preparation_basis=plan['status'] if plan else 'not_prepared',collection_state=plan.get('collection_state','unknown') if plan else 'unknown',
             message='Этап подготовки завершён. После сообщения о повторении вернитесь в этот же чат и укажите доступное время или признаки события.' if stage=='awaiting_occurrence' else 'Продолжить текущий этап по сохранённым данным.')
+    investigation_progress.validate_decision(doc)
     doc['structural_validation_only']=True
     return doc
 
@@ -311,6 +315,10 @@ def render(doc):
     source_review=context(doc) if doc['schema_version']==2 else None
     assessment=doc['assessment']
     citations=report_references.by_target(assessment)
+    decision=doc.get('stage_decision')
+    stage_summary=[]
+    if decision:
+        stage_summary=['',investigation_progress.DECISIONS[decision['reason']][2],_md(decision['detail'])]
     summary_references=[]
     if citations['assessment']:
         summary_references.append('')
@@ -320,6 +328,7 @@ def render(doc):
     lines=['# Расследование '+doc['investigation_id'], '',f"Ревизия: {doc['revision']}. Выполнение: {doc['execution_status']}. Причина: {doc['cause_state']}.", '',
            'Этап: '+doc.get('workflow_stage','initial_analysis')+'.',
            _md(doc['continuation']['message']) if doc.get('continuation') else '',
+           *stage_summary,
            _md(doc['task']),'',_md(doc['assessment']['summary']) if doc['assessment'] else 'Причина не установлена. Сохранены наблюдения и следующие проверки.',
            *summary_references,
            '', 'Проверены структура и ссылки. Причинное объяснение принадлежит указанному harness; правильность механизма инструментом не доказана.',
@@ -531,6 +540,7 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision):
         doc.update(changes);doc['revision']+=1;doc['parent_sha256']=_digest(previous)
         doc['created_at']=datetime.now(timezone.utc).isoformat()
         # Compute normalized evidence before detecting whether an old assessment is stale.
+        decision=doc.pop('stage_decision',None)
         old_assessment=doc['assessment'];doc['assessment']=None;_validate(state_dir,doc)
         basis=_basis(doc)
         if 'assessment' in patch:
@@ -542,6 +552,9 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision):
         else:doc['assessment']=old_assessment
         if basis!=previous['analysis_basis_sha256'] and 'improvement' not in patch:doc['improvement']=None
         doc['analysis_basis_sha256']=basis
+        stage_fields=('workflow_stage','execution_status','assessment','improvement','tool_runs','observation_plan','open_questions')
+        same_stage=(basis==previous['analysis_basis_sha256'] and all(doc.get(key)==previous.get(key) for key in stage_fields))
+        if decision is not None and ('stage_decision' in patch or same_stage):doc['stage_decision']=decision
         _validate(state_dir,doc)
         from .case_retention import attachment_case_ids, case_writers
         with case_writers(state_dir, attachment_case_ids(state_dir, doc['attachments'])):

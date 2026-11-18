@@ -56,14 +56,13 @@ def request_ids(state, request):
     return sorted(ids)
 
 
-def _related_operations(state, identifier):
-    from .operations import TERMINAL
+def iter_saved_plans(state):
+    """Read the finite saved-plan index without opening operation results or originals."""
     root = fs.safe(Path(state) / 'operations')
     try:
         entries = os.scandir(root)
     except FileNotFoundError:
-        return []
-    found = []
+        return
     remaining = 64 * 1024**2
     with entries:
         for count, entry in enumerate(entries, 1):
@@ -82,30 +81,40 @@ def _related_operations(state, identifier):
                 raise InputError('saved operation inventory exceeds its byte bound')
             try:
                 plan = fs.plan(folder)
-                request = plan['request']
-                if 'investigation_dependencies' in plan:
-                    related = plan['investigation_dependencies']
-                    if (type(related) is not list or any(type(item) is not str or not re.fullmatch('[a-f0-9]{32}', item)
-                            for item in related) or related != sorted(set(related))):
-                        raise InputError('invalid operation investigation dependencies')
-                else:
-                    related = request_ids(state, request)
             except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
                 raise InputError('saved operation relationship cannot be verified') from error
-            if identifier not in related:
-                continue
-            try:
-                current = fs.read(folder / 'status.json', 64 * 1024)
-            except FileNotFoundError as error:
-                raise InputError('related operation admission is incomplete') from error
-            except (OSError, ValueError, TypeError) as error:
-                raise InputError('related operation status cannot be verified') from error
-            if type(current) is not dict or type(current.get('status')) is not str:
-                raise InputError('related operation status cannot be verified')
-            if (current.get('run_id') != folder.name
-                    or current.get('status') not in TERMINAL or current.get('stop_verified') is not True):
-                raise InputError('related operation is active or its stop is unverified')
-            found.append(dict(id=folder.name, operation=request['operation'], status=current['status']))
+            yield folder, plan
+
+
+def _related_operations(state, identifier):
+    from .operations import TERMINAL
+    found = []
+    for folder, plan in iter_saved_plans(state):
+        request = plan['request']
+        try:
+            if 'investigation_dependencies' in plan:
+                related = plan['investigation_dependencies']
+                if (type(related) is not list or any(type(item) is not str or not re.fullmatch('[a-f0-9]{32}', item)
+                        for item in related) or related != sorted(set(related))):
+                    raise InputError('invalid operation investigation dependencies')
+            else:
+                related = request_ids(state, request)
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
+            raise InputError('saved operation relationship cannot be verified') from error
+        if identifier not in related:
+            continue
+        try:
+            current = fs.read(folder / 'status.json', 64 * 1024)
+        except FileNotFoundError as error:
+            raise InputError('related operation admission is incomplete') from error
+        except (OSError, ValueError, TypeError) as error:
+            raise InputError('related operation status cannot be verified') from error
+        if type(current) is not dict or type(current.get('status')) is not str:
+            raise InputError('related operation status cannot be verified')
+        if (current.get('run_id') != folder.name
+                or current.get('status') not in TERMINAL or current.get('stop_verified') is not True):
+            raise InputError('related operation is active or its stop is unverified')
+        found.append(dict(id=folder.name, operation=request['operation'], status=current['status']))
     return sorted(found, key=lambda item: item['id'])
 
 

@@ -13,6 +13,8 @@ IDENTITY=cap.string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
 RUN=cap.string(64,pattern='[a-f0-9]{64}')
 CALL=cap.string(32,pattern='[a-f0-9]{32}')
 CONTROLS={
+    'investigation_progress':('investigation-progress',cap.obj(dict(investigation_id=CALL),['investigation_id']),
+        'Observe one investigation and its context-bound local checks. Returns saved and live status metadata only.'),
     'operation_status':('status',cap.obj(dict(run_id=RUN),['run_id']),'Inspect run and live ownership. Unknown is not stopped; never take over by age.'),
     'operation_result':('result',cap.obj(dict(run_id=RUN),['run_id']),'Verify and replay a retained result without accessing original sources or repeating work.'),
     'operation_reconcile':('reconcile',cap.obj(dict(run_id=RUN),['run_id']),'Recover sealed work only after verified stop; no worker restart or overwriting a product.'),
@@ -25,6 +27,7 @@ CONTEXT_TOOLS=('knowledge.search','knowledge.card','code.context')
 CONTEXT_READ='techexpert_context_read'
 CONTEXT_INTAKE='techexpert_context_intake'
 CONTEXT_ATTACH='techexpert_context_attach'
+PROGRESS='techexpert_investigation_progress'
 ATTACH_SCHEMA=cap.obj(dict(run_id=RUN,revision=cap.integer(1,1000,1)),('run_id','revision'))
 
 
@@ -37,7 +40,7 @@ def selected_operations(profile='full'):
 
 
 def control_names(profile):
-    names = set() if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
+    names = {PROGRESS} if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
     if profile in ('full', 'context'):
         names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH))
     return names

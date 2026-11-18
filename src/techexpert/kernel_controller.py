@@ -64,6 +64,11 @@ def main(folder,memory_bytes):
         elif action=='context-read':
             from .context_disclosure import read
             value=read(state,json_value(args['selection'],reject_duplicates=True))
+        elif action=='investigation-progress':
+            from .investigation_progress import view
+            progress=view(state,args['investigation_id'])
+            value=dict(status='partial' if progress['operation_inventory']=='incomplete' else 'succeeded',
+                       operation='investigation.progress',data=progress)
         elif action=='cancel':value=operations.cancel(state,args['run_id'],executor_id=args['executor_id'])
         elif action=='inspect':value=dict(status='succeeded',call=kernel.inspect_call(state,args['call_id']))
         else:value={'result':operations.result,'status':operations.status,'reconcile':operations.reconcile}[action](state,args['run_id'])
@@ -74,7 +79,7 @@ def main(folder,memory_bytes):
         cancelled=str(exc)=='cancelled'
         value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-        private=plan['action'].startswith('context-') or (type(request) is dict and
+        private=plan['action'].startswith('context-') or plan['action']=='investigation-progress' or (type(request) is dict and
             (context_intake.protects(request) or request['operation']=='code.context'))
         message='The selected local context request could not be completed.' if private else str(exc)[:512]
         value=dict(status='error',message=message,data=None);code=2

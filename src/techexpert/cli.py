@@ -237,6 +237,8 @@ def main(argv=None):
     template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'))
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
+    progress=commands.add_parser('investigation-progress',help='observe saved investigation and local check status')
+    progress.add_argument('investigation_id')
     for command in (investigation_create,investigation):
         command.add_argument('--handle',action='store_true',help='show only the investigation identifier and revision')
     materials=commands.add_parser('investigation-materials',help='view retained files and evidence links for an investigation')
@@ -496,6 +498,11 @@ def main(argv=None):
         elif args.command=='source-context':
             from .investigations import source_context
             result=source_context(args.state_dir,args.investigation_id,revision=args.revision)
+        elif args.command=='investigation-progress':
+            from . import kernel
+            call=kernel.invoke(args.state_dir,'investigation-progress',dict(investigation_id=args.investigation_id))
+            kernel.emit(call,sys.stdout)
+            return call['exit_code']
         elif args.command=='investigation-materials':
             from .investigation_materials import view
             result=view(args.state_dir,args.investigation_id,revision=args.revision,

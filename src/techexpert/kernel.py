@@ -19,7 +19,8 @@ MAX_MCP_RESPONSE=64*1024**2
 DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
     'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'},
-    'context-intake':{'request'},'context-attach':{'run_id','revision'}}
+    'context-intake':{'request'},'context-attach':{'run_id','revision'},
+    'investigation-progress':{'investigation_id'}}
 _RUN_ACTIONS=('run','context-intake')
 
 
@@ -40,6 +41,7 @@ def _arguments(action,value):
     if any(not isinstance(v,str) or not 1<=len(v)<=2048 or any(ord(c)<32 for c in v) for v in value.values()):raise InputError('invalid kernel argument')
     if 'run_id' in value and not re.fullmatch('[a-f0-9]{64}',value['run_id']):raise InputError('invalid operation run ID')
     if 'call_id' in value and not re.fullmatch('[a-f0-9]{32}',value['call_id']):raise InputError('invalid kernel call ID')
+    if 'investigation_id' in value and not re.fullmatch('[a-f0-9]{32}',value['investigation_id']):raise InputError('invalid investigation ID')
     if 'executor_id' in value and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}',value['executor_id']):raise InputError('invalid executor ID')
     if 'revision' in value and (not re.fullmatch('[1-9][0-9]{0,3}',value['revision']) or
                                 int(value['revision'])>1000):raise InputError('invalid investigation revision')
