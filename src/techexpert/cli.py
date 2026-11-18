@@ -66,6 +66,7 @@ def main(argv=None):
     events.add_argument('--offset', type=int, default=0)
     events.add_argument('--limit', type=int, default=20)
     events.add_argument('--linked-run', action='store_true', help='only records inside the verified job marker window')
+    events.add_argument('--start');events.add_argument('--end')
     init = commands.add_parser('init')
     init.add_argument('--open-browser', action='store_true')
     init.add_argument('--ttl', type=int, default=900)
@@ -233,6 +234,10 @@ def main(argv=None):
         elif args.command == 'evidence':
             result = read_evidence(args.state_dir, args.case_id, args.evidence_id)
         elif args.command == 'events':
+            window=None
+            if args.start is not None or args.end is not None:
+                if args.start is None or args.end is None:raise InputError('both --start and --end are required')
+                window=dict(start=args.start,end=args.end)
             filters = {}
             for item in args.properties:
                 key, separator, value = item.partition('=')
@@ -240,7 +245,7 @@ def main(argv=None):
                     raise InputError('each property filter requires a unique NAME=VALUE')
                 filters[key] = value
             result = list_native_events(args.state_dir, args.case_id, source_id=args.source, event=args.event,
-                                        properties=filters, offset=args.offset, limit=args.limit, linked_run=args.linked_run)
+                                        properties=filters, offset=args.offset, limit=args.limit, linked_run=args.linked_run,window=window)
         elif args.command == 'init':
             from .gui import run_gui
             run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,investigation_id=args.investigation,entrypoint_sha256=args.entrypoint_sha256)

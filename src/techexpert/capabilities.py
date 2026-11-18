@@ -46,6 +46,7 @@ ROUTES={
  'case.show':route(dict(case_id=CASE),['case_id'],['verified saved case'],'read retained case; no original-path access',['case_id','sources']),
  'case.coverage':route(dict(case_id=CASE,**COVERAGE),['case_id'],['verified saved TJ'],'derive coverage from retained bytes',['sources','limitations']),
  'case.events':route(dict(case_id=CASE,source_id=string(16,pattern='s[1-9][0-9]*'),event=string(64),
+     window=WINDOW,
      properties=dict(type='object',maxProperties=16,additionalProperties=dict(type='string',maxLength=2048)),
      offset=integer(0,100000,0),limit=integer(1,100,20),linked_run=dict(type='boolean',default=False)),['case_id'],
      ['verified saved TJ'],'read bounded exact page',['case_id','records','matched_count','next_offset']),
@@ -193,6 +194,9 @@ def normalize_request(value):
     if operation in ('source.check','case.coverage'):
         from .source_coverage import validate_request as coverage_request
         args.update(coverage_request(**{k:args[k] for k in COVERAGE if k in args}))
+    if operation=='case.events' and 'window' in args:
+        from .source_coverage import validate_request as coverage_request
+        args['window']=coverage_request(window=args['window'])['window']
     if operation=='input.inspect':
         from .input_files import normalize
         args=normalize(args['inputs'],args['limits'])

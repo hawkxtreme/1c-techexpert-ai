@@ -2,6 +2,7 @@
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import stat
@@ -113,6 +114,52 @@ def runtime_profile(spec):
     return {k:spec[k] for k in ('platform_version','role','platform_utc_offset')}
 
 
+def _schema2_source(spec):
+    allowed={'path','format','platform_version','encoding','placement','timestamp_format','read_mode','context','collection',
+             'utc_offset','file_hour','rotation_hours'}
+    if set(spec)-allowed:raise InputError('unsupported schema=2 native TJ source fields')
+    path=spec.get('path')
+    if not isinstance(path,str) or not path or '\x00' in path:raise InputError('source path required')
+    mode=spec.get('timestamp_format')
+    if (mode=='iso' and any(key in spec for key in ('file_hour','rotation_hours'))
+        or mode=='minute' and 'utc_offset' in spec):raise InputError('native TJ time fields conflict with timestamp_format')
+    validate_profile(spec,path)
+    if spec.get('read_mode','stable') not in ('stable','tj-prefix-v1'):raise InputError('unsupported source read mode')
+    context=spec.get('context',{})
+    if (not isinstance(context,dict) or set(context)-{'node','process','epoch'}
+        or any(not isinstance(v,str) or not 1<=len(v)<=256 for v in context.values())):
+        raise InputError('source context supports bounded node, process and epoch labels')
+    from .source_coverage import validate_collection
+    validate_collection(spec.get('collection'))
+
+
+def _manifest_profile(manifest,*,tolerant_sources=False):
+    if not isinstance(manifest,dict) or type(manifest.get('schema')) is not int or manifest['schema'] not in (1,2):
+        raise InputError('expected manifest schema=1 (SC-01) or schema=2 (native TJ observations)')
+    if manifest['schema']==1 and manifest.get('scenario')!='SC-01':raise InputError('schema=1 requires scenario=SC-01')
+    if manifest.get('origin') not in ('synthetic','provided'):raise InputError('origin must explicitly be synthetic or provided')
+    from .source_coverage import validate_request
+    validate_request(window=manifest.get('incident_window'))
+    if manifest['schema']==1:return
+    if set(manifest)-{'schema','origin','sources','symptom','reported_normal_seconds','incident_window'}:
+        raise InputError('schema=2 native TJ does not accept scenario, selection, correlation/workload or unknown fields')
+    if 'symptom' in manifest:
+        text=manifest['symptom']
+        if (not isinstance(text,str) or not text.strip() or len(text)>8192
+            or any(ord(c)<32 and c not in '\r\n\t' for c in text)):raise InputError('schema=2 symptom must be bounded nonblank text')
+    normal=manifest.get('reported_normal_seconds')
+    if normal is not None:
+        try:valid=type(normal) in (int,float) and normal>0 and math.isfinite(normal)
+        except OverflowError:valid=False
+        if not valid:raise InputError('reported normal must be finite positive seconds or unknown')
+    sources=manifest.get('sources')
+    if (not isinstance(sources,list) or not 1<=len(sources)<=32
+        or any(not isinstance(s,dict) or s.get('format')!='1c-tj-text-v1' for s in sources)):
+        raise InputError('schema=2 requires1..32 native TJ sources; other adapters use their own explicit contracts')
+    if not tolerant_sources:
+        for source in sources:_schema2_source(source)
+
+
 def load_manifest(path,*,tolerant_sources=False):
     path = Path(path).resolve()
     try:
@@ -120,12 +167,8 @@ def load_manifest(path,*,tolerant_sources=False):
         manifest = json_value(raw.decode('utf-8-sig'),reject_duplicates=True)
     except (OSError, UnicodeError, ValueError) as exc:
         raise InputError(f'Cannot read case manifest: {exc}') from exc
-    if not isinstance(manifest, dict) or manifest.get('schema') != 1 or manifest.get('scenario') != 'SC-01':
-        raise InputError('expected schema=1 and scenario=SC-01')
-    if manifest.get('origin') not in ('synthetic', 'provided'):
-        raise InputError('origin must explicitly be synthetic or provided')
-    from .source_coverage import validate_request,validate_collection
-    validate_request(window=manifest.get('incident_window'))
+    _manifest_profile(manifest,tolerant_sources=tolerant_sources)
+    from .source_coverage import validate_collection
     selection = manifest.get('selection')
     correlation=manifest.get('correlation_profile')
     workload=manifest.get('workload_profile')
@@ -137,7 +180,7 @@ def load_manifest(path,*,tolerant_sources=False):
         if (not isinstance(selection,dict) or set(selection)!={'run'} or not isinstance(selection.get('run'),str)
                 or not re.fullmatch(r'[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}',selection['run'])):
             raise InputError('job correlation selection requires only the actual job UUID in run')
-    elif not isinstance(selection, dict) or any(not isinstance(selection.get(k), str) or not selection[k] for k in SCOPE_KEYS):
+    elif manifest['schema']==1 and (not isinstance(selection, dict) or any(not isinstance(selection.get(k), str) or not selection[k] for k in SCOPE_KEYS)):
         raise InputError('selection requires database, node, process, epoch and run')
     specs = manifest.get('sources')
     if not isinstance(specs, list) or not 1 <= len(specs) <= 32:
@@ -179,6 +222,7 @@ def load_manifest(path,*,tolerant_sources=False):
             source_path = path.parent / source_path
         # Profile validation does not touch the path; inspection must not open an unsupported declaration.
         try:
+            if manifest['schema']==2:_schema2_source(spec)
             profile = validate_profile(spec, source_path) if spec['format'] == '1c-tj-text-v1' else None
             job_profile=runtime_profile(spec) if is_runtime else None
             collection=validate_collection(spec.get('collection'))

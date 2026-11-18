@@ -10,10 +10,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import __version__
-from .analysis import analyze_events
+from .analysis import analyze_events,parse_time
 from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS,open_verified_snapshot
 from .native_tj import iter_tj
-from .observations import summarize_native, preview_record
+from .observations import summarize_native, preview_record,native_report
 from .job_correlation import correlate_job, record_matches_link
 from .order_load import analyze_order_load
 from .comparison import compare_reports
@@ -110,7 +110,8 @@ def investigate(manifest_path, state_dir, *, intake=None):
                 else origin['path'].rstrip('/')+'/'+origin['member'] if origin['kind'] in ('directory','sftp') else origin['path'])
             bundle['source_attempts'][number-1]['path']=source['path']
     has_correlation = bundle['manifest'].get('correlation_profile') == '1c-file-job-markers-v1'
-    result = job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])
+    generic=bundle['manifest']['schema']==2
+    result = native_report() if generic else job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])
     from .source_coverage import summarize_bundle
     result['source_coverage']=summarize_bundle(bundle)
     result['source_acquisition']=bundle['source_attempts']
@@ -124,7 +125,7 @@ def investigate(manifest_path, state_dir, *, intake=None):
         result['native_observations'] = summarize_native(bundle['native_events'])
         if has_correlation:
             result['native_observations']['job_correlation'] = 'see_job_correlation_for_bounded_subset'
-        else:
+        elif not generic:
             result['limitations'].append(dict(code='native_job_link_unproven',
                 detail='Native event durations do not establish queue, execution or whole-job boundaries.'))
             result['next_steps'].insert(0, 'Сопоставить записи ТЖ с конкретным запуском по независимым идентификаторам; '
@@ -137,7 +138,8 @@ def investigate(manifest_path, state_dir, *, intake=None):
                   created_at=datetime.now(timezone.utc).isoformat(), origin=bundle['manifest']['origin'],
                   input_contract=contract, native_1c_compatibility_verified=False,
                   native_compatibility_scope=('controlled_file_job_markers_8.3.27.1989_only_not_sc01_regression'
-                    if has_correlation else 'text_parser_only_not_sc01_end_to_end' if native_sources else 'not_checked'),
+                    if has_correlation else 'supported_TJ_text_profile_only_no_runtime_ownership' if generic
+                    else 'text_parser_only_not_sc01_end_to_end' if native_sources else 'not_checked'),
                   symptom=bundle['manifest'].get('symptom', ''),
                   baseline=dict(reported_seconds=bundle['manifest'].get('reported_normal_seconds'),
                                 status='user_reported_not_measured'),
@@ -224,8 +226,11 @@ def read_evidence(state_dir, case_id, evidence_id):
 
 
 def list_native_events(state_dir, case_id, *, source_id=None, event=None, properties=None, offset=0, limit=20,
-                       linked_run=False):
+                       linked_run=False,window=None):
     """Page exact native matches; only an explicit proven link permits run membership."""
+    from .source_coverage import validate_request
+    window=validate_request(window=window)['window']
+    bounds=(parse_time(window['start']),parse_time(window['end'])) if window else None
     if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
         raise InputError('events requires offset>=0 and limit between 1 and 100')
     properties = {} if properties is None else properties
@@ -254,17 +259,20 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
             scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
             for record in scan:
                 record['evidence']=dict(id=f"{source['id']}:{record['line']}",source=source['id'],sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
+                if bounds and not bounds[0]<=parse_time(record['timestamp_utc'])<bounds[1]:continue
                 if linked_run and not record_matches_link(record,link):continue
                 if event is not None and record['event']!=event:continue
                 if any(record['properties'].get(k)!=v for k,v in properties.items()):continue
                 if offset<=matched<offset+limit:page.append(preview_record(record))
                 matched+=1
             statuses.append(dict(source=source['id'],status=scan.summary['status']))
-    return dict(case_id=case_id,matched_count=matched,offset=offset,limit=limit,
+    result=dict(case_id=case_id,matched_count=matched,offset=offset,limit=limit,
                 next_offset=offset+limit if offset+limit<matched else None,records=page,
                 source_statuses=statuses,integrity_verified=True,untrusted_source_content=True,
                 job_correlation=link.get('status','not_established') if linked_run else 'not_established',
                 selection_basis='verified_marker_window_only_not_full_job' if linked_run else 'exact_properties_only_not_job_identity')
+    if window:result.update(window=window,time_selection_basis='recorded_timestamp_half_open_not_operation_overlap',clock_alignment='not_verified')
+    return result
 
 
 def verified_case(state_dir, case_id, *, with_digest=False):

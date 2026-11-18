@@ -126,6 +126,9 @@ def bind_sources(intake,sources):
 
 def analyze(state,output,manifest,input_plan):
     plan=read_plan(state,input_plan);raw=read_snapshot(manifest,1024**2);requested=json_value(raw.decode('utf-8-sig'),reject_duplicates=True)
+    if isinstance(requested,dict) and requested.get('schema')==2:
+        from .inputs import _manifest_profile
+        _manifest_profile(requested)
     if type(requested) is not dict or type(requested.get('sources')) is not list or not 1<=len(requested['sources'])<=32:raise InputError('selected case requires1..32 explicit member sources')
     formats=set(AUXILIARY_FORMATS)|{'1c-tj-text-v1','1c-job-runtime-v1','normalized-events-v1'}
     if any(type(s) is not dict or type(s.get('format')) is not str or s['format'] not in formats or type(s.get('path')) is not str for s in requested['sources']):raise InputError('unsupported selected diagnostic format or member')

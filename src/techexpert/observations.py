@@ -3,6 +3,18 @@ from collections import Counter
 from heapq import nlargest
 
 
+def native_report():
+    """No selected operation or lifecycle is inferred from an arbitrary TJ file."""
+    durations=dict(queue=None,execution=None,total=None)
+    return dict(scenario='native-tj-observations',analysis_profile='native-tj-observation-v1',selection={},
+        durations_seconds=durations,metrics=[dict(name=key,value=None,unit='seconds',status='unknown',evidence=[]) for key in durations],
+        wait_seconds=None,wait_fraction_of_execution=None,timeline=[],cause_state='insufficient_data',requires_ai_interpretation=True,
+        limitations=[dict(code='operation_identity_not_established',detail='Explicit source selection establishes neither an application operation, its boundaries nor a cause.')],
+        next_steps=['Проверить период, принадлежность и покрытие предоставленных источников.',
+            'Найти подходящие записи по известному интервалу и признакам; проверить их связь с действием пользователя.',
+            'Сопоставить доступные свидетельства и конкурирующие объяснения в текущем harness.'])
+
+
 def preview_record(record):
     # A source is untrusted and a single SQL/Context property can be very large.
     result = {key: record[key] for key in ('event', 'raw_time', 'timestamp', 'timestamp_utc',

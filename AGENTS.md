@@ -2,6 +2,8 @@
 
 The first implemented scenario is SC-01: an order-loading background job taking 45 minutes instead of a user-reported five. The product requires interpretation by the user's existing AI harness. Local tools compute and retain evidence; they do not impersonate an independent AI diagnosis.
 
+General native TJ uses finite manifest schema2 without scenario/selection/correlation/workload fields; only supported TJ sources are accepted. Keep unknown operation identity, boundaries, cause and durations. Explicit legacy schema1 SC01 is separate and must not be silently reinterpreted. Optional case.events.window selects recorded timestamps in[start,end), not inferred operation overlap; offsets are declared, clock alignment remains unknown and the complete saved source is still verified. No new GUI infrastructure fields are required for this path.
+
 Run `python -m unittest discover -s tests -v` and `python techexpert.py demo` after changes to the core. Runtime code currently uses only the Python standard library. Skills and plugin metadata must reference executable commands that actually exist.
 
 The bundled `normalized-events-v1` fixture is synthetic. Do not advertise native TJ/JR compatibility from it. Preserve the distinction between queue, execution, observed calls and root cause. Missing evidence remains unknown; identifiers are scoped by database, node, process, lifetime epoch and run. Never infer a whole job from one CALL/SCALL.

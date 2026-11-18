@@ -97,7 +97,8 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
         safe_issues=[{key:issue[key] for key in ('code','line','end_line','byte_start','byte_end','count','counts_by_code') if key in issue} for issue in issues[:20]]
         result.update(record_count=len(observed),profile=source.get('profile'),period=period,
             identity=dict(status='not_established_by_coverage',declared_context=source.get('declared_context',{}),
-                context_basis='user_declared_not_verified',note='Use independent job_correlation evidence for a bounded run link.'),
+                context_basis='user_declared_not_verified',note=('Coverage does not prove source-to-database or operation ownership; use independent evidence.'
+                    if bundle['manifest'].get('schema')==2 else 'Use independent job_correlation evidence for a bounded run link.')),
             collection=source.get('collection',dict(status='unknown')),
             events=_counts(r['event'] for r in observed),
             fields=_counts(key for r in observed for key in set(r['properties'])|set(r.get('ambiguous_properties',{}))),
@@ -138,7 +139,7 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
     usable=[s for s in results if s['assessment'] in ('observations_available','partial_observations')]
     status=('no_usable_tj_records_in_scope' if not usable else 'partial_observations' if
         any(s['assessment']=='partial_observations' or s['availability'] not in ('captured','duplicate_source') for s in results) else 'observations_available')
-    return dict(schema_version=1,status=status,scope='SC01_native_TJ_only',request=request,sources=results,
+    return dict(schema_version=1,status=status,scope='native_TJ_only' if bundle['manifest'].get('schema')==2 else 'SC01_native_TJ_only',request=request,sources=results,
         record_selection='all_parsed_records_in_each_explicit_file; not_a_job_identity_filter',
         can_establish_absence=False,requires_ai_interpretation=True,
         limitations=['First/last recorded timestamps and a span intersection do not prove collection completeness.',
