@@ -52,6 +52,7 @@ def normalize(arguments):
     from . import logcfg_api
     from . import remote_api
     for plan in result['scope']['remote_plans']:plan['settings']=remote_api.normalize('remote.plan',plan['settings'])
+    for plan in result['scope']['remote_profile_plans']:plan['settings']=remote_api.normalize('remote.profile_plan',plan['settings'])
     for field,operation in [('logcfg_plans','logcfg.prepare'),('logcfg_rollbacks','logcfg.rollback_plan')]:
         for plan in result['scope'][field]:plan['settings']=logcfg_api.normalize(operation,plan['settings'])
     result['scope']['source_snapshots']=[drivers.normalize_source(p) for p in result['scope']['source_snapshots']]
@@ -75,6 +76,7 @@ class Scope:
         self.intake_runs=[0]*len(value.get('intakes',[]))
         self.logcfg_runs={field:[0]*len(value.get(field,[])) for field in ('logcfg_plans','logcfg_rollbacks')}
         self.remote_plan_runs=[0]*len(value.get('remote_plans',[]))
+        self.remote_profile_plan_runs=[0]*len(value.get('remote_profile_plans',[]))
         self.remote_calls=[dict(calls=0,protocol=0,retained=0) for _ in value.get('remote_calls',[])]
 
     def authorize(self,operation,arguments):
@@ -90,6 +92,10 @@ class Scope:
             selected=next((i for i,p in enumerate(self.value.get('remote_plans',[])) if p['settings']==arguments and self.remote_plan_runs[i]<p['max_runs']),None)
             if selected is None:raise CodeError('scope_denied','Remote preparation exceeds the exact approved offline plan.')
             self.remote_plan_runs[selected]+=1
+        elif operation=='remote.profile_plan':
+            selected=next((i for i,p in enumerate(self.value.get('remote_profile_plans',[])) if p['settings']==arguments and self.remote_profile_plan_runs[i]<p['max_runs']),None)
+            if selected is None:raise CodeError('scope_denied','Profile-derived preparation exceeds exact investigation, sources, limits or repeat count.')
+            self.remote_profile_plan_runs[selected]+=1
         elif operation in ('remote.inspect','remote.capture'):
             target('artifacts',arguments['plan_id'])
             if operation=='remote.capture':target('artifacts',arguments['catalog_id'])
@@ -171,7 +177,7 @@ class Scope:
             field,kind=('case_id','cases') if 'case_id' in data else ('artifact_id','artifacts')
         else:
             field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
+                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

@@ -61,7 +61,7 @@ class AdapterOperationTests(unittest.TestCase):
         self.assertEqual(value['data']['result']['missing_samples'],1);self.assertTrue(value['kernel_call_id']);self.assertEqual(len(value['snapshots']),2)
 
     def test_mcp_arguments_use_same_pair_validation_and_no_additional_tools(self):
-        self.assertEqual(len(mcp_tools.tools()),40)
+        self.assertEqual(len(mcp_tools.tools()),41)
         for op in ('jr.import','os.import','apdex.import'):
             name='techexpert_'+op.replace('.','_');args=self.arguments(op)
             _,_,request=mcp_tools.prepare(name,dict(operation_key='sdk-selected',executor_id='harness',arguments=args));self.assertEqual(request['arguments']['members'],args['members'])
@@ -93,7 +93,8 @@ return {"jr": jr["data"]["result"]["event_count"], "gap": os["data"]["result"]["
         args=self.arguments('os.import');second=dict(args,members=[self.ids['os-b.json']])
         result=self.program('first = api("os.import", one)\nsecond = api("os.import", two)\nreturn api("os.import", one)',dict(one=args,two=second),dict(operations=['os.import'],artifacts=[self.pid],measurements=[str(self.archive)]))
         self.assertEqual(result['data']['diagnostic']['code'],'scope_denied');self.assertEqual(result['data']['metrics']['calls_started'],2)
-        self.assertEqual(len(list((self.state/'artifacts').iterdir())),3)
+        self.assertEqual([c['status'] for c in result['data']['calls'] if c.get('run_id')],['succeeded','succeeded'],result)
+        self.assertEqual(len(list((self.state/'artifacts').iterdir())),3,result)
 
     def test_reordered_journal_selection_cannot_repeat_the_same_capture(self):
         args=self.arguments('jr.import');other=dict(args,members=list(reversed(args['members'])))

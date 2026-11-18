@@ -161,6 +161,7 @@
       let sourceSuggestions = [];
       let connectionEdits = {};
       let bindingOverrides = {};
+      const journalDrafts = {};
       let preparedProfile = null;
       let preparedImpact = null;
       let serial = 0;
@@ -274,28 +275,55 @@
         connectionEdits[id]={...previous,...patch,settings:{...previous.settings,...patch.settings}};
       }
       function applyConnection(source,connection) {
+        if(['tj','jr'].includes(source.type)) {
+          ['transport','port','identity_file','known_hosts_file'].forEach(key=>delete source.settings[key]);
+          if(sshConnection(connection)){source.settings.transport='sftp';for(const key of ['port','identity_file','known_hosts_file'])if(Object.hasOwn(connection.settings,key))source.settings[key]=connection.settings[key];source.host=connection.address;}
+          return;
+        }
         const keys=source.type==='sql'?['engine','port','user','executable','docker_container','credential_ref']:source.type==='os'?['transport','port','python','use_ssl','identity_file','known_hosts_file']:['executable','docker_container','credential_ref'];
         keys.forEach(key=>delete source.settings[key]);Object.assign(source.settings,connection.settings);
         if(source.type==='rac')source.path=connection.address;else source.host=connection.address;
+        if(connection.kind==='ssh')source.settings.transport='ssh';
         if(connection.credential_ref && source.type!=='os')source.settings.credential_ref=connection.credential_ref;
+      }
+      function sshConnection(connection) {return connection && (connection.kind==='ssh' || connection.kind==='os' && connection.settings.transport==='ssh');}
+      function sharedSource(source) {return ['sql','rac','os'].includes(source.type) || ['tj','jr'].includes(source.type) && source.settings.transport==='sftp';}
+      function sshFields(settings,change) {
+        const box=element('div',undefined,'stack');
+        for(const [key,label,example] of [['known_hosts_file','Локальный файл known_hosts','C:\\Users\\user\\.ssh\\known_hosts · /home/user/.ssh/known_hosts'],['identity_file','Файл SSH-ключа · если нужен отдельный','C:\\Users\\user\\.ssh\\id_ed25519 · /home/user/.ssh/id_ed25519']]){
+          const input=field(label,settings[key],value=>change(key,value),example);input.querySelector('input').dataset.sshField=key;box.append(input);
+        }
+        box.append(element('p','Укажите пути на компьютере агента. Ключ в мастер не загружается. known_hosts с проверенным ключом узла подготавливается отдельно.','note'));return box;
+      }
+      function journalTransport(source,value) {
+        const current=source.settings.transport==='sftp'?'sftp':'local';if(current===value)return;
+        const drafts=journalDrafts[source.id] || (journalDrafts[source.id]={});drafts[current]={path:source.path,host:source.host,connectionId:sourceConnectionId(source),settings:Object.fromEntries(['port','identity_file','known_hosts_file'].filter(k=>Object.hasOwn(source.settings,k)).map(k=>[k,source.settings[k]]))};
+        const next=drafts[value];['transport','port','identity_file','known_hosts_file'].forEach(key=>delete source.settings[key]);
+        source.path=next?.path || '';source.host=next?.host || '';bindingOverrides[source.id]=next?.connectionId || null;
+        if(value==='sftp'){source.settings.transport='sftp';source.settings.port=22;Object.assign(source.settings,next?.settings || {});if(next?.connectionId)applyConnection(source,connectionDraft(next.connectionId));}
+        renderSources(source.id);
       }
       function commonFields(id) {
         const connection=connectionDraft(id);const box=element('div',undefined,'stack');const settings=connection.settings;
-        const address=field(connection.kind==='sql'?'Сервер / экземпляр СУБД':connection.kind==='rac'?'Адрес RAS · узел:порт':connection.kind==='onec'?'Адрес сервера / публикации 1С':'Узел Windows / Linux',connection.address,value=>editConnection(id,{address:value}));
+        const address=field(connection.kind==='sql'?'Сервер / экземпляр СУБД':connection.kind==='rac'?'Адрес RAS · узел:порт':connection.kind==='onec'?'Адрес сервера / публикации 1С':sshConnection(connection)?'SSH-адрес · пользователь@узел':'Узел Windows / Linux',connection.address,value=>editConnection(id,{address:value}));
         address.querySelector('input').dataset.commonField='address';if(connection.kind!=='os' || settings.transport!=='local')box.append(address);
         if(connection.kind==='sql') {
           box.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{editConnection(id,{settings:{engine:value,port:value==='postgresql'?5432:1433}});renderSources();}),numberField('Порт СУБД',settings.port,value=>editConnection(id,{settings:{port:value}}),1,65535),field('Пользователь СУБД · если задан отдельно',settings.user,value=>editConnection(id,{settings:{user:value}})));
         } else if(connection.kind==='os') {
-          box.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{editConnection(id,{...(value==='local'?{address:''}:{}),settings:{transport:value,port:value==='ssh'?22:5985,python:value==='winrm'?'python':'python3'}});renderSources();}));
+          const journals=activeSources().some(s=>['tj','jr'].includes(s.type) && sourceConnectionId(s)===id);
+          box.append(choice('Способ запуска',journals?[['ssh','Linux · существующий SSH']]:[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{editConnection(id,{...(value==='local'?{address:''}:{}),settings:{transport:value,port:value==='ssh'?22:5985,python:value==='winrm'?'python':'python3'}});renderSources();}));
           if(settings.transport!=='local')box.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>editConnection(id,{settings:{port:value}}),1,65535));
+        } else if(connection.kind==='ssh') {
+          box.append(numberField('Порт SSH',settings.port || 22,value=>editConnection(id,{settings:{port:value}}),1,65535));
         }
+        if(sshConnection(connection))box.append(sshFields(settings,(key,value)=>editConnection(id,{settings:{[key]:value}})));
         if(['sql','rac'].includes(connection.kind))box.append(field('Ссылка на существующий способ доступа · без пароля',connection.credential_ref,value=>editConnection(id,{credential_ref:value})));
         box.append(element('p','Это общая настройка. Подключение и права агент проверит отдельным действием.','note'));return box;
       }
       function sharedPanels() {
         const groups=new Map();
         const add=(id,bids,sid)=>{if(!id)return;const group=groups.get(id) || {bases:new Set(),sources:new Set()};bids.forEach(b=>group.bases.add(b));if(sid)group.sources.add(sid);groups.set(id,group);};
-        activeSources().filter(s=>['sql','rac','os'].includes(s.type)).forEach(source=>add(sourceConnectionId(source),source.base_ids.filter(id=>selected.has(id)),source.id));
+        activeSources().filter(sharedSource).forEach(source=>add(sourceConnectionId(source),source.base_ids.filter(id=>selected.has(id)),source.id));
         (editorProfile?.bases || []).filter(base=>selected.has(base.id) && !Object.hasOwn(base.connection_parameters,'file_path') && connectionDraft(base.connection_id)?.address).forEach(base=>add(base.connection_id,[base.id],null));
         const box=q('#shared-connections');box.replaceChildren();const visible=new Set();
         groups.forEach((group,id)=>{if(group.bases.size<2 && group.sources.size<2)return;const connection=connectionDraft(id);if(!connection)return;
@@ -419,8 +447,10 @@
           const card = element('details',undefined,'box'); card.dataset.sourceId = source.id; card.dataset.sourceType = source.type; card.open = source.id === openId || previousOpen.has(source.id);
           const summary = element('summary',typeNames[source.type]); card.append(summary);
           const fields = element('div',undefined,'stack');
-          const connectionId=['sql','os','rac'].includes(source.type)?sourceConnectionId(source):null;
-          const candidates=(editorProfile?.connections || []).filter(item=>item.kind===source.type);
+          const journal=['tj','jr'].includes(source.type),remote=journal && settings.transport==='sftp';
+          if(journal)fields.append(choice('Откуда читать журнал',[['local','Файлы, доступные на этом ПК'],['sftp','Linux по SSH / SFTP']],remote?'sftp':'local',value=>journalTransport(source,value)));
+          const connectionId=sharedSource(source)?sourceConnectionId(source):null;
+          const candidates=(editorProfile?.connections || []).filter(item=>journal?remote && sshConnection(item):item.kind===source.type || source.type==='os' && item.kind==='ssh');
           if(candidates.length)fields.append(choice('Подключение',[['','Отдельное подключение'],...candidates.map(item=>[item.id,item.name+(item.address?' · '+item.address:'')])],connectionId || '',value=>{
             if(!value && connectionId)applyConnection(source,connectionDraft(connectionId));
             bindingOverrides[source.id]=value || null;if(value)applyConnection(source,connectionDraft(value));renderSources(source.id);
@@ -446,11 +476,14 @@
           fields.append(bindings);
           const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр · БД указываются ниже' : source.type === 'rac' ? 'Адрес RAS · узел:порт' : source.type === 'os' ? 'Файл готовых метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
           const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
-          if(help){pathField.append(element('small','Ожидается: '+help.expected_format,'note'),element('small','Пример: '+help.example,'note'));}
-          const hostField = field(source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
+          if(help){pathField.append(element('small','Ожидается: '+(remote?help.sftp_expected_format:help.expected_format),'note'),element('small','Пример: '+(remote?help.sftp_example:help.example),'note'));}
+          if(remote){pathField.querySelector('input').placeholder=source.type==='jr'?'/srv/1c/base/1Cv8Log':'/var/log/1c/tj';pathField.append(element('small','Путь на Linux-узле. Выбранные стабильные файлы агент получит по SFTP; формат журнала проверяется отдельно.','note'));}
+          const hostField = field(remote?'SSH-адрес · пользователь@узел':source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
           if(!connectionId)fields.append(pathField,hostField);
           else if(source.type==='os')fields.append(pathField);
+          else if(journal)fields.append(pathField);
           else if(source.type==='rac')fields.append(hostField);
+          if(remote && !connectionId)fields.append(numberField('Порт SSH',settings.port || 22,value=>{settings.port=value;},1,65535),sshFields(settings,(key,value)=>{if(key==='identity_file' && !value)delete settings[key];else settings[key]=value;}));
           if(source.type==='os') {
             if(!connectionId)fields.append(choice('Способ запуска',[['local','На этом компьютере'],['winrm','Windows · существующий WinRM'],['ssh','Linux · существующий SSH']],settings.transport,value=>{settings.transport=value;settings.port=value==='ssh'?22:5985;delete settings.python;renderSources(source.id);}));
             const timing=element('div',undefined,'grid');
@@ -458,6 +491,7 @@
             const interval=numberField('Шаг измерения · секунды',settings.interval_seconds,value=>{settings.interval_seconds=value;},1,60);interval.querySelector('input').dataset.setting='interval_seconds';
             timing.append(duration,interval);fields.append(timing,choice('Роль узла',[['onec','Сервер 1С'],['sql','СУБД'],['storage','Файловое хранение'],['client','Клиент'],['terminal','Терминальный сервер'],['web','Веб-сервер'],['other','Другая']],settings.role,value=>{settings.role=value;}));
             if(!connectionId && settings.transport!=='local')fields.append(numberField('Порт подключения',settings.port || (settings.transport==='ssh'?22:5985),value=>{settings.port=value;},1,65535));
+            if(!connectionId && settings.transport==='ssh')fields.append(sshFields(settings,(key,value)=>{if(key==='identity_file' && !value)delete settings[key];else settings[key]=value;}));
           } else if(source.type==='sql') {
             if(!connectionId)fields.append(choice('СУБД',[['postgresql','PostgreSQL'],['sqlserver','Microsoft SQL Server']],settings.engine,value=>{settings.engine=value;settings.port=value==='postgresql'?5432:1433;renderSources(source.id);}),numberField('Порт СУБД',settings.port,value=>{settings.port=value;},1,65535));
             settings.databases=settings.databases || {};
@@ -489,11 +523,12 @@
         q('#empty-sources').hidden = !!activeSources().length;
       }
       function payload() {
-        return {schema_version:1,name:state.name.trim() || 'Окружение',bases:selectedBases().map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection})),sources:activeSources().map(source => {const settings={...source.settings};if(settings.databases)settings.databases=Object.fromEntries(Object.entries(settings.databases).filter(([id])=>source.base_ids.includes(id)));return {id:source.id,type:source.type,path:source.path.trim(),host:source.host.trim(),base_ids:[...source.base_ids],settings};})};
+        return {schema_version:1,name:state.name.trim() || 'Окружение',bases:selectedBases().map(base => ({id:base.id,name:base.name,mode:base.mode,connection:base.connection})),sources:activeSources().map(item => {const source={...item,settings:{...item.settings}};const id=sharedSource(source)?sourceConnectionId(source):null;if(id && connectionDraft(id))applyConnection(source,connectionDraft(id));const settings=source.settings;if(settings.databases)settings.databases=Object.fromEntries(Object.entries(settings.databases).filter(([id])=>source.base_ids.includes(id)));return {id:source.id,type:source.type,path:source.path.trim(),host:source.host.trim(),base_ids:[...source.base_ids],settings};})};
       }
       function validateSources() {
         const missing = activeSources().find(source => !source.base_ids.length);
         if (missing) { renderSources(missing.id); throw new Error('Выберите базу для источника «' + typeNames[missing.type] + '».'); }
+        payload().sources.filter(source=>['tj','jr'].includes(source.type) && source.settings.transport==='sftp').forEach(source=>{if(!source.path.startsWith('/') || !source.host || !source.settings.known_hosts_file)throw new Error('Для SFTP укажите путь на Linux-узле, SSH-адрес и локальный файл known_hosts.');});
         activeSources().filter(source=>source.type==='os').forEach(source=>{const s=source.settings;if(!Number.isFinite(s.duration_seconds)||!Number.isFinite(s.interval_seconds)||s.interval_seconds<1||s.interval_seconds>60||s.duration_seconds<s.interval_seconds||s.duration_seconds>1800)throw new Error('Для сборщика задайте длительность от одного шага до 1800 секунд и шаг от 1 до 60 секунд.');});
       }
       function renderReview() {
@@ -549,10 +584,14 @@
         result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));
         if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));
       }));
-      q('#add-source').addEventListener('click', () => {
+      q('#add-source').addEventListener('click', () => perform(async () => {
+        q('#add-source').disabled=true;
+        try {
+        await prepareProfile({selectionOnly:true});
         markChanged(); const type = q('#new-source-type').value; const eligible = eligibleBases(type); if (!eligible.length) { message('Для этого источника нет подходящих выбранных баз.',true); return; }
         const source = {id:nextId('source'),type,path:'',host:'',base_ids:eligible.length === 1 ? [eligible[0].id] : [],settings:defaults(type)}; state.sources.push(source); renderSources(source.id);
-      });
+        } finally {q('#add-source').disabled=false;}
+      }));
       root.querySelectorAll('[data-step]').forEach(button => button.addEventListener('click', () => perform(()=>navigate(button.dataset.step))));
       root.querySelectorAll('[data-back]').forEach(button => button.addEventListener('click', () => perform(()=>navigate(button.dataset.back))));
       q('#to-sources').addEventListener('click', () => perform(()=>navigate('sources')));

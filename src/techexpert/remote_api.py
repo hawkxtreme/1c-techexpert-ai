@@ -2,7 +2,7 @@
 from . import remote_budget,remote_sources,remote_transfers,remote_intake,operation_state as fs
 from .inputs import InputError
 
-OPERATIONS=('remote.plan','remote.inspect','remote.capture','remote.parse')
+OPERATIONS=('remote.plan','remote.profile_plan','remote.inspect','remote.capture','remote.parse')
 
 
 def plan_schema(cap):
@@ -10,6 +10,12 @@ def plan_schema(cap):
     connection=cap.obj(dict(host=cap.string(320),port=cap.integer(1,65535,22),known_hosts_file=cap.FILE,identity_file=cap.FILE,node=cap.string(256),root=cap.FILE),['host','known_hosts_file','node','root'])
     source=cap.obj(dict(id=cap.string(64,pattern='[A-Za-z][A-Za-z0-9_-]{0,63}'),connection=connection,**caps),['id','connection'])
     return cap.obj(dict(investigation_id=cap.CASE,revision=cap.integer(1,1000,1),sources=dict(type='array',minItems=1,maxItems=8,items=source),**caps),['investigation_id','revision','sources'])
+
+
+def profile_schema(cap):
+    caps={name:cap.integer(low,high,default) for name,(low,high,default) in remote_budget.CAPS.items()}
+    return cap.obj(dict(investigation_id=cap.CASE,revision=cap.integer(1,1000,1),
+        source_ids=dict(type='array',minItems=1,maxItems=8,items=cap.string(80)),source_limits=dict(cap.obj(caps),default={}),**caps),['investigation_id','revision','source_ids'])
 
 
 def routes(cap):
@@ -23,6 +29,8 @@ def routes(cap):
     result={
         'remote.plan':cap.route(plan_schema(cap)['properties'],['investigation_id','revision','sources'],['explicit investigation revision, source connection references and bounded budgets'],
             'offline private transfer plan; no connection, collector or service',outputs),
+        'remote.profile_plan':cap.route(profile_schema(cap)['properties'],['investigation_id','revision','source_ids'],['exact investigation profile snapshot and selected configured SSH journal source IDs'],
+            'offline private SFTP plan from pinned profile; no connection, collection or key contents read',outputs),
         'remote.inspect':cap.route(inspect_args,['plan_id','source_id'],['approved saved SFTP source plan and existing verified access'],
             'bounded read-only remote metadata; consumes durable source/investigation reservation',outputs,timeout=150),
         'remote.capture':cap.route(capture_args,['plan_id','source_id','catalog_id','members'],['matching saved remote catalogue and finite source plan'],
@@ -37,6 +45,9 @@ def routes(cap):
 
 def normalize(operation,args):
     if operation=='remote.plan':return remote_budget.normalize(**args)
+    if operation=='remote.profile_plan':
+        if len(set(args['source_ids']))!=len(args['source_ids']):raise InputError('duplicate configured source selection')
+        return dict(args,source_limits=remote_budget._caps(args['source_limits']))
     if operation=='remote.inspect':return dict(args,limits=remote_sources.bounds(args['limits']))
     if operation=='remote.parse':return dict(args,settings=remote_intake.normalize(args['adapter'],args['settings']))
     if len(set(args['members']))!=len(args['members']):raise InputError('duplicate remote capture member')
@@ -47,11 +58,13 @@ def scope_schemas(cap):
     source=cap.obj(dict(plan_id=cap.CASE,source_id=cap.string(64,pattern='[A-Za-z][A-Za-z0-9_-]{0,63}'),
         max_calls=cap.integer(1,16,1),max_protocol_bytes=cap.integer(16384,512*1024**2,64*1024**2),
         max_retained_bytes=cap.integer(1,64*1024**2,16*1024**2),max_timeout_seconds=cap.integer(1,120,60)),['plan_id','source_id'])
-    return dict(remote_plans=cap.array(cap.obj(dict(settings=plan_schema(cap),max_runs=cap.integer(1,5,1)),['settings']),8),remote_calls=cap.array(source,16))
+    return dict(remote_plans=cap.array(cap.obj(dict(settings=plan_schema(cap),max_runs=cap.integer(1,5,1)),['settings']),8),
+        remote_profile_plans=cap.array(cap.obj(dict(settings=profile_schema(cap),max_runs=cap.integer(1,5,1)),['settings']),8),remote_calls=cap.array(source,16))
 
 
 def execute(operation,args,state,output,stop=None):
     if operation=='remote.plan':data=remote_transfers.prepare(state,output,**args)
+    elif operation=='remote.profile_plan':data=remote_transfers.prepare_profile(state,output,**args)
     elif operation=='remote.inspect':data=remote_transfers.inspect(state,output,**args,stop=stop)
     elif operation=='remote.capture':data=remote_transfers.capture(state,output,**args,stop=stop)
     else:
@@ -71,7 +84,7 @@ def pin(state,operation,args,data,add):
         if type(intake) is not dict or intake.get('artifact_id')!=args['capture_id'] or intake.get('plan_report_digest')!=fs.digest(parent):raise InputError('remote parser capture binding changed')
         return
     report=add('artifacts',data['artifact_id'])
-    if operation=='remote.plan':plan=report
+    if operation in ('remote.plan','remote.profile_plan'):plan=report
     else:
         plan=add('artifacts',args['plan_id'])
         if report['result'].get('plan')!=_tag(state,plan) or report['result'].get('source_id')!=args['source_id']:raise InputError('remote plan/source changed before result commit')
@@ -83,6 +96,10 @@ def pin(state,operation,args,data,add):
     from .investigations import revision_folder
     receipt=fs.digest(fs.read(revision_folder(state,inv['id'],inv['revision'])/'receipt.json',8192))
     if inv['report_digest']!=fs.digest(current) or inv['receipt_digest']!=receipt:raise InputError('remote plan investigation snapshot changed')
+    if operation=='remote.profile_plan':
+        expected,binding=remote_transfers.profile_settings(current,args)
+        if (inv['id']!=args['investigation_id'] or inv['revision']!=args['revision'] or plan['result']['settings']!=expected
+            or plan['result'].get('profile_binding')!=binding or plan['result'].get('profile_request')!=args):raise InputError('profile-derived transfer binding changed before result commit')
 
 
 def outcome(operation,data):

@@ -27,6 +27,10 @@ def dependency(state,report):
 def prepare(state,output,**arguments):
     settings=remote_budget.normalize(**arguments)
     doc=investigations.load(state,settings['investigation_id'],revision=settings['revision'])
+    return _save_plan(state,output,settings,doc,settings)
+
+
+def _save_plan(state,output,settings,doc,parameters,profile_binding=None):
     folder=investigations.revision_folder(state,settings['investigation_id'],settings['revision'])
     known={}
     for source in settings['sources']:
@@ -35,7 +39,25 @@ def prepare(state,output,**arguments):
     result=dict(schema_version=1,profile=PLAN,settings=settings,known_hosts_sha256=known,network_started=False,max_parallel_connections=1,
         investigation=dict(id=settings['investigation_id'],revision=settings['revision'],report_digest=fs.digest(doc),receipt_digest=fs.digest(fs.read(folder/'receipt.json',8192))),
         limitations=LIMITATIONS,requires_ai_interpretation=True)
-    return artifacts.save_artifact(output,'remote_plan',settings,[],result)
+    if profile_binding is not None:
+        result['profile_binding']=profile_binding;result['profile_request']=parameters
+    return artifacts.save_artifact(output,'remote_plan',parameters,[],result)
+
+
+def profile_settings(doc,args):
+    from .profile_ssh import selected_sources
+    profile=doc['profile_snapshot']
+    sources,bindings=selected_sources(profile,args['source_ids'],args['source_limits'])
+    settings=remote_budget.normalize(investigation_id=args['investigation_id'],revision=args['revision'],sources=sources,**{k:args[k] for k in remote_budget.CAPS})
+    binding=dict(schema_version=1,profile_revision=profile['revision'],profile_sha256=doc['profile_sha256'],source_ids=list(args['source_ids']),sources=bindings)
+    return settings,binding
+
+
+def prepare_profile(state,output,**arguments):
+    managed_run(output,'remote.profile_plan',arguments['investigation_id'])
+    doc=investigations.load(state,arguments['investigation_id'],revision=arguments['revision'])
+    settings,binding=profile_settings(doc,arguments)
+    return _save_plan(state,output,settings,doc,arguments,binding)
 
 
 def read_plan(state,identifier):

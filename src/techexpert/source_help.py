@@ -15,6 +15,8 @@ def catalogue(*,root=None):
             if not isinstance(helper['steps'],list) or not 1<=len(helper['steps'])<=10 or any(not isinstance(x,str) or not x or len(x)>2048 for x in helper['steps']):raise InputError('invalid source export help steps')
         for key in ('purpose','expected_format','example','rights','agent_actions','long_observation','excluded_inputs'):
             if not isinstance(item.get(key),str) or not 1<=len(item[key])<=8192:raise InputError('incomplete source help')
+        for key in ('sftp_expected_format','sftp_example'):
+            if key in item and (not isinstance(item[key],str) or not 1<=len(item[key])<=8192):raise InputError('invalid SFTP preparation help')
         for key in ('windows_steps','linux_steps'):
             if not isinstance(item.get(key),list) or not 1<=len(item[key])<=10 or any(not isinstance(x,str) or not 1<=len(x)<=8192 for x in item[key]):raise InputError('incomplete preparation steps')
         for link in item.get('links',[]):

@@ -102,6 +102,9 @@ def _validate_legacy_profile(value):
         if kind=='source' and suffix in ('.zip','.7z','.rar','.tar','.gz','.cf','.cfe'):
             raise InputError('1C sources require a directory or Git repository')
         settings=validate_source_settings(kind,source.get('settings',{}),linked)
+        if kind in ('tj','jr') and settings.get('transport')=='sftp':
+            from .profile_ssh import journal
+            journal(path,field(source,'host',256),settings)
         clean_sources.append(dict(id=sid,type=kind,path=path,host=field(source,'host',256,empty=True),base_ids=linked,
                                   status='not_checked',settings=settings))
         source_ids.add(sid)
@@ -113,8 +116,8 @@ def validate_source_settings(kind,value,base_ids):
         'os':{'transport','duration_seconds','interval_seconds','max_bytes','role','port','python','use_ssl','identity_file','known_hosts_file'},
         'sql':{'engine','port','database','databases','user','credential_ref','executable','docker_container'},
         'rac':{'executable','docker_container','credential_ref'},
-        'tj':{'platform_version','utc_offset','placement','timestamp_format'},
-        'jr':{'platform_version','utc_offset'},
+        'tj':{'platform_version','utc_offset','placement','timestamp_format','transport','port','identity_file','known_hosts_file'},
+        'jr':{'platform_version','utc_offset','transport','port','identity_file','known_hosts_file'},
         'source':{'kind','ref','match_status'}}
     if not isinstance(value,dict) or set(value)-fields[kind]:raise InputError('unsupported '+kind+' settings')
     result={}
@@ -143,6 +146,9 @@ def validate_source_settings(kind,value,base_ids):
             raise InputError('SQL database must be a plain name')
     if kind=='source' and (result.get('kind','catalog') not in ('catalog','git') or result.get('match_status','unknown') not in ('unknown','confirmed','mismatch','partial')):
         raise InputError('invalid source kind or match status')
+    if kind in ('tj','jr'):
+        from .profile_ssh import JOURNAL_KEYS
+        if set(result)&JOURNAL_KEYS and result.get('transport')!='sftp':raise InputError('journal SSH access requires explicit SFTP transport')
     return result
 
 
@@ -162,6 +168,9 @@ def check_profile(value):
     for source in clean['sources']:
         kind=source['type']
         if kind in ('tj','jr','source'):
+            if kind in ('tj','jr') and source['settings'].get('transport')=='sftp':
+                checks.append(dict(source_id=source['id'],type=kind,status='remote_prerequisites_not_checked',detail='Указаны параметры SFTP. Доступ к узлу и файлам ещё не проверен.'))
+                continue
             remote_git=kind=='source' and source['settings'].get('kind')=='git' and re.match(r'^(https://|git@|ssh://)',source['path'])
             if remote_git:status='requires_explicit_git_snapshot';detail='Git is configured; no clone/fetch was started.'
             else:status='requires_explicit_path_check';detail='Path configured; existence, access and contents require an explicit adapter run. No filesystem access attempted.'

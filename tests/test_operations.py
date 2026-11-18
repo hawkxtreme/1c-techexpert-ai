@@ -154,6 +154,12 @@ class ManagedOperationTests(unittest.TestCase):
         call('remote.capture',plan_id=remote_plan['artifact_id'],source_id='tj',catalog_id=catalogue['artifact_id'],members=['m1'],protocol_bytes=16384,max_bytes=10,timeout_seconds=1,expected='partial')
         retained=remote_fixture(self.state,[('os.json',(self.state/'artifacts'/artifact['artifact_id']/'sources/s1.bin').read_bytes())])
         call('remote.parse',capture_id=retained['artifact_id'],adapter='os',settings=dict(members=['m1']))
+        from test_profile_ssh import graph as ssh_profile
+        from src.techexpert import profiles,investigations
+        profile=ssh_profile();profile['connections'][0]['settings']['known_hosts_file']=remote_args['sources'][0]['connection']['known_hosts_file']
+        profiles.save_profile(self.state,profile,expected_revision=0)
+        configured=investigations.create(self.state,dict(task='Profile-bound remote acquisition'))
+        call('remote.profile_plan',investigation_id=configured['investigation_id'],revision=1,source_ids=['tj','jr'])
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

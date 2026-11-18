@@ -6,6 +6,7 @@ import re
 from urllib.parse import urlsplit
 
 from .inputs import InputError
+from . import profile_ssh
 
 RESOURCE_KINDS=('nodes','connections','clusters','dbms_instances','database_bindings')
 COMMON={
@@ -62,7 +63,10 @@ def _connection(value):
     if type(kind) is not str:raise InputError('invalid shared connection kind')
     if type(settings) is not dict:raise InputError('connection settings must be an object')
     credential=_text(value.get('credential_ref',''),empty=True)
-    if kind in COMMON:
+    if kind=='ssh':
+        if credential:raise InputError('SSH credentials use explicit key-file references, not credential text')
+        settings=profile_ssh.settings(value['address'],settings)
+    elif kind in COMMON:
         if set(settings)-COMMON[kind]:raise InputError('unsupported common connection settings')
         checked=validate_source_settings(kind,settings,[])
         settings={k:v for k,v in checked.items() if k in COMMON[kind]}
@@ -143,10 +147,11 @@ def validate(value):
             mapped=[database_map[k] for k in dids]
             if any(d['instance_id']!=instance_id or d['base_id'] not in bid for d in mapped) or len({d['base_id'] for d in mapped})!=len(mapped):raise InputError('source SQL mappings do not match its instance/infobases')
         elif instance_id is not None or dids:raise InputError('SQL references belong only to SQL sources')
-        if kind in ('os','rac') and (cid is None or connection_map[cid]['kind']!=kind):raise InputError('source requires a matching shared connection')
-        if kind in ('tj','jr','source') and cid is not None and connection_map[cid]['kind'] not in ('files','git'):raise InputError('file source requires file/Git access')
+        if kind in ('os','rac') and (cid is None or connection_map[cid]['kind']!=kind and not (kind=='os' and connection_map[cid]['kind']=='ssh')):raise InputError('source requires a matching shared connection')
+        if kind in ('tj','jr','source') and cid is not None and connection_map[cid]['kind'] not in ('files','git') and not (kind in ('tj','jr') and profile_ssh.is_ssh(connection_map[cid])):raise InputError('file source requires file/Git or supported journal SSH access')
         settings=deepcopy(row.get('settings',{}))
         if type(settings) is not dict or (kind in ('sql','rac') and settings) or (kind=='os' and set(settings)-OWN_OS):raise InputError('common source settings belong to its connection')
+        if kind in ('tj','jr') and set(settings)&profile_ssh.JOURNAL_KEYS:raise InputError('common journal access belongs to its connection')
         if kind not in ('sql','rac','os'):settings=validate_source_settings(kind,settings,bid)
         cluster_id=_ref(row.get('cluster_id'),cluster_map)
         if kind=='rac' and cluster_id is not None and cluster_map[cluster_id]['ras_connection_id'] not in (None,cid):raise InputError('source RAS connection disagrees with its cluster')
@@ -186,10 +191,14 @@ def _project(value):
         if kind=='sql':connection=connections[instances[source['dbms_instance_id']]['connection_id']]
         if connection and kind in ('sql','os','rac'):
             settings=dict(deepcopy(connection['settings']),**settings)
+            if connection['kind']=='ssh':
+                settings['transport']='ssh';settings.setdefault('python','python3');settings.setdefault('use_ssl',False)
             if connection['credential_ref'] and kind in ('sql','rac'):settings['credential_ref']=connection['credential_ref']
             if kind in ('sql','os'):host=connection['address']
             else:path=connection['address']
         if kind=='sql':settings['databases']={databases[k]['base_id']:databases[k]['name'] for k in source['database_ids']}
+        if kind in ('tj','jr') and profile_ssh.is_ssh(connection):
+            settings=dict(profile_ssh.journal_settings(connection),**settings);host=connection['address']
         sources.append(dict(id=source['id'],type=kind,path=path,host=host,base_ids=list(source['base_ids']),status='not_checked',settings=settings))
     return dict(schema_version=1,name=value['name'],bases=bases,sources=sources,capability_status='configured_not_connected')
 
@@ -248,6 +257,9 @@ def upgrade_profile(value):
         for source in legacy['sources']:
             kind=source['type'];settings=deepcopy(source['settings']);node=add('nodes',dict(name=source['host'])) if source['host'] else None
             row=dict(id=source['id'],type=kind,path=source['path'],base_ids=list(source['base_ids']),node_id=node,settings=settings)
+            if kind in ('tj','jr') and settings.get('transport')=='sftp':
+                common={k:settings.pop(k) for k in list(settings) if k in profile_ssh.JOURNAL_KEYS};common.pop('transport')
+                row['connection_id']=connection('ssh',source['host'],common)
             if kind in COMMON:
                 common={k:settings.pop(k) for k in list(settings) if k in COMMON[kind]};credential=settings.pop('credential_ref','')
                 cid=connection(kind,source['path'] if kind=='rac' else source['host'],common,credential)
@@ -269,7 +281,7 @@ def upgrade_profile(value):
 def editor_context(profile):
     graph=upgrade_profile(profile)
     connections={r['id']:r for r in graph['connections']};instances={r['id']:r for r in graph['dbms_instances']}
-    bindings={s['id']:(instances[s['dbms_instance_id']]['connection_id'] if s['type']=='sql' else s['connection_id']) for s in graph['sources'] if s['type'] in COMMON}
+    bindings={s['id']:(instances[s['dbms_instance_id']]['connection_id'] if s['type']=='sql' else s['connection_id']) for s in graph['sources'] if s['type'] in COMMON or s['type'] in ('tj','jr')}
     return dict(profile=graph,view=effective_profile(graph),connection_bindings=bindings,connections=list(connections.values()),scope='configuration_only_not_connected')
 
 
@@ -284,11 +296,11 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
     original=upgrade_profile(before) if before is not None else deepcopy(fresh)
     result=deepcopy(original);bindings={} if connection_bindings is None else connection_bindings;edits={} if connection_edits is None else connection_edits
     if type(bindings) is not dict or len(bindings)>100 or type(edits) is not dict or len(edits)>200:raise InputError('invalid shared editor choices')
-    source_ids={s['id'] for s in flat['sources'] if s['type'] in COMMON}
+    source_ids={s['id'] for s in flat['sources'] if s['type'] in COMMON or s['type'] in ('tj','jr')}
     if set(bindings)-source_ids:raise InputError('editor connection refers to an absent source')
     lookup=lambda doc,kind,identity:next((r for r in doc[kind] if r['id']==identity),None)
     def fingerprint(connection):
-        return {key:connection[key] for key in ('kind','address','settings','credential_ref') if key!='credential_ref' or connection['kind']!='os'}
+        return profile_ssh.fingerprint(connection)
     old_views=effective_profile(original);old_sources={r['id']:r for r in original['sources']};old_flat={r['id']:r for r in old_views['sources']};changed_connections=set()
     for identity,patch in edits.items():
         target=lookup(result,'connections',identity)
@@ -304,7 +316,7 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
         target.clear();target.update(clean)
     # Identity claims and applicability are not transferred to a changed endpoint.
     invalidated=[];old_deps=_dependencies(original)
-    changed_addresses={cid for cid in changed_connections if lookup(original,'connections',cid)['address']!=lookup(result,'connections',cid)['address']}
+    changed_addresses={cid for cid in changed_connections if profile_ssh.endpoint(lookup(original,'connections',cid))!=profile_ssh.endpoint(lookup(result,'connections',cid))}
     changed_nodes={r['node_id'] for r in result['dbms_instances'] if r['connection_id'] in changed_addresses and r['node_id']}
     changed_nodes.update(s['node_id'] for s in result['sources'] if s['connection_id'] in changed_addresses and s['node_id'])
     for node in result['nodes']:
@@ -323,7 +335,7 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
         if any(('connections',cid) in old_deps[0][base['id']] for cid in changed_connections):
             if base['reported_identity']:invalidated.append(dict(kind='bases',id=base['id']))
             base['reported_identity']='';base['applicability']=dict(start=None,end=None)
-    edited_views=effective_profile(result);edited_bases={r['id']:r for r in edited_views['bases']};original_bases={r['id']:r for r in old_views['bases']}
+    edited_views=effective_profile(result);edited_bases={r['id']:r for r in edited_views['bases']};original_bases={r['id']:r for r in old_views['bases']};edited_sources={r['id']:r for r in edited_views['sources']}
     def copy_resource(kind,identity):
         if identity is None:return None
         row=lookup(fresh,kind,identity)
@@ -368,9 +380,23 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
         sid=item['id'];new=lookup(fresh,'sources',sid);old=old_sources.get(sid)
         if old and old['type']!=item['type']:old=None
         row=deepcopy(old or new);row.update(base_ids=list(item['base_ids']),settings=deepcopy(new['settings']),path=new['path'])
-        if old is None or item['host']!=old_flat[sid]['host']:
+        if old is None or item['host'] not in (old_flat[sid]['host'],edited_sources[sid]['host']):
             row['node_id']=copy_resource('nodes',new['node_id'])
-        if item['type'] in COMMON:
+        if item['type'] in ('tj','jr'):
+            fresh_connection=lookup(fresh,'connections',new['connection_id']) if new['connection_id'] else None
+            if sid in bindings and bindings[sid] is None:
+                if fresh_connection is None:cid=None
+                else:
+                    conn=deepcopy(fresh_connection);conn.pop('id');cid=generated('connections',conn,sid)
+            elif sid in bindings:cid=_ref(bindings[sid],{r['id']:r for r in result['connections']},False)
+            elif old is not None:
+                cid=old['connection_id'];previous=lookup(original,'connections',cid) if cid else None
+                current=lookup(result,'connections',cid) if cid else None
+                if profile_ssh.is_ssh(previous)!=profile_ssh.is_ssh(fresh_connection):raise InputError('journal access change requires an explicit connection choice')
+                if fresh_connection and profile_ssh.fingerprint(fresh_connection,journal_only=True) not in (profile_ssh.fingerprint(previous,journal_only=True),profile_ssh.fingerprint(current,journal_only=True)):raise InputError('per-card journal access conflicts with shared connection')
+            else:cid=copy_resource('connections',new['connection_id'])
+            row['connection_id']=cid
+        elif item['type'] in COMMON:
             fresh_connection=lookup(fresh,'connections',source_connection(fresh,new))
             if sid in bindings and bindings[sid] is None:
                 conn=deepcopy(fresh_connection);conn.pop('id');cid=generated('connections',conn,sid)
@@ -379,7 +405,7 @@ def compose_profile(before,view,*,connection_bindings=None,connection_edits=None
             elif old is not None:cid=source_connection(original,old)
             else:cid=copy_resource('connections',fresh_connection['id'])
             connection=lookup(result,'connections',cid)
-            if connection['kind']!=item['type']:raise InputError('editor source requires matching shared connection kind')
+            if connection['kind']!=item['type'] and not (item['type']=='os' and connection['kind']=='ssh'):raise InputError('editor source requires matching shared connection kind')
             if sid not in bindings and old is not None:
                 previous=lookup(original,'connections',source_connection(original,old))
                 if fingerprint(fresh_connection) not in (fingerprint(previous),fingerprint(connection)):raise InputError('per-card change conflicts with shared connection; edit the common resource or choose separate')
