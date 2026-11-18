@@ -107,6 +107,8 @@ class InitHandler(BaseHTTPRequestHandler):
         from .source_passports import setup_states
         return dict(investigation_id=doc['investigation_id'],revision=doc['revision'],task=doc['task'],
             template_id=doc['template']['id'],variant=doc['variant']['id'] if doc['variant'] else None,
+            template_revision=doc['template']['revision'],template_title=doc['template']['title'],
+            template_variants=doc['template']['variants'],
             time_mode=doc['time_mode'],scale=doc['scale'],
             workflow_stage=doc.get('workflow_stage','initial_analysis'),continuation=doc.get('continuation'),
             observation_window_seconds=(doc['observation_plan']['duration_seconds'] if doc['observation_plan'] else doc['episode'].get('requested_window_seconds')),
@@ -189,7 +191,13 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._json(200,check(self.server.state_dir,entrypoint_sha256=self.server.entrypoint_sha256,investigation_id=self.server.investigation_id))
             elif self.path == '/api/templates':
                 from .incident_templates import catalogue
-                self._json(200,catalogue())
+                try:book=catalogue(state_dir=self.server.state_dir)
+                except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
+                    # An embedded investigation template remains usable even if
+                    # its independent mutable catalogue is lost or damaged.
+                    book=catalogue()
+                    book['private_catalogue']=dict(status='unavailable',error_type=type(exc).__name__,detail=str(exc)[:1024])
+                self._json(200,book)
             elif self.path == '/api/source-help':
                 from .source_help import catalogue
                 self._json(200,catalogue())
@@ -228,7 +236,7 @@ class InitHandler(BaseHTTPRequestHandler):
             elif self.path=='/api/context':
                 from .investigations import revise
                 if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
-                if set(data)-{'expected_revision','template_id','variant','time_mode','scale','profile_revision'}:raise ValueError('Недопустимое поле контекста.')
+                if set(data)-{'expected_revision','template_id','template_revision','variant','time_mode','scale','profile_revision'}:raise ValueError('Недопустимое поле контекста.')
                 patch={k:v for k,v in data.items() if k!='expected_revision'}
                 result=self._context(revise(self.server.state_dir,self.server.investigation_id,patch,expected_revision=data.get('expected_revision')))
             elif self.path=='/api/ras':

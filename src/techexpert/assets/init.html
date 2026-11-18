@@ -81,6 +81,7 @@
         <p id="demo-result" role="status" aria-live="polite" class="note"></p>
       </div>
     </details>
+    <p id="template-catalogue-warning" class="hint" role="status" hidden></p>
     <details id="investigation-context" class="box" hidden open>
       <summary>Контекст из текущего чата</summary>
       <div class="stack">
@@ -183,8 +184,15 @@
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
       }
       function markChanged() { saved = null; preparedProfile = null; preparedImpact = null; matches=[];sourceSuggestions=[];q('#registration-panel').hidden=true;q('#source-suggestions').replaceChildren();message(''); }
+      function selectedTemplate() {
+        const option=q('#incident-template').selectedOptions[0];if(!option)return null;
+        const id=option.dataset.templateId,revision=Number(option.dataset.templateRevision);
+        if(investigation && id===investigation.template_id && revision===investigation.template_revision)
+          return {id,revision,variants:investigation.template_variants};
+        return templateBook.templates.find(item=>item.id===id && item.revision===revision);
+      }
       function renderVariant(selectedValue) {
-        const template = templateBook.templates.find(item=>item.id===q('#incident-template').value);
+        const template = selectedTemplate();
         const select=q('#incident-variant');select.replaceChildren(new Option('Общий вариант',''));
         (template?.variants || []).forEach(item=>select.append(new Option(item.title,item.id)));
         select.value=selectedValue || '';q('#incident-variant-field').hidden=!(template?.variants.length);
@@ -194,8 +202,18 @@
         if(!investigation)return;
         q('#investigation-task').textContent=investigation.task;
         const select=q('#incident-template');select.replaceChildren();
-        templateBook.templates.forEach(item=>select.append(new Option(item.title,item.id)));
-        select.value=investigation.template_id;renderVariant(investigation.variant);
+        function addTemplate(item,value,pinned=false){
+          const label=item.title+(item.id.startsWith('USR-') || pinned?' · ревизия '+item.revision:'')+(pinned?' · сохранённая':'');
+          const option=new Option(label,value);option.dataset.templateId=item.id;option.dataset.templateRevision=String(item.revision);select.append(option);
+        }
+        templateBook.templates.forEach(item=>addTemplate(item,item.id));
+        const current=templateBook.templates.find(item=>item.id===investigation.template_id && item.revision===investigation.template_revision);
+        let selected=investigation.template_id;
+        if(!current){
+          selected='pinned:'+investigation.template_id+':'+investigation.template_revision;
+          addTemplate({id:investigation.template_id,revision:investigation.template_revision,title:investigation.template_title},selected,true);
+        }
+        select.value=selected;renderVariant(investigation.variant);
         q('#incident-time').value=investigation.time_mode;q('#incident-scale').value=investigation.scale;
         q('#investigation-revision').textContent='Расследование · ревизия '+investigation.revision+(investigation.profile_revision?' · профиль '+investigation.profile_revision:' · профиль ещё не связан');
         const stages={initial_analysis:'Первичный анализ',prepare_observation:'Подготовка фиксации повторения',awaiting_occurrence:'Подготовка завершена · ожидается сообщение о повторении',analyze_episode:'Анализ сообщённого эпизода',verify_fix:'Проверка исправления',closed:'Расследование завершено'};
@@ -602,7 +620,7 @@
       q('#save-profile').addEventListener('click', () => perform(async () => {
         validateSources();if(!preparedProfile){await prepareProfile();renderReview();message('Проверьте список изменений и сохраните настройки.');return;}saved = await api('/api/profile',preparedProfile);editorProfile=saved;
         if(investigation){
-          try {investigation=await api('/api/context',{expected_revision:investigation.revision,template_id:q('#incident-template').value,variant:q('#incident-variant').value || null,time_mode:q('#incident-time').value,scale:q('#incident-scale').value,profile_revision:saved.revision});renderContext();}
+          try {const choice=selectedTemplate();if(!choice)throw new Error('Выберите доступную ревизию шаблона.');investigation=await api('/api/context',{expected_revision:investigation.revision,template_id:choice.id,template_revision:choice.revision,variant:q('#incident-variant').value || null,time_mode:q('#incident-time').value,scale:q('#incident-scale').value,profile_revision:saved.revision});renderContext();}
           catch(error){const revision=saved.revision;saved=null;renderReview();throw new Error('Профиль '+revision+' сохранён. Контекст расследования не обновлён: '+error.message+' Перезагрузите помощник, чтобы прочитать актуальную ревизию.');}
         }
         renderReview();message(investigation?'Профиль и контекст сохранены. Можно продолжить в текущем чате.':'Профиль сохранён. Можно продолжить в текущем чате.');
@@ -616,7 +634,13 @@
       renderBases(); renderStep();
       perform(async () => {
         renderReadiness(await api('/api/readiness'));
-        [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);renderContext();
+        [investigation,templateBook,sourceHelp]=await Promise.all([api('/api/context'),api('/api/templates'),api('/api/source-help')]);
+        const catalogueWarning=q('#template-catalogue-warning');const unavailable=templateBook.private_catalogue;
+        if(unavailable?.status==='unavailable'){
+          catalogueWarning.textContent='Частные шаблоны недоступны. Можно использовать комплектные шаблоны и сохранённый выбор расследования. '+unavailable.error_type+': '+unavailable.detail;
+          catalogueWarning.hidden=false;
+        }
+        renderContext();
         const starterLocation=await api('/api/starter-location');if(starterLocation.path && !q('#starter-path').value)q('#starter-path').value=starterLocation.path;
         const profile = await api('/api/profile');
         if (profile) {const opened=await api('/api/profile-editor',{profile});editorProfile=opened.profile;state=opened.view;selected = new Set(state.bases.map(base => base.id)); q('#environment-name').value = state.name; renderBases(); message('Открыт сохранённый профиль. Доступность источников не проверялась.'); }

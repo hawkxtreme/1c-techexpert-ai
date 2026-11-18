@@ -137,10 +137,13 @@ def main(argv=None):
     jr_events.add_argument('--event');jr_events.add_argument('--offset',type=int,default=0);jr_events.add_argument('--limit',type=int,default=20)
     jr_record=commands.add_parser('jr-record');jr_record.add_argument('artifact_id');jr_record.add_argument('record_id')
     commands.add_parser('templates')
+    template_save=commands.add_parser('template-save',help='save an inert private template variant, without source access')
+    template_save.add_argument('request',type=Path);template_save.add_argument('--expected-revision',type=int,required=True)
     help_source=commands.add_parser('source-help');help_source.add_argument('type',choices=('tj','jr','source','sql','rac','os'))
     template=commands.add_parser('template');template.add_argument('template_id');template.add_argument('--variant')
-    template.add_argument('--database-mode',choices=('file','server','unknown'),default='unknown')
-    template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'),default='unknown')
+    template.add_argument('--revision',type=int)
+    template.add_argument('--database-mode',choices=('file','server','unknown'))
+    template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'))
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
     source_context=commands.add_parser('source-context');source_context.add_argument('investigation_id');source_context.add_argument('--revision',type=int,required=True)
@@ -290,13 +293,19 @@ def main(argv=None):
             result=read_record(args.state_dir,args.artifact_id,args.record_id)
         elif args.command=='templates':
             from .incident_templates import catalogue
-            result=catalogue()
+            result=catalogue(state_dir=args.state_dir)
+        elif args.command=='template-save':
+            from .incident_templates import save_custom
+            from .inputs import read_snapshot,json_value
+            request=json_value(read_snapshot(args.request,64*1024).decode('utf-8-sig'),reject_duplicates=True)
+            result=save_custom(args.state_dir,request,expected_revision=args.expected_revision)
         elif args.command=='source-help':
             from .source_help import source_help
             result=source_help(args.type)
         elif args.command=='template':
             from .incident_templates import plan
-            result=plan(args.template_id,variant=args.variant,database_mode=args.database_mode,time_mode=args.time_mode)
+            result=plan(args.template_id,variant=args.variant,database_mode=args.database_mode,time_mode=args.time_mode,
+                        state_dir=args.state_dir,revision=args.revision)
         elif args.command=='source-context':
             from .investigations import source_context
             result=source_context(args.state_dir,args.investigation_id,revision=args.revision)

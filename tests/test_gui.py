@@ -10,6 +10,73 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_lost_private_template_head_does_not_block_retained_gui_context(self):
+        from src.techexpert.incident_templates import save_custom
+        from src.techexpert.investigations import create,load
+        first=save_custom(self.state_dir,dict(id='USR-lost',base_template_id='TPL-00',base_template_revision=1,
+                          title='Retained'),expected_revision=0)
+        case=create(self.state_dir,dict(task='Task',template_id='USR-lost',template_revision=1))
+        self.server.investigation_id=case['investigation_id']
+        head=self.state_dir/'custom-templates'/'USR-lost'/'head.json';head.unlink()
+        status,_,raw=self.request('GET','/api/templates')
+        self.assertEqual(status,200,'An unavailable private catalogue blocked the whole GUI')
+        book=json.loads(raw)
+        self.assertEqual(book['private_catalogue']['status'],'unavailable')
+        self.assertEqual(book['private_catalogue']['error_type'],'FileNotFoundError')
+        self.assertEqual(len(book['templates']),11)
+        status,_,raw=self.request('GET','/api/context')
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_title'],'Retained')
+        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_id='USR-lost',
+                                template_revision=1,time_mode='current'))
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_revision'],1)
+        self.assertEqual(load(self.state_dir,case['investigation_id'])['template'],first['template'])
+        self.assertFalse(head.exists(),'GUI reconstructed private template history')
+
+    def test_unrelated_corrupt_private_template_does_not_block_initial_setup(self):
+        from src.techexpert.incident_templates import save_custom
+        save_custom(self.state_dir,dict(id='USR-bad',base_template_id='TPL-00',base_template_revision=1,title='Bad'),expected_revision=0)
+        head=self.state_dir/'custom-templates'/'USR-bad'/'head.json';original=b'not json';head.write_bytes(original)
+        status,_,raw=self.request('GET','/api/templates')
+        self.assertEqual(status,200)
+        book=json.loads(raw);self.assertEqual(book['private_catalogue']['status'],'unavailable')
+        self.assertEqual(len(book['templates']),11);self.assertEqual(head.read_bytes(),original)
+        self.assertEqual(self.request('GET','/api/profile')[0],200)
+
+    def test_private_templates_are_visible_only_in_the_selected_local_state(self):
+        from src.techexpert.incident_templates import save_custom
+        save_custom(self.state_dir,dict(id='USR-local',base_template_id='TPL-00',base_template_revision=1,
+                    title='<script>window.unsafe=1</script>',questions=['Дополнительный вопрос?']),expected_revision=0)
+        self.assertEqual(self.request('GET','/api/templates',token=False)[0],401)
+        status,_,raw=self.request('GET','/api/templates')
+        self.assertEqual(status,200)
+        found=next((t for t in json.loads(raw)['templates'] if t['id']=='USR-local'),None)
+        self.assertIsNotNone(found,'The GUI does not expose the selected private template catalogue')
+        self.assertEqual(found['title'],'<script>window.unsafe=1</script>')
+        self.assertFalse((self.state_dir/'cases').exists());self.assertFalse((self.state_dir/'artifacts').exists())
+
+    def test_gui_context_selects_an_exact_template_revision_and_preserves_its_title(self):
+        from src.techexpert.incident_templates import save_custom
+        from src.techexpert.investigations import create,load
+        first=save_custom(self.state_dir,dict(id='USR-local',base_template_id='TPL-00',base_template_revision=1,
+                          title='First'),expected_revision=0)
+        case=create(self.state_dir,dict(task='Task',template_id='USR-local',template_revision=1))
+        self.server.investigation_id=case['investigation_id']
+        save_custom(self.state_dir,dict(id='USR-local',title='Second'),expected_revision=1)
+        status,_,raw=self.request('GET','/api/context');context=json.loads(raw)
+        self.assertEqual(status,200);self.assertEqual(context.get('template_revision'),1)
+        self.assertEqual(context.get('template_title'),'First')
+        # A save of the displayed old choice must not adopt the new private head.
+        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_id='USR-local',
+                                    template_revision=1,time_mode='current',scale='one'))
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_revision'],1)
+        self.assertEqual(load(self.state_dir,case['investigation_id'])['template'],first['template'])
+        status,_,raw=self.request('POST','/api/context',dict(expected_revision=2,template_id='USR-local',template_revision=2))
+        self.assertEqual(status,200);self.assertEqual(json.loads(raw)['template_title'],'Second')
+        status,_,raw=self.request('POST','/api/context',dict(expected_revision=1,template_revision=1))
+        self.assertEqual(status,400)  # Existing context-conflict contract; profile conflicts use 409.
+        self.assertIn('revision',json.loads(raw)['error'])
+        self.assertEqual(load(self.state_dir,case['investigation_id'])['template']['revision'],2)
+
     def test_ras_invalid_types_are_rejected_before_any_connection(self):
         from unittest.mock import patch
         with patch('src.techexpert.profiles.discover_ras',side_effect=AssertionError('invalid request connected')):

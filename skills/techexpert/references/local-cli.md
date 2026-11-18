@@ -33,6 +33,8 @@ python techexpert.py knowledge "медленное фоновое задание
 python techexpert.py source-help tj
 python techexpert.py templates
 python techexpert.py template TPL-02 --database-mode file --time-mode past
+python techexpert.py template-save "путь/частный-шаблон.json" --expected-revision 0
+python techexpert.py template USR-my-check --revision 1
 python techexpert.py investigation-create "путь/request.json"
 python techexpert.py investigation INVESTIGATION_ID
 python techexpert.py investigation-update INVESTIGATION_ID "путь/patch.json" --expected-revision 1

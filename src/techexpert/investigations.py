@@ -25,7 +25,7 @@ from .storage import ROOT,verified_case,load_comparison,read_evidence,knowledge_
 MAX_DOCUMENT=2*1024*1024
 EDITABLE={'episode','attachments','evidence','facts','hypotheses','contradictions','open_questions','tool_runs',
           'assessment','improvement','observation_plan','execution_status','harness',
-          'template_id','variant','time_mode','scale','profile_revision','workflow_stage','occurrence',
+          'template_id','template_revision','variant','time_mode','scale','profile_revision','workflow_stage','occurrence',
           'source_bindings','source_links'}
 CAUSES=('confirmed','hypothesis','insufficient_data')
 
@@ -401,18 +401,29 @@ def source_context(state_dir,investigation_id,*,revision=None):
 
 
 def create(state_dir,request):
-    _object(request,('task','template_id','variant','time_mode','scale','episode','harness'),('task',))
-    request=dict(dict(template_id='TPL-00',time_mode='unknown',scale='unknown'),**request)
+    _object(request,('task','template_id','template_revision','variant','time_mode','scale','episode','harness'),('task',))
+    request=dict(dict(template_id='TPL-00'),**request)
     _text(request['task']);book=templates()
-    if request['time_mode'] not in book['time_modes'] or request['scale'] not in book['scales']:raise InputError('invalid investigation time or scale')
-    selected=template_plan(request['template_id'],variant=request.get('variant'),time_mode=request['time_mode'])
+    if (('time_mode' in request and request['time_mode'] not in book['time_modes'])
+        or ('scale' in request and request['scale'] not in book['scales'])):raise InputError('invalid investigation time or scale')
+    if 'template_revision' in request and (type(request['template_revision']) is not int or request['template_revision']<1):
+        raise InputError('invalid requested template revision')
+    selected=template_plan(request['template_id'],variant=request.get('variant'),time_mode=request.get('time_mode'),
+                           state_dir=state_dir,revision=request.get('template_revision'))
+    defaults=selected['defaults']
+    episode={}
+    if 'database_mode' in defaults:episode['database_mode']=defaults['database_mode']
+    supplied=request.get('episode',{})
+    if not isinstance(supplied,dict):raise InputError('invalid investigation episode')
+    episode.update(deepcopy(supplied))
     profile=load_profile(state_dir)
     skill_digest=hashlib.sha256()
     for path in sorted((ROOT/'skills').rglob('SKILL.md')):
         skill_digest.update(path.relative_to(ROOT).as_posix().encode());skill_digest.update(read_snapshot(path,256*1024))
     doc=dict(schema_version=2,investigation_id=uuid.uuid4().hex,revision=1,parent_sha256=None,
         created_at=datetime.now(timezone.utc).isoformat(),task=request['task'],template=selected['template'],variant=selected['variant'],
-        template_catalogue_sha256=book['sha256'],time_mode=request['time_mode'],scale=request['scale'],episode=deepcopy(request.get('episode',{})),
+        template_catalogue_sha256=selected['catalogue_sha256'],time_mode=selected['time_mode'],
+        scale=request.get('scale',defaults.get('scale','unknown')),episode=episode,
         profile_snapshot=profile,profile_sha256=_digest(profile) if profile else None,
         versions=dict(product=__version__,knowledge=knowledge_revision(),skills_sha256=skill_digest.hexdigest(),instructions_sha256=hashlib.sha256(read_snapshot(ROOT/'AGENTS.md',256*1024)).hexdigest()),
         harness=deepcopy(request.get('harness',dict(name=None,version=None,model=None))),execution_status='partial',cause_state='insufficient_data',
@@ -442,11 +453,20 @@ def revise(state_dir,investigation_id,patch,*,expected_revision):
             _object(occurrence,('source','message','started_at','ended_at','evidence','link_basis'),('source','message','started_at','ended_at','evidence'))
             occurrence.update(id=uuid.uuid4().hex,reported_at=datetime.now(timezone.utc).isoformat())
             changes.setdefault('workflow_stage','analyze_episode')
-        if 'template_id' in changes or 'variant' in changes:
+        if 'template_id' in changes or 'template_revision' in changes or 'variant' in changes:
             tid=changes.pop('template_id',previous['template']['id'])
+            number=changes.pop('template_revision',None)
+            if 'template_revision' in patch and (type(number) is not int or number<1):
+                raise InputError('invalid requested template revision')
             variant=changes.pop('variant',previous['variant']['id'] if tid==previous['template']['id'] and previous['variant'] else None)
-            selected=template_plan(tid,variant=variant,time_mode=changes.get('time_mode',previous['time_mode']))
-            doc.update(template=selected['template'],variant=selected['variant'],template_catalogue_sha256=selected['catalogue_sha256'])
+            if tid==previous['template']['id'] and (number is None or number==previous['template']['revision']):
+                selected_variant=next((item for item in previous['template']['variants'] if item['id']==variant),None)
+                if variant is not None and selected_variant is None:raise InputError('unknown pinned template variant')
+                doc['variant']=deepcopy(selected_variant)
+            else:
+                selected=template_plan(tid,variant=variant,time_mode=changes.get('time_mode',previous['time_mode']),
+                                       state_dir=state_dir,revision=number)
+                doc.update(template=selected['template'],variant=selected['variant'],template_catalogue_sha256=selected['catalogue_sha256'])
         if 'profile_revision' in changes:
             number=changes.pop('profile_revision')
             if type(number) is not int or number<1:raise InputError('invalid environment profile revision')
