@@ -46,8 +46,8 @@ def tools(profile='full'):
         result.append(dict(name=name,title=operation,description=f"{operation}: {route['impact']}. Sources: {'; '.join(route['required_sources'])}. "
             'Same managed CLI operation, private receipts, fixed budgets. Evidence needs interpretation by the current AI harness; partial coverage is not absence of cause.',
             inputSchema=input_schema(operation),outputSchema=deepcopy(route['output_schema']),
-            annotations=dict(readOnlyHint=operation not in {'input.inspect','case.analyze','case.compare','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS}|cap._diagnostics.CREATORS,destructiveHint=False,
-                idempotentHint=True,openWorldHint=operation in {'input.inspect','source.check','case.analyze','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS}|cap._diagnostics.CREATORS)))
+            annotations=dict(readOnlyHint=operation not in {'input.inspect','case.analyze','case.compare','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS,*cap._remote.OPERATIONS}|cap._diagnostics.CREATORS,destructiveHint=False,
+                idempotentHint=True,openWorldHint=operation in {'input.inspect','source.check','case.analyze','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS,'remote.inspect','remote.capture'}|cap._diagnostics.CREATORS)))
     for suffix,(action,args,description) in CONTROLS.items():
         result.append(dict(name='techexpert_'+suffix,title=suffix,description=description,inputSchema=deepcopy(args),outputSchema=responses.schema(),
             annotations=dict(readOnlyHint=action not in ('reconcile','cancel'),destructiveHint=False,idempotentHint=True,openWorldHint=False)))

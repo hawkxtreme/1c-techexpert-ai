@@ -14,12 +14,13 @@ def schemas(cap,api_operations):
         max_owned_bytes=cap.integer(1024**2,256*1024**2,256*1024**2),
         max_value_bytes=cap.integer(16384,16*1024**2,16*1024**2)),[])
     from .logcfg_api import scope_schemas as logcfg_schemas
+    from .remote_api import scope_schemas as remote_schemas
     scope=cap.obj(dict(operations=cap.array(cap.string(64,enum=list(api_operations)),len(api_operations)),
         cases=cap.array(cap.CASE,100),artifacts=cap.array(cap.CASE,100),comparisons=cap.array(cap.CASE,100),
         investigations=cap.array(cap.obj(dict(id=cap.CASE,revision=cap.integer(1,1000,1)),['id','revision']),100),
         manifests=cap.array(cap.FILE,64),measurements=cap.array(cap.FILE,64),
         collectors=cap.array(cap.obj(dict(settings=deepcopy(cap.OS),max_runs=cap.integer(1,5,1)),['settings']),8),
-        intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap),**logcfg_schemas(cap)))
+        intakes=cap.array(cap.obj(dict(settings=deepcopy(cap.INPUTS),max_runs=cap.integer(1,5,1)),['settings']),8),**scope_schemas(cap),**logcfg_schemas(cap),**remote_schemas(cap)))
     return dict(program=dict(type='string',minLength=1,maxLength=65536,x_multiline=True),
         language=cap.string(32,enum=['bounded-python-v1'],default='bounded-python-v1'),
         bindings=dict(type='object',maxProperties=64,additionalProperties=True,default={},x_bounded_json=16384),
@@ -49,6 +50,8 @@ def normalize(arguments):
         profile['settings']={k:v for k,v in settings.items() if v is not None}
     from . import diagnostic_adapters as drivers
     from . import logcfg_api
+    from . import remote_api
+    for plan in result['scope']['remote_plans']:plan['settings']=remote_api.normalize('remote.plan',plan['settings'])
     for field,operation in [('logcfg_plans','logcfg.prepare'),('logcfg_rollbacks','logcfg.rollback_plan')]:
         for plan in result['scope'][field]:plan['settings']=logcfg_api.normalize(operation,plan['settings'])
     result['scope']['source_snapshots']=[drivers.normalize_source(p) for p in result['scope']['source_snapshots']]
@@ -71,6 +74,8 @@ class Scope:
         self.observation_runs={kind:[0]*len(value[kind]) for kind in ('rac','postgresql')}
         self.intake_runs=[0]*len(value.get('intakes',[]))
         self.logcfg_runs={field:[0]*len(value.get(field,[])) for field in ('logcfg_plans','logcfg_rollbacks')}
+        self.remote_plan_runs=[0]*len(value.get('remote_plans',[]))
+        self.remote_calls=[dict(calls=0,protocol=0,retained=0) for _ in value.get('remote_calls',[])]
 
     def authorize(self,operation,arguments):
         if operation not in self.api_operations or operation not in self.operations:raise CodeError('scope_denied','Operation is outside the caller-selected API scope.')
@@ -80,7 +85,23 @@ class Scope:
             base=(operation,path_key(path))
             return base+(arguments['input_plan'],tuple(sorted(arguments['members']))) if arguments.get('input_plan') else base
         if operation in ('jr.import','os.import','apdex.import') and arguments.get('input_plan'):target('artifacts',arguments['input_plan'])
-        if operation in ('logcfg.prepare','logcfg.rollback_plan'):
+        if operation=='remote.parse':target('artifacts',arguments['capture_id'])
+        elif operation=='remote.plan':
+            selected=next((i for i,p in enumerate(self.value.get('remote_plans',[])) if p['settings']==arguments and self.remote_plan_runs[i]<p['max_runs']),None)
+            if selected is None:raise CodeError('scope_denied','Remote preparation exceeds the exact approved offline plan.')
+            self.remote_plan_runs[selected]+=1
+        elif operation in ('remote.inspect','remote.capture'):
+            target('artifacts',arguments['plan_id'])
+            if operation=='remote.capture':target('artifacts',arguments['catalog_id'])
+            selected=None;retained=arguments.get('max_bytes',0)
+            for i,plan in enumerate(self.value.get('remote_calls',[])):
+                used=self.remote_calls[i]
+                if (plan['plan_id']==arguments['plan_id'] and plan['source_id']==arguments['source_id']
+                    and used['calls']<plan['max_calls'] and used['protocol']+arguments['protocol_bytes']<=plan['max_protocol_bytes']
+                    and used['retained']+retained<=plan['max_retained_bytes'] and arguments['timeout_seconds']<=plan['max_timeout_seconds']):selected=i;break
+            if selected is None:raise CodeError('scope_denied','Remote source, transfer reservations or repeat count exceed the approved plan.')
+            used=self.remote_calls[selected];used['calls']+=1;used['protocol']+=arguments['protocol_bytes'];used['retained']+=retained
+        elif operation in ('logcfg.prepare','logcfg.rollback_plan'):
             if operation=='logcfg.rollback_plan':target('artifacts',arguments['proposal_id'])
             field='logcfg_plans' if operation=='logcfg.prepare' else 'logcfg_rollbacks'
             selected=next((i for i,p in enumerate(self.value.get(field,[])) if p['settings']==arguments and self.logcfg_runs[field][i]<p['max_runs']),None)
@@ -146,8 +167,11 @@ class Scope:
 
     def produced(self,operation,data):
         if not isinstance(data,dict):return
-        field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-            **{op:('artifact_id','artifacts') for op in ('logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
+        if operation=='remote.parse':
+            field,kind=('case_id','cases') if 'case_id' in data else ('artifact_id','artifacts')
+        else:
+            field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
+                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

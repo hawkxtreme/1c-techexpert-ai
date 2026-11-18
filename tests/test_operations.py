@@ -140,6 +140,20 @@ class ManagedOperationTests(unittest.TestCase):
         config.write_bytes((self.state/'artifacts'/prepared['artifact_id']/'sources/logcfg.xml').read_bytes())
         rollback=call('logcfg.rollback_plan',proposal_id=prepared['artifact_id'],current_file=str(config))
         self.assertEqual(rollback['result']['action'],'replace_file')
+        from test_remote_budget import settings as remote_settings
+        from test_remote_intake import capture as remote_fixture
+        from src.techexpert.remote_transfers import dependency
+        from src.techexpert.artifacts import save_artifact
+        import stat
+        remote_args=dict(remote_settings(self.folder),investigation_id=doc['investigation_id'])
+        remote_args['sources'][0]['connection'].update(host='reader@127.0.0.1',port=9)
+        remote_plan=call('remote.plan',**remote_args)
+        call('remote.inspect',plan_id=remote_plan['artifact_id'],source_id='tj',protocol_bytes=16384,timeout_seconds=1,expected='partial')
+        catalogue=save_artifact(self.state,'remote_catalog',{},[],dict(schema_version=1,profile='sftp-v3-catalogue-v1',transfer_status='completed',
+            plan=dependency(self.state,remote_plan),source_id='tj',members=[dict(id='m1',relative_path='one.log',bytes=3,attributes=dict(size=3,permissions=stat.S_IFREG|0o600,mtime=1),importable=True)]))
+        call('remote.capture',plan_id=remote_plan['artifact_id'],source_id='tj',catalog_id=catalogue['artifact_id'],members=['m1'],protocol_bytes=16384,max_bytes=10,timeout_seconds=1,expected='partial')
+        retained=remote_fixture(self.state,[('os.json',(self.state/'artifacts'/artifact['artifact_id']/'sources/s1.bin').read_bytes())])
+        call('remote.parse',capture_id=retained['artifact_id'],adapter='os',settings=dict(members=['m1']))
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

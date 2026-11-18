@@ -106,7 +106,8 @@ def investigate(manifest_path, state_dir, *, intake=None):
             if (source['id']!=f's{number}' or source['path']!=capture['path']
                 or source['size']!=capture['bytes'] or source['sha256']!=capture['sha256']):raise InputError('selected input capture integrity mismatch')
             origin=capture['input_origin'];source['input_origin']=dict(origin)
-            source['path']=origin['path']+('!/'+origin['member'] if origin['kind']=='zip' else '/'+origin['member'] if origin['kind']=='directory' else '')
+            source['path']=(origin['path']+'!/'+origin['member'] if origin['kind']=='zip'
+                else origin['path'].rstrip('/')+'/'+origin['member'] if origin['kind'] in ('directory','sftp') else origin['path'])
             bundle['source_attempts'][number-1]['path']=source['path']
     has_correlation = bundle['manifest'].get('correlation_profile') == '1c-file-job-markers-v1'
     result = job_report(bundle) if has_correlation else analyze_events(bundle['events'], bundle['manifest']['selection'])

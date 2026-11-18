@@ -205,7 +205,7 @@ class IncidentDraftTests(unittest.TestCase):
     def test_raw_logcfg_proposals_and_rollback_sources_are_not_public_excerpts(self):
         from src.techexpert.artifacts import save_artifact
         from src.techexpert.investigations import revise
-        for kind in ('logcfg_proposal','logcfg_rollback'):
+        for kind in ('logcfg_proposal','logcfg_rollback','remote_capture'):
             with self.subTest(kind=kind),tempfile.TemporaryDirectory() as temp:
                 state=Path(temp);inv=self.investigation(state)
                 secret=b'<config><eq property="Password" value="SYNTHETICPRIVATECREDENTIAL42"/></config>'
@@ -325,7 +325,7 @@ class IncidentDraftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             state=Path(temp);inv=self.investigation(state);view=self.api.prepare(state,inv['investigation_id'])
             folder=state/'incident-drafts'/view['draft_id']/'revisions'/'000001'
-            source=json.loads((folder/'source.json').read_text(encoding='utf-8'));source['sanitizer_version']=8
+            source=json.loads((folder/'source.json').read_text(encoding='utf-8'));source['sanitizer_version']=9
             raw=json.dumps(source).encode();(folder/'source.json').write_bytes(raw)
             receipt=json.loads((folder/'receipt.json').read_text(encoding='utf-8'));receipt['source_sha256']=hashlib.sha256(raw).hexdigest()
             (folder/'receipt.json').write_text(json.dumps(receipt),encoding='utf-8')

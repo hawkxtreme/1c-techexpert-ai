@@ -122,7 +122,8 @@ def _snapshots(state,operation,args,data,*,output=None):
         reference['receipt_digest']=fs.digest(fs.read(base/'receipt.json',8192))
         if reference not in references:references.append(reference)
         return report
-    if operation in capabilities._logcfg.OPERATIONS:capabilities._logcfg.pin(state,operation,args,data,add)
+    if operation in capabilities._remote.OPERATIONS:capabilities._remote.pin(state,operation,args,data,add)
+    elif operation in capabilities._logcfg.OPERATIONS:capabilities._logcfg.pin(state,operation,args,data,add)
     elif operation=='sample.describe':
         from .sample_description import pin
         pin(state,args,data,add,references)

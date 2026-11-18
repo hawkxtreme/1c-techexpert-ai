@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=9
+SANITIZER_VERSION=10
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -281,6 +281,8 @@ def _source_bytes(state_dir,doc,evidence_id):
             raise InputError('private knowledge-use snapshots are not public excerpts; cite the card/source URL or provide separately reviewed observation text')
         if kind in ('logcfg_proposal','logcfg_rollback'):
             raise InputError('private configuration XML and diffs require separate prepared text; raw logcfg artifacts are not public excerpts')
+        if kind=='remote_capture':
+            raise InputError('raw remote transfers require separate prepared text; use parsed reviewed observations, not transport bundles')
         if kind=='native-jr':
             raise InputError('native JR dictionaries, parts and serialized records require separate prepared text; use parsed observations in the proposal')
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])

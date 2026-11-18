@@ -44,8 +44,12 @@ def binding(report, ref, source):
 
 def check_plan(plan, binding, source, crc=None):
     from .input_intake import selected_members
-    if (plan.get('kind') != 'input_catalog' or plan.get('sources') != []
-        or fs.digest(plan) != binding['report_digest']):
+    if plan.get('kind')=='remote_capture':
+        from .remote_intake import validate_capture
+        validate_capture(plan)
+    elif plan.get('kind')!='input_catalog' or plan.get('sources')!=[]:
+        raise InputError('unsupported retained input catalogue')
+    if fs.digest(plan) != binding['report_digest']:
         raise InputError('source input catalogue integrity mismatch')
     member = selected_members(plan, [binding['member_id']])[0]
     root = plan['result']['roots'][member['root']]

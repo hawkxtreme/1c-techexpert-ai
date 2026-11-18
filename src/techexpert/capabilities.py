@@ -110,6 +110,8 @@ ROUTES['investigation.sources']['data_schema']['properties'].update(investigatio
 ROUTES['investigation.sources']['output_schema']=response_schema(ROUTES['investigation.sources']['data_schema'])
 from . import logcfg_api as _logcfg
 ROUTES.update(_logcfg.routes(_sys.modules[__name__]))
+from . import remote_api as _remote
+ROUTES.update(_remote.routes(_sys.modules[__name__]))
 CODE_API=tuple(ROUTES)
 from .code_policy import schemas as _code_schemas
 _code_arguments=_code_schemas(_sys.modules[__name__],CODE_API)
@@ -198,6 +200,7 @@ def normalize_request(value):
         from .sample_description import normalize
         args=normalize(**args)
     if operation in _logcfg.OPERATIONS:args=_logcfg.normalize(operation,args)
+    if operation in _remote.OPERATIONS:args=_remote.normalize(operation,args)
     if operation=='os.import':
         from .input_adapters import normalize
         args=normalize(args,single=True)
@@ -241,6 +244,7 @@ def execute(operation,args,state,output,*,stop=None):
         from .sample_description import describe
         data=describe(state,**args)
     elif operation in _logcfg.OPERATIONS:data,targets=_logcfg.execute(operation,args,state,output)
+    elif operation in _remote.OPERATIONS:data,targets=_remote.execute(operation,args,state,output,stop)
     elif operation=='case.events':data=storage.list_native_events(state,**args)
     elif operation=='case.evidence':data=storage.read_evidence(state,**args)
     elif operation=='case.compare':data=storage.compare_cases(state,args['before'],args['after'],output_state_dir=output);targets=[dict(kind='comparisons',id=data['comparison_id'])]
@@ -278,6 +282,7 @@ def execute(operation,args,state,output,*,stop=None):
 
 
 def outcome(operation,data):
+    if operation in _remote.OPERATIONS:return _remote.outcome(operation,data)
     if operation in _logcfg.OPERATIONS and data['result']['status']=='needs_review':return 'partial','logcfg_needs_review'
     if operation=='sample.describe':
         if not data['statistics']['count']:return 'partial','sample_no_known_durations'

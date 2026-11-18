@@ -35,6 +35,9 @@ def inspect(state,inputs,*,limits=None):
 
 def read_plan(state,input_plan):
     plan=load_artifact(state,input_plan)
+    if plan['kind']=='remote_capture':
+        from .remote_intake import validate_capture
+        return validate_capture(plan)
     if (plan['kind']!='input_catalog' or plan['sources'] or type(plan['result']) is not dict
         or plan['result'].get('schema_version')!=1):raise InputError('expected a saved diagnostic input catalogue')
     return plan
@@ -54,7 +57,8 @@ def selected_members(plan,member_ids,*,expected_root=None,flat=False):
         parts=files.name_parts(member['relative_path'])
         root=saved['roots'][member['root']]
         if expected_root is not None and path_key(root['path'])!=path_key(expected_root):raise InputError('selected member is outside the approved original root')
-        if root['kind']=='zip':locator=('zip',os.path.normcase(root['path']),member['relative_path'])
+        if root['kind']=='sftp':locator=('sftp',root['path'],member['relative_path'])
+        elif root['kind']=='zip':locator=('zip',os.path.normcase(root['path']),member['relative_path'])
         else:
             original=Path(root['path']) if root['kind']=='file' else Path(root['path']).joinpath(*member['relative_path'].split('/'))
             locator=('file',path_key(original))
@@ -72,12 +76,16 @@ def capture_selected(state,output,input_plan,member_ids,*,expected_root=None,fla
     plan=read_plan(state,input_plan)
     if expected_plan_digest is not None and digest(plan)!=expected_plan_digest:raise InputError('saved input catalogue changed during preparation')
     selection=selected_members(plan,member_ids,expected_root=expected_root,flat=flat);saved=plan['result']
-    settings=files.normalize([{k:r[k] for k in ('path','kind')} for r in saved['roots']],saved['limits'])
-    if catalogue(settings)!=saved:raise InputError('input catalogue changed since preview')
     needed=sum(m['bytes'] for m in selection)*2+2*1024**2
     ancestor=Path(output).absolute()
     while not ancestor.exists():ancestor=ancestor.parent
     if shutil.disk_usage(ancestor).free-needed<10*1024**3:raise InputError('insufficient private capture space above disk floor')
+    if plan['kind']=='remote_capture':
+        if expected_root is not None:raise InputError('use remote.parse for retained remote adapter imports')
+        from .remote_intake import stage
+        return stage(state,output,plan,selection,flat=flat)
+    settings=files.normalize([{k:r[k] for k in ('path','kind')} for r in saved['roots']],saved['limits'])
+    if catalogue(settings)!=saved:raise InputError('input catalogue changed since preview')
     stage=private(Path(output)/'input-stage'/uuid.uuid4().hex);captured={}
     for root_index,root in enumerate(saved['roots']):
         selected=[m for m in selection if m['root']==root_index]
