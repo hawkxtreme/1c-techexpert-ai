@@ -163,6 +163,13 @@ def main(argv=None):
     case_cleanup_apply.add_argument('--expected-sha256',required=True)
     case_cleanup_status=commands.add_parser('case-source-cleanup-status')
     case_cleanup_status.add_argument('case_id');case_cleanup_status.add_argument('source_id')
+    for name in ('case-index-build', 'case-index-status', 'case-index-cleanup-plan'):
+        case_index = commands.add_parser(name)
+        case_index.add_argument('case_id');case_index.add_argument('source_id')
+        if name=='case-index-cleanup-plan':case_index.add_argument('--use-policy',action='store_true')
+    index_cleanup=commands.add_parser('case-index-cleanup-apply')
+    index_cleanup.add_argument('document',type=Path)
+    index_cleanup.add_argument('--expected-sha256',required=True)
     from .retention_policy import CATEGORIES as retention_categories, DEFAULT_CATEGORY
     policy=commands.add_parser('retention-policy',help='show the local retention choice')
     policy.add_argument('--category',choices=retention_categories,default=DEFAULT_CATEGORY)
@@ -457,6 +464,18 @@ def main(argv=None):
                 from .inputs import read_snapshot,json_value
                 document=json_value(read_snapshot(args.document,case_retention.MAX_PLAN_BYTES).decode('utf-8-sig'),reject_duplicates=True)
                 result=case_retention.apply(args.state_dir,document,expected_sha256=args.expected_sha256)
+        elif args.command in ('case-index-build', 'case-index-status', 'case-index-cleanup-plan', 'case-index-cleanup-apply'):
+            from . import case_event_index, index_retention
+            if args.command=='case-index-build':
+                result=case_event_index.build(args.state_dir,args.case_id,args.source_id)
+            elif args.command=='case-index-status':
+                result=case_event_index.inspect(args.state_dir,args.case_id,args.source_id)
+            elif args.command=='case-index-cleanup-plan':
+                result=index_retention.preview(args.state_dir,args.case_id,args.source_id,use_policy=args.use_policy)
+            else:
+                from .inputs import read_snapshot,json_value
+                document=json_value(read_snapshot(args.document,32768).decode('utf-8-sig'),reject_duplicates=True)
+                result=index_retention.apply(args.state_dir,document,expected_sha256=args.expected_sha256)
         elif args.command in ('source-export-cleanup-plan','source-export-cleanup-apply'):
             from . import export_retention
             if args.command=='source-export-cleanup-plan':

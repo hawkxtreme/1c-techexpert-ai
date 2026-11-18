@@ -46,6 +46,8 @@ description: Вести расследование технического ин
 
 Срок снимков смотри через `retention-policy --category case-inputs`. `retention-policy-save POLICY.json --category case-inputs --expected-revision N` принимает `schema_version` 1 и `case_input_days` в днях, `null` сохраняет снимки бессрочно. Перед проверкой срока добавь `--use-policy` к предпросмотру. После удаления опирайся на `reproducibility` в `investigation ID`; сохранённую оценку показывай как историческую.
 
+Для повторных запросов по сохранённому ТЖ используй `case-index-build CASE_ID SOURCE_ID` и обычный поиск событий. `case-index-status` показывает наличие индекса, `investigation-materials ID --category indexes` показывает объём. При очистке покажи `case-index-cleanup-plan CASE_ID SOURCE_ID`, примени одобренный `case-index-cleanup-apply PLAN.json --expected-sha256 HASH`. Отдельный срок задаётся полем `case_index_days` в `retention-policy-save` с категорией `case-indexes`. После очистки индекс можно перестроить из сохранённого снимка.
+
 ## Специальные профили
 
 Профиль выбирается по имеющимся данным и проверенной совместимости. [SC-01](references/sc01.md) описывает контрольное фоновое задание и его маркеры; детали этого профиля применяются только в соответствующем случае. Для общей работы используй фактически подходящий адаптер, шаблон и источники.

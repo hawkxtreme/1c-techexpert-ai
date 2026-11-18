@@ -15,6 +15,12 @@ def native_report():
             'Сопоставить доступные свидетельства и конкурирующие объяснения в текущем harness.'])
 
 
+def with_evidence(record, source):
+    record['evidence'] = dict(id=f"{source['id']}:{record['line']}", source=source['id'], sha256=source['sha256'],
+                              **{key:record[key] for key in ('line','end_line','byte_start','byte_end')})
+    return record
+
+
 def preview_record(record):
     # A source is untrusted and a single SQL/Context property can be very large.
     result = {key: record[key] for key in ('event', 'raw_time', 'timestamp', 'timestamp_utc',

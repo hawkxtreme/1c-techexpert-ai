@@ -21,6 +21,7 @@ def main(folder):
     folder=state.safe(folder);plan=state.plan(folder);request=plan['request'];started=time.monotonic()
     state.write(folder/'worker-identity.json',state.process_identity(os.getpid()))
     deadline=plan['deadline_monotonic']
+    memory = 1024**3
     if os.name!='nt':
         import resource
         inherited=resource.getrlimit(resource.RLIMIT_AS)
@@ -61,7 +62,9 @@ def main(folder):
             limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
     outcome='succeeded';data=None;targets=[];message=None;stop_reason=None;command_stop=None
     try:
-        data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',stop=stop)
+        bound = plan.get('kernel',{}).get('limits',{}).get('memory_bytes',memory)
+        data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',
+                             stop=stop, memory_bytes=min(memory,bound))
         if request['operation']=='code.execute':outcome=data['result_status']
         if request['operation']!='code.execute':outcome,stop_reason=output_status(request['operation'],data)
     except CommandStopped as exc:

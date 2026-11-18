@@ -6,7 +6,7 @@ import stat
 from . import artifacts, investigations, operation_state as fs, storage
 from .inputs import InputError, MAX_FILE_BYTES
 
-CATEGORIES = ('reports', 'copies', 'metadata', 'evidence', 'working_copies')
+CATEGORIES = ('reports', 'copies', 'metadata', 'evidence', 'working_copies', 'indexes')
 PRODUCTS = {
     'case': (storage.case_folder, 'manifest.json', storage.load_case),
     'artifact': (artifacts.artifact_folder, 'request.json', artifacts.read_artifact_record),
@@ -211,6 +211,20 @@ def _including_dependents(selected, parents):
     return selected
 
 
+def _case_index(state, inventory, owner, source_id):
+    from .case_event_index import path_for
+    try:
+        path = path_for(state, owner['product_id'], source_id)
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except (OSError, InputError):
+        inventory.issues['case_index_unavailable'] += 1
+        return
+    entry = inventory.file(path, 'indexes', dict(owner, source_id=source_id))
+    entry.update(rebuild_requires='verified_saved_source', evidence_dependency=False)
+
+
 def _products(state, inventory, queue):
     from .case_retention import status as case_retirement
     visited = {}
@@ -247,6 +261,7 @@ def _products(state, inventory, queue):
         for path, size in files:
             row = inventory.file(path, 'copies', owner, expected=size)
             if key[0] == 'case':
+                _case_index(state, inventory, owner, path.stem)
                 try:
                     retirement = case_retirement(state, key[1], path.stem, read=inventory.read_metadata)
                 except (OSError, ValueError, KeyError, TypeError, RecursionError):

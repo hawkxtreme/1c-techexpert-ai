@@ -13,7 +13,7 @@ from . import __version__
 from .analysis import analyze_events,parse_time
 from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS,open_verified_snapshot
 from .native_tj import iter_tj
-from .observations import summarize_native, preview_record,native_report
+from .observations import summarize_native, preview_record, native_report, with_evidence
 from .job_correlation import correlate_job, record_matches_link
 from .order_load import analyze_order_load
 from .comparison import compare_reports
@@ -232,8 +232,10 @@ def read_evidence(state_dir, case_id, evidence_id):
 
 
 def list_native_events(state_dir, case_id, *, source_id=None, event=None, properties=None, offset=0, limit=20,
-                       linked_run=False,window=None):
+                       linked_run=False,window=None,index_memory_bytes=None):
     """Page exact native matches; only an explicit proven link permits run membership."""
+    from .case_event_index import page as indexed_page
+    from .case_retention import require_available
     from .source_coverage import validate_request
     window=validate_request(window=window)['window']
     bounds=(parse_time(window['start']),parse_time(window['end'])) if window else None
@@ -246,13 +248,15 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
         raise InputError('at most 16 bounded property filters are supported')
     if event is not None and (not isinstance(event,str) or not 1<=len(event)<=64):
         raise InputError('invalid event name')
-    report = load_case(state_dir, case_id)
+    report, digest = load_case(state_dir, case_id, with_digest=True)
     link = report.get('job_correlation', {}).get('native_link', {})
+    verified_sources = []
     if linked_run:
         for source in report['sources']:
             if source['format']=='1c-job-runtime-v1':
                 if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
                 with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')):pass
+                verified_sources.append(source['id'])
     sources = [s for s in report['sources'] if s['format']=='1c-tj-text-v1']
     if source_id is not None:
         sources = [s for s in sources if s['id']==source_id]
@@ -261,10 +265,21 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
     matched, page, statuses = 0, [], []
     for source in sources:
         if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
-        with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')) as stream:
+        raw = case_source_path(state_dir, case_id, source['id'])
+        verified_sources.append(source['id'])
+        indexed = indexed_page(state_dir, case_id, digest, source, raw, event=event, properties=properties,
+                               bounds=bounds, linked_run=linked_run, offset=max(0, offset-matched),
+                               limit=limit-len(page), memory_bytes=index_memory_bytes)
+        if indexed is not None:
+            count, rows, status = indexed
+            matched += count
+            page.extend(rows)
+            statuses.append(dict(source=source['id'], status=status))
+            continue
+        with open_verified_snapshot(raw,source['sha256'],expected_size=source.get('size')) as stream:
             scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
             for record in scan:
-                record['evidence']=dict(id=f"{source['id']}:{record['line']}",source=source['id'],sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')})
+                with_evidence(record, source)
                 if bounds and not bounds[0]<=parse_time(record['timestamp_utc'])<bounds[1]:continue
                 if linked_run and not record_matches_link(record,link):continue
                 if event is not None and record['event']!=event:continue
@@ -272,6 +287,8 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
                 if offset<=matched<offset+limit:page.append(preview_record(record))
                 matched+=1
             statuses.append(dict(source=source['id'],status=scan.summary['status']))
+    for identifier in verified_sources:
+        require_available(state_dir, case_id, identifier)
     result=dict(case_id=case_id,matched_count=matched,offset=offset,limit=limit,
                 next_offset=offset+limit if offset+limit<matched else None,records=page,
                 source_statuses=statuses,integrity_verified=True,untrusted_source_content=True,

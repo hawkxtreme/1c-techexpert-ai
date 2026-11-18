@@ -222,7 +222,7 @@ def normalize_request(value):
     result.update(arguments={key:value for key,value in args.items() if value is not None},budget=budget)
     return result
 
-def execute(operation,args,state,output,*,stop=None):
+def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
     from . import storage
     targets=[]
     if operation=='case.analyze':
@@ -249,7 +249,7 @@ def execute(operation,args,state,output,*,stop=None):
         data=describe(state,**args)
     elif operation in _logcfg.OPERATIONS:data,targets=_logcfg.execute(operation,args,state,output)
     elif operation in _remote.OPERATIONS:data,targets=_remote.execute(operation,args,state,output,stop)
-    elif operation=='case.events':data=storage.list_native_events(state,**args)
+    elif operation=='case.events':data=storage.list_native_events(state,**args,index_memory_bytes=memory_bytes)
     elif operation=='case.evidence':data=storage.read_evidence(state,**args)
     elif operation=='case.compare':data=storage.compare_cases(state,args['before'],args['after'],output_state_dir=output);targets=[dict(kind='comparisons',id=data['comparison_id'])]
     elif operation=='comparison.show':data=storage.load_comparison(state,args['comparison_id'])

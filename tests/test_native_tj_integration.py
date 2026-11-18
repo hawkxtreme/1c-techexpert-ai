@@ -1,9 +1,11 @@
 import json
+import os
 import tempfile
 import unittest
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 from src.techexpert.inputs import InputError, load_manifest
 from src.techexpert.storage import investigate, read_evidence, load_case
@@ -151,6 +153,106 @@ class NativeIntegrationTests(unittest.TestCase):
             bad=subprocess.run(command+['--property','broken'],capture_output=True,encoding='utf-8',timeout=15)
             self.assertEqual(bad.returncode,2)
             self.assertEqual(json.loads(bad.stdout)['status'],'error')
+
+
+class SavedTJIndexTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.state = self.root / 'state'
+        self.originals = [self.root / name for name in ('first.txt', 'second.txt')]
+        self.exact = 'Д' * 513
+        self.originals[0].write_bytes((NATIVE + f'46:00.000000-4,EXCP,0,SessionID=13,Detail={self.exact}\n').encode('utf-8'))
+        self.originals[1].write_bytes((NATIVE + '47:00.000000-2,EXCP,1,SessionID=13,Detail=A,Detail=B\n').encode('utf-8'))
+        self.case = investigate(write_manifest(self.root, [native_spec(p) for p in self.originals]), self.state)['case_id']
+
+    def test_indexed_pages_match_existing_route_for_exact_filters_and_multiple_sources(self):
+        from src.techexpert import case_event_index, storage
+
+        queries = ({}, dict(event='CALL', offset=1, limit=1),
+                   dict(properties={'Detail': self.exact}), dict(properties={'Detail': 'A'}),
+                   dict(window=dict(start='2026-11-15T06:46:00+00:00', end='2026-11-15T06:47:00+00:00')),
+                   dict(offset=10**22, limit=1), dict(linked_run=True))
+        baseline = [storage.list_native_events(self.state, self.case, **query) for query in queries]
+        self.assertEqual(baseline[2]['matched_count'], 1)
+        self.assertEqual(baseline[3]['matched_count'], 0)
+        for path in self.originals:
+            path.unlink()
+        for source_id in ('s1', 's2'):
+            prepared = case_event_index.build(self.state, self.case, source_id)
+            self.assertEqual(prepared['status'], 'ready')
+            self.assertTrue(case_event_index.build(self.state, self.case, source_id)['replayed'])
+        with patch.object(storage, 'iter_tj', side_effect=AssertionError('used the raw scanner')):
+            result = [storage.list_native_events(self.state, self.case, **query) for query in queries]
+        self.assertEqual(result, baseline)
+        with patch.object(case_event_index, '_query', side_effect=AssertionError('low-memory query opened SQLite')):
+            self.assertEqual(storage.list_native_events(self.state, self.case, index_memory_bytes=64*1024**2), baseline[0])
+        second = storage.case_source_path(self.state, self.case, 's2')
+        second.write_bytes(b'truncated')
+        with self.assertRaisesRegex(InputError, 'snapshot integrity'):
+            storage.list_native_events(self.state, self.case, limit=1)
+
+    def test_unusable_cache_falls_back_but_never_masks_damaged_raw_evidence(self):
+        from src.techexpert import case_event_index, storage
+
+        expected = storage.list_native_events(self.state, self.case, source_id='s1')
+        prepared = case_event_index.build(self.state, self.case, 's1')
+        cache = Path(prepared['path'])
+        cache.write_bytes(b'broken index')
+        self.assertEqual(storage.list_native_events(self.state, self.case, source_id='s1'), expected)
+        rebuilt = case_event_index.build(self.state, self.case, 's1')
+        self.assertNotEqual(prepared['generation'], rebuilt['generation'])
+        with patch.object(case_event_index, '_query', side_effect=MemoryError):
+            self.assertEqual(storage.list_native_events(self.state, self.case, source_id='s1'), expected)
+        raw = storage.case_source_path(self.state, self.case, 's1')
+        with raw.open('r+b') as f:
+            f.seek(-2, 2)
+            f.write(b'x')
+        with self.assertRaisesRegex(InputError, 'snapshot integrity'):
+            storage.list_native_events(self.state, self.case, source_id='s1', event='NO-MATCH', offset=99999)
+
+    @unittest.skipUnless(os.name == 'nt', 'raw source retirement uses Windows file handles')
+    def test_retirement_during_an_indexed_query_rejects_reoccupied_source(self):
+        from src.techexpert import case_event_index, case_retention, storage
+
+        case_event_index.build(self.state, self.case, 's1')
+        approval = case_retention.preview(self.state, self.case, 's1')
+        raw = storage.case_source_path(self.state, self.case, 's1')
+        saved = raw.read_bytes()
+        search = case_event_index._query
+
+        def retire_during_lookup(*args):
+            result = search(*args)
+            case_retention.apply(self.state, approval['plan'], expected_sha256=approval['plan_sha256'])
+            raw.write_bytes(saved)
+            return result
+
+        with patch.object(case_event_index, '_query', side_effect=retire_during_lookup):
+            with self.assertRaisesRegex(InputError, 'retired case snapshot'):
+                storage.list_native_events(self.state, self.case, source_id='s1')
+
+    def test_independent_index_retention_can_remove_and_rebuild_without_losing_evidence(self):
+        from src.techexpert import case_event_index, index_retention, retention_policy, storage
+
+        original = case_event_index.build(self.state, self.case, 's1')
+        proof = storage.read_evidence(self.state, self.case, 's1:1')
+        self.assertEqual(index_retention.preview(self.state, self.case, 's1', use_policy=True)['status'], 'retained_by_policy')
+        retention_policy.save(self.state, {'schema_version':1, 'case_index_days':0},
+                              expected_revision=0, category='case-indexes')
+        plan = index_retention.preview(self.state, self.case, 's1', use_policy=True)
+        self.assertEqual(plan['logical_bytes'], Path(original['path']).stat().st_size)
+        with self.assertRaisesRegex(InputError, 'plan digest'):
+            index_retention.apply(self.state, plan['plan'], expected_sha256='0' * 64)
+        result = index_retention.apply(self.state, plan['plan'], expected_sha256=plan['plan_sha256'])
+        self.assertEqual(result['status'], 'removed')
+        self.assertEqual(index_retention.apply(self.state, plan['plan'], expected_sha256=plan['plan_sha256'])['status'], 'already_absent')
+        rebuilt = case_event_index.build(self.state, self.case, 's1')
+        self.assertNotEqual(original['generation'], rebuilt['generation'])
+        with self.assertRaisesRegex(InputError, 'index changed'):
+            index_retention.apply(self.state, plan['plan'], expected_sha256=plan['plan_sha256'])
+        self.assertEqual(storage.read_evidence(self.state, self.case, 's1:1'), proof)
+        self.assertEqual(retention_policy.load(self.state, category='case-inputs')['revision'], 0)
 
 
 if __name__ == '__main__':
