@@ -101,6 +101,9 @@ def _write_response(path,value,code,plan):
         entry=value['disclosure']
         binding=dict(scope_sha256=entry['policy_scope_sha256'],policy_sha256=entry['policy_sha256'],
                      investigation_id=entry['investigation_id'])
+    if value.get('operation')=='code.context' and value.get('data') is not None:
+        binding=value['data']['policy_binding']
+    delivery=dict(operation=value['operation'],run_id=value['run_id']) if binding is not None else None
     payload_bytes=len(json.dumps(value,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')) if plan.get('wire_version') else None
     if plan.get('wire_version'):
         from .mcp_tools import result
@@ -110,7 +113,9 @@ def _write_response(path,value,code,plan):
     else:fs.write(path,value)
     identity=file_identity(path,_response_limit(plan))
     receipt=dict(**identity,name=path.name,exit_code=code,plan_sha256=fs.digest(plan))
-    if binding is not None:receipt['context_policy_binding']=binding
+    if binding is not None:
+        receipt['context_policy_binding']=binding
+        receipt['context_delivery']=delivery
     if plan.get('wire_version'):
         payload=len(value['content'][0]['text'].encode('utf-8'))
         receipt.update(encoding='mcp-tool-result-compact-v1',structured_payload_compact_bytes=payload,
@@ -305,13 +310,14 @@ def emit(call,output):
     with fs.safe(directory/receipt['name']).open('rb') as stream:
         identity=_stream_identity(stream,_response_limit(plan))
         if any(receipt.get(k)!=v for k,v in identity.items()):raise InputError('kernel response integrity mismatch')
-        if plan['action']=='context-read' and receipt['exit_code']==0:
+        if 'context_policy_binding' in receipt or (plan['action']=='context-read' and receipt['exit_code']==0):
             from .context_policy import verify_delivery
             try:verify_delivery(plan['state_dir'],receipt['context_policy_binding'])
             except (OSError,ValueError,KeyError,TypeError):
                 call['exit_code']=2
+                selected=receipt.get('context_delivery',dict(operation='context.read',run_id=None))
                 emit(dict(wire_version=call.get('wire_version'),inline_response=dict(
-                    status='invalid_input',operation='context.read',kernel_call_id=plan['call_id'],
+                    status='invalid_input',operation=selected['operation'],run_id=selected['run_id'],kernel_call_id=plan['call_id'],
                     stop_reason='context_policy_changed',data=None,
                     limitations=['Verify the current disclosure policy and available investigation.'])),output)
                 return

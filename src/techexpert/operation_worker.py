@@ -12,7 +12,7 @@ if __package__ in (None,''):
 
 from . import operation_state as state
 from . import __version__,kernel_context
-from .capabilities import execute,outcome as output_status
+from .capabilities import execute,outcome as output_status,PROGRAM_EXECUTIONS
 from .inputs import InputError
 from .processes import CommandStopped
 from .storage import ROOT,knowledge_revision
@@ -25,7 +25,7 @@ def main(folder):
     if os.name!='nt':
         import resource
         inherited=resource.getrlimit(resource.RLIMIT_AS)
-        requested=request['arguments']['resources']['memory_bytes'] if request['operation']=='code.execute' else 1024**3
+        requested=request['arguments']['resources']['memory_bytes'] if request['operation'] in PROGRAM_EXECUTIONS else 1024**3
         memory=min([requested]+[n for n in inherited if n!=resource.RLIM_INFINITY])
         resource.setrlimit(resource.RLIMIT_AS,(memory,memory))
     def stop():
@@ -53,7 +53,7 @@ def main(folder):
     if plan['versions']!=dict(product=__version__,rules_inventory_sha256=state.digest(state.read(ROOT/'src/techexpert/assets/bundle-manifest.json',1024**2)),knowledge=knowledge_revision()):
         raise InputError('worker versions/rules differ from the reviewed plan')
     state.write(folder/'worker-started.json',dict(plan_sha256=state.digest(plan),child=state.process_identity(os.getpid()),at=state.stamp()))
-    if request['operation']=='code.execute':
+    if request['operation'] in PROGRAM_EXECUTIONS:
         boundary=plan.get('kernel',{})
         markers=list(boundary.get('cancel_files',[]))+[str(folder/'cancel.json')]
         if boundary.get('cancel_file'):markers.append(boundary['cancel_file'])
@@ -65,8 +65,8 @@ def main(folder):
         bound = plan.get('kernel',{}).get('limits',{}).get('memory_bytes',memory)
         data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',
                              stop=stop, memory_bytes=min(memory,bound))
-        if request['operation']=='code.execute':outcome=data['result_status']
-        if request['operation']!='code.execute':outcome,stop_reason=output_status(request['operation'],data)
+        if request['operation'] in PROGRAM_EXECUTIONS:outcome=data['result_status']
+        else:outcome,stop_reason=output_status(request['operation'],data)
     except CommandStopped as exc:
         outcome='cancelled' if exc.reason=='cancelled' else 'failed';stop_reason=exc.reason
         message='Bounded command stopped: '+exc.reason+'. Private partial output retained; no source artifact created.'

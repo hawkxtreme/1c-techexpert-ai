@@ -118,6 +118,7 @@ ROUTES.update(_logcfg.routes(_sys.modules[__name__]))
 from . import remote_api as _remote
 ROUTES.update(_remote.routes(_sys.modules[__name__]))
 CODE_API=tuple(ROUTES)
+PROGRAM_EXECUTIONS=('code.execute','code.context')
 from .code_policy import schemas as _code_schemas
 _code_arguments=_code_schemas(_sys.modules[__name__],CODE_API)
 ROUTES['code.execute']=route(_code_arguments,['program'],['explicitly scoped inputs and saved evidence'],
@@ -126,6 +127,13 @@ ROUTES['code.execute']=route(_code_arguments,['program'],['explicitly scoped inp
 ROUTES['code.execute']['default_timeout_seconds']=60
 ROUTES['code.execute']['data_schema']['properties'].update(program_sha256=dict(type='string'),value={},calls=dict(type='array'))
 ROUTES['code.execute']['output_schema']=response_schema(ROUTES['code.execute']['data_schema'])
+from .context_program import formal_arguments as _context_program_arguments
+ROUTES['code.context']=route(_context_program_arguments(_sys.modules[__name__],_code_arguments),['program','scope'],
+    ['selected retained investigation views and reviewed disclosure policy'],
+    'compose typed evidence under the environment policy',['program_sha256','value','calls'],timeout=180)
+ROUTES['code.context']['default_timeout_seconds']=60
+ROUTES['code.context']['data_schema']['properties'].update(program_sha256=dict(type='string'),value={},calls=dict(type='array'))
+ROUTES['code.context']['output_schema']=response_schema(ROUTES['code.context']['data_schema'])
 ROUTES['code.inspect']=route(dict(run_id=string(64,pattern='[a-f0-9]{64}')),['run_id'],['checked saved program and API journal'],
     'read saved program, trace and live nested ownership; never repeat execution',['program_sha256','program','calls'],timeout=30)
 ROUTES['code.inspect']['data_schema']['properties'].update(program=dict(type='string'),program_sha256=dict(type='string'),calls=dict(type=['array','null']))
@@ -221,9 +229,11 @@ def normalize_request(value):
     if operation=='os.collect':
         from .os_metrics import validate_request as os_request
         args=os_request(args)
-    if operation=='code.execute':
+    if operation in PROGRAM_EXECUTIONS:
         from .code_policy import normalize as code_request
-        args=code_request(args)
+        if operation=='code.context' and 'context' not in result:
+            raise InputError('a policy-filtered program requires an exact investigation revision')
+        args=code_request(args,operation=operation)
     if operation in _diagnostics.OPERATIONS:args=_diagnostics.normalize(operation,args)
     ceiling=timeout_limit(operation,args)
     timeout=ceiling if operation=='case.analyze' else ROUTES[operation].get('default_timeout_seconds',ceiling)
@@ -306,9 +316,9 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
         data=source_context(state,**args)
     elif operation in _diagnostics.OPERATIONS:
         data,targets=_diagnostics.execute(operation,args,state,output,stop=stop)
-    elif operation in ('code.execute','code.inspect'):
+    elif operation in (*PROGRAM_EXECUTIONS,'code.inspect'):
         from .code_runtime import run_program,inspect_program
-        data=run_program(state,output,args,stop=stop) if operation=='code.execute' else inspect_program(state,args['run_id'])
+        data=run_program(state,output,args,stop=stop) if operation in PROGRAM_EXECUTIONS else inspect_program(state,args['run_id'])
     else:raise InputError('unknown executable operation')
     if not isinstance(data,dict) or set(ROUTES[operation]['data_schema']['required'])-data.keys():raise InputError('adapter output does not match registered schema')
     return data,targets

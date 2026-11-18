@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from . import capabilities,operation_state as fs,operation_process,kernel_context
-from . import context_intake
+from . import context_intake,context_program
 from .inputs import InputError
 from .storage import ROOT
 
@@ -35,7 +35,11 @@ def _space(path):
 def _context(state,request):
     if 'context' not in request:return None
     from .investigations import load
-    context=request['context'];doc=load(state,context['investigation_id'])
+    context=request['context']
+    if request['operation']==context_program.OPERATION:
+        from .context_policy import selected_investigation
+        doc=selected_investigation(state,context['investigation_id'],context['expected_revision'])
+    else:doc=load(state,context['investigation_id'])
     if doc['revision']!=context['expected_revision']:raise InputError('investigation revision conflict; reload before a new operation')
     return dict(**context,report_sha256=fs.digest(doc),profile_sha256=doc['profile_sha256'])
 
@@ -156,6 +160,11 @@ def _snapshots(state,operation,args,data,*,output=None):
             for reference in call.get('snapshots',[]):
                 add(reference['kind'],reference['id'],reference.get('revision'))
                 if reference not in references:raise InputError('CodeMode retained snapshot identity mismatch')
+    elif operation==context_program.OPERATION:
+        from .investigations import _digest
+        for kind,identifier,expected in sorted(context_program.pins(data)):
+            if _digest(add(kind,identifier))!=expected:
+                raise InputError('retained material disagrees with the protected program view')
     if operation in ('case.analyze','jr.import','os.import','apdex.import') and args.get('input_plan'):
         parent=add('artifacts',args['input_plan'])
         intake=data.get('input_intake') if operation=='case.analyze' else data.get('result',{}).get('input_intake')
@@ -196,6 +205,12 @@ def _fit_view(view,budget,*,strict=False):
 
 def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
     data=value['data'] or {};request=plan['request']
+    if request['operation']==context_program.OPERATION:
+        view=dict(context_program.public_state(value),integrity_verified=True,replayed=replayed,
+                  cancellation_requested=value.get('cancellation_requested',False) or
+                                         fs.safe(fs.folder(state,value['run_id'])/'cancel.json').exists())
+        filtered=_fit_view(view,request['budget']['max_result_bytes'],strict=strict)
+        return context_program.withhold(state,view) or filtered
     if context_intake.protects(request):
         view=dict(context_intake.envelope(value, value['data']), integrity_verified=True,replayed=replayed,
                   cancellation_requested=value.get('cancellation_requested',False) or
@@ -218,14 +233,14 @@ def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
     return _fit_view(view,request['budget']['max_result_bytes'],strict=strict)
 
 def _nested_stopped(state,folder,plan,current):
-    if plan['request']['operation']!='code.execute':return True
+    if plan['request']['operation'] not in capabilities.PROGRAM_EXECUTIONS:return True
     if current.get('process',{}).get('tree_finished') is True and os.name=='nt':return True
     from .code_runtime import nested_observations
     return nested_observations(state,folder.name)['stop_verified']
 
 
 def _program_guard(state,folder,plan,*,finishing=False,reserve_bytes=0,reserve_files=0):
-    if plan['request']['operation']!='code.execute':return None
+    if plan['request']['operation'] not in capabilities.PROGRAM_EXECUTIONS:return None
     from .code_runtime import enforce_owned_limit
     return enforce_owned_limit(state,folder.name,require_audit=finishing,reserve_bytes=reserve_bytes,reserve_files=reserve_files)
 
@@ -234,7 +249,7 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
     request=plan['request'];data=worker['data']
     if not _nested_stopped(state,folder,plan,current):raise InputError('nested program jobs are active or unknown; retain evidence')
     _program_guard(state,folder,plan,finishing=True)
-    if request['operation']=='code.execute' and data is not None:
+    if request['operation'] in capabilities.PROGRAM_EXECUTIONS and data is not None:
         from .code_runtime import verify_audit
         verify_audit(state,folder.name,data)
     snapshots=_snapshots(state,request['operation'],request['arguments'],data,output=folder/'work-state')
@@ -258,6 +273,9 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
     if context_intake.protects(request):
         value = context_intake.seal(value, data)
         stop_reason = value['stop_reason']
+    elif request['operation']==context_program.OPERATION:
+        value=context_program.public_state(value)
+        stop_reason=value.get('stop_reason')
     prepared_path=folder/'prepared-output.json'
     if prepared_path.exists():
         prepared=fs.read(prepared_path)
@@ -304,6 +322,8 @@ def result(state,run_id):
     except (OSError,ValueError,KeyError,TypeError,RecursionError):
         if context_intake.protects(plan['request']):
             raise InputError('Saved intake material could not be verified.') from None
+        if plan['request']['operation']==context_program.OPERATION:
+            raise InputError('Saved protected program could not be verified.') from None
         raise
 
 
@@ -311,7 +331,10 @@ def _result(state,run_id,folder,plan):
     if not (folder/'output.json').exists() or not (folder/'output-receipt.json').exists():return status(state,run_id)
     value=fs.read(folder/'output.json');receipt=fs.read(folder/'output-receipt.json',8192)
     if value.get('run_id')!=run_id or fs.digest(value)!=receipt.get('sha256'):raise InputError('operation output integrity mismatch')
-    if plan['request']['operation']=='code.execute' and value['data'] is not None:
+    if plan['request']['operation']==context_program.OPERATION:
+        denied=context_program.withhold(state,value)
+        if denied is not None:return denied
+    if plan['request']['operation'] in capabilities.PROGRAM_EXECUTIONS and value['data'] is not None:
         from .code_runtime import verify_audit
         verify_audit(state,run_id,value['data'])
     for snapshot in value['snapshots']:
@@ -333,6 +356,8 @@ def status(state,run_id):
         view.update(status='partial',execution_status=current['status'],result_availability='incomplete_commit')
     if context_intake.protects(plan['request']):
         view=context_intake.envelope(view,None)
+    elif plan['request']['operation']==context_program.OPERATION:
+        view=context_program.public_state(view)
     return _fit_view(view,plan['request']['budget']['max_result_bytes'])
 
 def cancel(state,run_id,*,executor_id):
@@ -372,7 +397,7 @@ def _run(state,request,admission,*,parent_guard=None):
         return run(state,original,parent_guard=parent_guard)
     fs.private(folder)
     with fs.writer(folder):
-        started=time.monotonic();plan=dict(schema_version=1,request=request,state_dir=str(state),context=context,versions=versions,
+        started=time.monotonic();plan=dict(schema_version=fs.plan_schema(request['operation']),request=request,state_dir=str(state),context=context,versions=versions,
             deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp(),investigation_dependencies=dependencies)
         boundary=kernel_context.current()
         if boundary:
@@ -428,7 +453,7 @@ def _run(state,request,admission,*,parent_guard=None):
             if reason:
                 current.update(status='cancelled' if reason=='cancelled' else 'failed',stop_verified=True,stop_reason=reason,finished_at=fs.stamp())
                 fs.record(folder,current,'not_started');return status(state,run_id)
-            memory=request['arguments']['resources']['memory_bytes'] if request['operation']=='code.execute' else 1024**3
+            memory=request['arguments']['resources']['memory_bytes'] if request['operation'] in capabilities.PROGRAM_EXECUTIONS else 1024**3
             process=operation_process.run(folder,guard=guard,on_started=on_started,timeout=request['budget']['timeout_seconds']+3,memory_bytes=memory)
             current['process']=process;current['stop_verified']=process['tree_finished'] and _nested_stopped(state,folder,plan,current)
             if not process['tree_finished']:raise InputError('owned process tree stop is unknown')
@@ -452,6 +477,8 @@ def reconcile(state,run_id):
     except (OSError,ValueError,KeyError,TypeError,RecursionError):
         if context_intake.protects(plan['request']):
             raise InputError('Saved intake could not be recovered. Check the local operation state.') from None
+        if plan['request']['operation']==context_program.OPERATION:
+            raise InputError('Saved protected program could not be recovered.') from None
         raise
 
 

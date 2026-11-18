@@ -94,14 +94,21 @@ def history(state, investigation_id, revision, *, offset=0, limit=20):
     paths = sorted(_audit_paths(_audit_folder(state, investigation_id)), reverse=True)
     entries = []
     for path in paths[offset:offset + limit]:
-        document = fs.read(path, 8192)
-        item = document['entry']
-        if fs.digest(item) != document['sha256'] or item['investigation_id'] != investigation_id or item['id'] != path.stem:
-            raise InputError('context history integrity check failed')
-        entries.append(item)
+        entries.append(receipt(state, investigation_id, path.stem))
     return dict(investigation_id=investigation_id, entries=entries, total=len(paths),
                 next_offset=offset + limit if offset + limit < len(paths) else None,
                 scope='prepared_tool_views_for_this_investigation_not_harness_transmissions')
+
+
+def receipt(state, investigation_id, receipt_id):
+    name = receipt_id + '.json'
+    if not AUDIT_NAME.fullmatch(name):
+        raise InputError('invalid context receipt identifier')
+    document = fs.read(_audit_folder(state, investigation_id) / name, 8192)
+    item = document['entry']
+    if fs.digest(item) != document['sha256'] or item['investigation_id'] != investigation_id or item['id'] != receipt_id:
+        raise InputError('context history integrity check failed')
+    return item
 
 
 def _page(records, start, matched, **metadata):
@@ -185,7 +192,7 @@ def _fit(data, max_bytes):
         data['byte_limit_reached'] = True
 
 
-def _record(state, doc, attachment, saved, kind, category, payload):
+def _record(state, doc, attachment, saved, kind, category, payload, consumer):
     folder = fs.private(_audit_folder(state, doc['investigation_id']))
     with fs.writer(folder):
         if len(_audit_paths(folder)) >= MAX_RECEIPTS:
@@ -200,11 +207,13 @@ def _record(state, doc, attachment, saved, kind, category, payload):
             payload_bytes=len(payload), payload_sha256=sha256(payload).hexdigest(), rule_version=policy.RULE_VERSION,
             cleanup='typed_fields_and_scoped_aliases',
             withheld=['raw_source_content', 'free_text', 'paths_and_credentials'])
+        if consumer is not None:
+            item['consumer'] = consumer
         fs.write(folder / (receipt_id + '.json'), dict(entry=item, sha256=fs.digest(item)))
     return item
 
 
-def read(state, request):
+def read(state, request, *, expected_policy_sha256=None, consumer=None):
     args = validate_request(request)
     kind = args['kind']
     category, target_kind = VIEWS[kind]
@@ -215,6 +224,8 @@ def read(state, request):
         saved = policy.stored_policy(folder, scope_sha256)
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_policy_unavailable', 'Verify the saved investigation and its local disclosure policy.')
+    if expected_policy_sha256 is not None and (saved is None or fs.digest(saved) != expected_policy_sha256):
+        return _blocked('context_policy_changed', 'Use the current disclosure policy for another program.')
     if saved is None:
         return _blocked('context_policy_required', 'Review and save a context-policy-plan for this saved environment before reading private evidence.')
     if saved['rule_version'] != policy.RULE_VERSION:
@@ -239,7 +250,7 @@ def read(state, request):
                 return _blocked('context_policy_changed', 'Read the current context policy before retrying.')
             from .investigation_retention import require_available
             require_available(state, doc['investigation_id'])
-            entry = _record(state, doc, attachment, saved, kind, category, payload)
+            entry = _record(state, doc, attachment, saved, kind, category, payload, consumer)
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,

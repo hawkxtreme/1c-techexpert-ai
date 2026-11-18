@@ -67,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),47)
+        tools=self.tools();self.assertEqual(len(tools),48)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -115,7 +115,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),47);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),48);self.assertFalse(self.state.exists())
 
     def test_context_profile_exposes_retained_views_and_bundled_knowledge(self):
         p,replies=self.start(profile='context')
@@ -123,7 +123,8 @@ class MCPTests(unittest.TestCase):
         tools={tool['name']:tool for tool in self.receive(replies)['result']['tools']}
         self.assertEqual(set(tools),{'techexpert_context_read','techexpert_context_intake',
                                      'techexpert_context_attach','techexpert_knowledge_card',
-                                     'techexpert_knowledge_search'})
+                                     'techexpert_knowledge_search','techexpert_code_context'})
+        self.assertIn('context',tools['techexpert_code_context']['inputSchema']['required'])
         self.assertFalse(self.state.exists())
         self.send(p,'tools/call',dict(name='techexpert_case_show',arguments={}),identifier=2)
         self.assertEqual(self.receive(replies,2)['error']['code'],-32602)
@@ -132,6 +133,7 @@ class MCPTests(unittest.TestCase):
         self.assertFalse(self.state.exists())
 
     def test_context_catalogue_runs_private_intake_and_returns_an_attachment(self):
+        from src.techexpert import context_policy
         from src.techexpert.investigations import create,load
         doc=create(self.state,{'task':'Private initial intake'})
         p,replies=self.start(profile='context')
@@ -148,6 +150,24 @@ class MCPTests(unittest.TestCase):
         self.assertNotIn('symptom',json.dumps(view))
         self.assertEqual(load(self.state,doc['investigation_id'])['attachments'][0]['target_id'],
                          view['data']['material']['id'])
+        iid=doc['investigation_id'];attachment=view['attachment']['id']
+        approval=(self.state,iid,2,['case'],8192)
+        context_policy.save(*approval,context_policy.plan(*approval)['plan_sha256'])
+        look=dict(attachment=attachment,kind='case-summary')
+        self.send(p,'tools/call',dict(name='techexpert_context_read',arguments=dict(look,
+            investigation_id=iid,revision=2)),identifier=2)
+        direct=self.receive(replies,2)['result']['structuredContent']
+        self.assertEqual(direct['status'],'succeeded',direct)
+        program='return api("context.read", selection)["data"]'
+        args=dict(operation_key='context-mcp-composition',executor_id='test',
+                  context=dict(investigation_id=iid,expected_revision=2),
+                  arguments=dict(program=program,scope=dict(views=[look]),bindings=dict(selection=look)))
+        self.send(p,'tools/call',dict(name='techexpert_code_context',arguments=args),identifier=3)
+        wrapped=self.receive(replies,3)['result']
+        projected=wrapped['structuredContent']
+        self.assertEqual(projected['status'],'succeeded',projected)
+        self.assertEqual(projected['data']['value'],direct['data'])
+        self.assertEqual(json.loads(wrapped['content'][0]['text']),projected)
 
     def test_modern_metadata_required_on_every_request_and_not_borrowed_from_previous(self):
         p,q=self.start();self.send(p,'server/discover');self.receive(q)

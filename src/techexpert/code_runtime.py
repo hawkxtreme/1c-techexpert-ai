@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 import time
 
-from . import operation_state as fs,kernel_context
+from . import context_program,operation_state as fs,kernel_context
 from .code_values import CodeError
 from .inputs import InputError
 
@@ -25,8 +25,9 @@ def _hash_source(source):return hashlib.sha256(source.encode('utf-8')).hexdigest
 
 
 def _audit(state,run_id,*,optional=False):
+    from .capabilities import PROGRAM_EXECUTIONS
     folder=fs.folder(state,run_id);plan=fs.plan(folder)
-    if plan['request']['operation']!='code.execute':raise InputError('selected run is not a CodeMode execution')
+    if plan['request']['operation'] not in PROGRAM_EXECUTIONS:raise InputError('selected run is not a CodeMode execution')
     args=plan['request']['arguments'];digest=_hash_source(args['program'])
     source=_read(folder/'code-program.json',256*1024) if (folder/'code-program.json').exists() else None
     journal=_read(folder/'code-journal.json') if (folder/'code-journal.json').exists() else None
@@ -45,6 +46,31 @@ def verify_audit(state,run_id,data):
     audit=data['audit']
     if (data['program_sha256']!=source['program_sha256'] or audit['program_document_sha256']!=fs.digest(source)
         or audit['journal_document_sha256']!=fs.digest(journal) or data['calls']!=journal['calls']):raise InputError('CodeMode result/audit identity mismatch')
+    if plan['request']['operation']==context_program.OPERATION:
+        binding=journal['context_binding']
+        if data['policy_binding']!=binding:
+            raise InputError('CodeMode saved policy binding changed')
+        if binding is not None:
+            doc=context_program._document(state,plan)
+            if (set(binding)!={'investigation_id','scope_sha256','policy_sha256'}
+                or not context_program.policy.SHA.fullmatch(binding['policy_sha256'])
+                or binding['investigation_id']!=doc['investigation_id']
+                or binding['scope_sha256']!=context_program.policy.scope(doc)[0]):
+                raise InputError('CodeMode saved environment binding changed')
+        for index,call in enumerate(journal['calls'],1):
+            if call['index']!=index or call['run_id'] is not None:
+                raise InputError('invalid protected program call identity')
+            if call['output_sha256'] is not None:
+                if binding is None or call['operation']!=context_program.API:
+                    raise InputError('protected view requires its reviewed policy')
+                saved=_read(folder/f'context-view-{index:03d}.json',256*1024)
+                context_program.verify_view(state,plan,run_id,doc,binding,call,saved)
+        if data['projection_receipt'] is not None:
+            if binding is None or data['projection_receipt']!=context_program.body_receipt(data['value'],journal['context_max_bytes']):
+                raise InputError('CodeMode saved projection integrity mismatch')
+        elif data['value'] is not None:
+            raise InputError('CodeMode projection requires a receipt')
+        return journal
     for call in journal['calls']:
         identifier=call.get('run_id');expected=call.get('output_sha256')
         if not identifier or expected is None:continue
@@ -126,8 +152,15 @@ def inspect_program(state,run_id):
     if (folder/'output.json').exists() and (folder/'output-receipt.json').exists():
         saved=fs.read(folder/'output.json');receipt=fs.read(folder/'output-receipt.json',8192)
         if fs.digest(saved)!=receipt.get('sha256'):raise InputError('CodeMode output integrity mismatch')
-        if saved.get('data') is not None:verify_audit(state,run_id,saved['data'])
-    return dict(program_sha256=_hash_source(plan['request']['arguments']['program']),program=plan['request']['arguments']['program'],
+        if saved.get('data') is not None:
+            try:verify_audit(state,run_id,saved['data'])
+            except context_program.READ_ERRORS:
+                if plan['request']['operation']==context_program.OPERATION:
+                    raise InputError('Saved protected program could not be verified.') from None
+                raise
+    protected=plan['request']['operation']==context_program.OPERATION
+    return dict(program_sha256=_hash_source(plan['request']['arguments']['program']),program='' if protected else plan['request']['arguments']['program'],
+        **(dict(program_retained_locally=True,protected_context=True) if protected else {}),
         language=plan['request']['arguments']['language'],run_id=run_id,calls=journal['calls'] if journal else None,
         audit_available=source is not None and journal is not None,execution_status=journal.get('execution_status') if journal else 'unknown',
         saved_result_available=saved is not None,nested=nested_observations(state,run_id),
@@ -140,7 +173,9 @@ class Runtime:
         from . import capabilities
         from .code_policy import Scope
         self.state=Path(state);self.folder=fs.safe(folder);self.plan=fs.plan(self.folder);self.args=args
-        if self.plan['request']['operation']!='code.execute' or self.plan['request']['arguments']!=args:raise InputError('CodeMode worker request mismatch')
+        operation=self.plan['request']['operation']
+        self.protected=operation==context_program.OPERATION
+        if operation not in capabilities.PROGRAM_EXECUTIONS or self.plan['request']['arguments']!=args:raise InputError('CodeMode worker request mismatch')
         identity=fs.process_identity(os.getpid())
         if (fs.read(self.folder/'worker-identity.json',8192)!=identity
             or fs.read(self.folder/'start-permit.json',8192).get('child')!=identity):raise InputError('CodeMode requires its exact isolated managed worker')
@@ -149,7 +184,8 @@ class Runtime:
             import resource
             actual=resource.getrlimit(resource.RLIMIT_AS)[0]
             if actual==resource.RLIM_INFINITY or actual>args['resources']['memory_bytes']:raise CodeError('isolation_unavailable','CodeMode address-space limit was not enforced.')
-        self.stop=stop;self.scope=Scope(args['scope'],capabilities.CODE_API);self.resources=args['resources']
+        self.stop=stop;self.scope=None if self.protected else Scope(args['scope'],capabilities.CODE_API);self.resources=args['resources']
+        self.context_binding=None;self.context_max_bytes=None
         self.started=time.monotonic();self.deadline=self.plan['deadline_monotonic'];self.calls=[];self.last_guard=0
         self.metrics=dict(calls_attempted=0,calls_started=0,api_response_bytes=0,observed_owned_bytes=0,observed_owned_files=0,steps=0,
             disk_observation_stage='program runtime; controller checks serialization and final commit separately')
@@ -160,6 +196,7 @@ class Runtime:
 
     def flush(self,status):
         self.journal=dict(self.common,owner=self.owner,calls=self.calls,metrics=dict(self.metrics),execution_status=status)
+        if self.protected:self.journal.update(context_binding=self.context_binding,context_max_bytes=self.context_max_bytes)
         _write(self.folder/'code-journal.json',self.journal)
 
     def guard(self,*,force=False):
@@ -174,12 +211,14 @@ class Runtime:
     def api(self,operation,arguments):
         from . import capabilities,operations,responses
         index=len(self.calls)+1
-        record=dict(index=index,operation=operation if operation in capabilities.CODE_API else None,status='preparing',run_id=None,
+        allowed=(context_program.API,) if self.protected else capabilities.CODE_API
+        record=dict(index=index,operation=operation if operation in allowed else None,status='preparing',run_id=None,
             request_sha256=None,output_sha256=None,snapshots=[],response_bytes=0,launch_state='not_created')
         self.metrics['calls_attempted']+=1;self.calls.append(record);self.flush('running')
         try:
             self.guard(force=True)
             if index>self.resources['max_calls']:raise CodeError('call_limit','The program API-call budget was reached.')
+            if self.protected:return self.read_context(operation,arguments,record)
             if operation not in capabilities.CODE_API or operation not in self.scope.operations:raise CodeError('scope_denied','Operation is outside the approved API scope.')
             remaining=self.resources['max_api_bytes']-self.metrics['api_response_bytes']
             seconds=min(capabilities.timeout_limit(operation,arguments),self.deadline-time.monotonic())
@@ -213,16 +252,45 @@ class Runtime:
             self.flush('running')
             raise CodeError('api_error','API input/state could not be verified; inspect the retained call before another plan.') from exc
 
+    def read_context(self,operation,arguments,record):
+        from .context_disclosure import read
+
+        request=context_program.call_request(self.plan,operation,arguments)
+        remaining=self.resources['max_api_bytes']-self.metrics['api_response_bytes']
+        if remaining<=0:raise CodeError('api_byte_limit','The program used its cumulative view budget.')
+        record.update(request_sha256=fs.digest(request),status='reading')
+        self.metrics['calls_started']+=1;self.flush('running')
+        index=record['index']
+        view=read(self.state,request,expected_policy_sha256=self.context_binding['policy_sha256'],
+                  consumer=dict(kind=context_program.OPERATION,run_id=self.folder.name,index=index))
+        if view['status']!='succeeded':
+            raise CodeError(view['stop_reason'],view['limitations'][0])
+        reply=dict(status='succeeded',data=view['data'],truncated=view['truncated'])
+        size=len(context_program.bytes_of(reply))
+        if size>remaining:raise CodeError('api_byte_limit','The prepared view exceeds the remaining program view budget.')
+        saved=dict(selection=request,reply=reply,disclosure=view['disclosure'])
+        _write(self.folder/f'context-view-{index:03d}.json',saved)
+        record.update(status='succeeded',view=context_program.proof_for_call(view['disclosure']),output_sha256=fs.digest(saved),
+                      response_bytes=size,truncated=reply['truncated'])
+        self.metrics['api_response_bytes']+=size
+        self.flush('running');self.guard(force=True)
+        return reply
+
 
 def run_program(state,output,args,*,stop=None):
     from .code_language import Machine,parse_program
     runtime=Runtime(state,Path(output).parent,args,stop);machine=None;value=None;diagnostic=None;execution='succeeded'
+    projection=None
     try:
         runtime.guard(force=True)
         tree=parse_program(args['program'])
+        if runtime.protected:
+            runtime.context_binding,runtime.context_max_bytes=context_program.authorize(state,runtime.plan)
+            runtime.flush('running')
         machine=Machine(tree,args['bindings'],runtime.api,max_steps=args['resources']['max_steps'],
             max_value_bytes=args['resources']['max_value_bytes'],stop=stop)
         value=machine.run();runtime.guard(force=True)
+        if runtime.protected:projection=context_program.body_receipt(value,runtime.context_max_bytes)
     except MemoryError as exc:
         if machine is not None:runtime.metrics['steps']=machine.metrics['steps']
         exc.__traceback__=None;machine=None;gc.collect();execution='failed'
@@ -241,6 +309,7 @@ def run_program(state,output,args,*,stop=None):
         else 'partial' if has_facts else execution if execution!='succeeded' else 'failed')
     runtime.flush(execution)
     return dict(program_sha256=runtime.digest,language=args['language'],value=value,calls=runtime.calls,execution_status=execution,result_status=result_status,
+        **(dict(policy_binding=runtime.context_binding,projection_receipt=projection) if runtime.protected else {}),
         diagnostic=diagnostic,metrics=runtime.metrics,resources=args['resources'],requires_ai_interpretation=True,
         audit=dict(program_document_sha256=fs.digest(runtime.source),journal_document_sha256=fs.digest(runtime.journal),run_id=runtime.folder.name),
         limitations=['A program-derived projection is not an independent cause judgment. Each saved API result retains its own coverage and provenance.',

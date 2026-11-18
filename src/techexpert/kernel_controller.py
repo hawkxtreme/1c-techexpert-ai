@@ -74,7 +74,8 @@ def main(folder,memory_bytes):
         cancelled=str(exc)=='cancelled'
         value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-        private=plan['action'].startswith('context-') or (type(request) is dict and context_intake.protects(request))
+        private=plan['action'].startswith('context-') or (type(request) is dict and
+            (context_intake.protects(request) or request['operation']=='code.context'))
         message='The selected local context request could not be completed.' if private else str(exc)[:512]
         value=dict(status='error',message=message,data=None);code=2
     dispatch_finished=time.monotonic()

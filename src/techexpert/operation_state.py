@@ -52,8 +52,14 @@ def plan(folder):
     value=read(folder/'plan.json',128*1024);receipt=read(folder/'plan-receipt.json',8192)
     return checked_plan(folder,value,receipt)
 
+def plan_schema(operation):
+    # Readers without the disclosure gate must stop before opening a saved output.
+    return 2 if operation=='code.context' else 1
+
 def checked_plan(folder,value,receipt):
-    if (digest(value)!=receipt.get('sha256') or value.get('schema_version')!=1
+    version=value.get('schema_version')
+    if (digest(value)!=receipt.get('sha256') or type(version) is not int
+        or version!=plan_schema(value['request'].get('operation'))
         or hashlib.sha256(value['request']['operation_key'].encode()).hexdigest()!=folder.name):raise InputError('operation plan integrity mismatch')
     return value
 

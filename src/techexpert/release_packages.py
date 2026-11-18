@@ -17,6 +17,7 @@ REPORT_RETIREMENT_FORMAT = 'src/techexpert/assets/report-retirement-format.json'
 TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
 CONTEXT_DISCLOSURE_FORMAT = 'src/techexpert/assets/context-disclosure-format.json'
 CONTEXT_INTAKE_FORMAT = 'src/techexpert/assets/context-intake-format.json'
+CONTEXT_PROGRAM_FORMAT = 'src/techexpert/assets/context-program-format.json'
 MIB = 1024**2
 ARCHIVE_LIMIT = 16*MIB
 LIMITS = dict(max_depth=12, max_files=512, max_file_bytes=MIB, max_total_bytes=16*MIB)
@@ -124,7 +125,8 @@ def read_package(path):
         report_retirement_schemas=_additional_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'),
         tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'),
         context_disclosure_schemas=_additional_schemas(contents, listed, CONTEXT_DISCLOSURE_FORMAT, 'context_disclosure'),
-        context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'))
+        context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'),
+        context_program_schemas=_additional_schemas(contents, listed, CONTEXT_PROGRAM_FORMAT, 'context_program'))
 
 
 def installed_inventory(root):

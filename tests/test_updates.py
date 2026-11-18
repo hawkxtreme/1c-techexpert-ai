@@ -224,6 +224,37 @@ class UpdateTests(unittest.TestCase):
                                  context_intake_schemas=package['context_intake_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 
+    def test_retained_context_program_requires_a_reader_with_its_delivery_gate(self):
+        from src.techexpert import context_policy, investigations, operations, storage
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.update_state import inspect_state, supports
+
+        saved_case = storage.investigate(storage.ROOT/'examples/sc01/case.json', self.state)
+        first = investigations.create(self.state, {'task': 'Расчёт по согласованным измерениям'})
+        iid = first['investigation_id']
+        doc = investigations.revise(self.state, iid, dict(attachments=[
+            dict(id='A-1', kind='case', target_id=saved_case['case_id'])]), expected_revision=1)
+        approval = (self.state, iid, doc['revision'], ['case'], 4096)
+        context_policy.save(*approval, context_policy.plan(*approval)['plan_sha256'])
+        compatible = dict(context_disclosure_schemas=[1])
+        package = read_package(self.bundle)
+        self.assertTrue(supports(package['metadata'], inspect_state(self.state)['schemata'], **compatible))
+
+        request = dict(schema_version=1, operation='code.context', operation_key='check-program-reader',
+            executor_id='tests', context=dict(investigation_id=iid, expected_revision=doc['revision']),
+            arguments=dict(scope=dict(views=[dict(attachment='A-1', kind='case-summary')]),
+                program='view = api("context.read", {"attachment": "A-1", "kind": "case-summary"})\nreturn view["status"]'))
+        run = operations.run(self.state, request)
+        self.assertEqual(run['status'], 'succeeded', run)
+        observed = inspect_state(self.state)
+        self.assertEqual(observed['activity'], 'idle_observed')
+        self.assertEqual(observed['schemata']['context-program'], [2])
+        self.assertEqual(observed['schemata']['operations'], [1])
+        self.assertFalse(supports(package['metadata'], observed['schemata'], **compatible))
+        self.assertTrue(supports(package['metadata'], observed['schemata'], **compatible,
+                                 context_program_schemas=package['context_program_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

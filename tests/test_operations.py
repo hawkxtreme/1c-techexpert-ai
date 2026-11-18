@@ -83,9 +83,10 @@ class ManagedOperationTests(unittest.TestCase):
 
     def test_registered_routes_use_real_adapters_and_normal_saved_products(self):
         covered=set()
-        def call(operation_id,*,expected='succeeded',**arguments):
+        def call(operation_id,*,expected='succeeded',context=None,**arguments):
             request=self.request(operation_id);request['arguments']=arguments
             request['operation_key']='route-'+str(len(covered))+'-'+operation_id
+            if context is not None:request['context']=context
             result=self.run_request(request);covered.add(operation_id)
             self.assertEqual(result['status'],expected,result)
             self.assertTrue(result['integrity_verified']);return result['data']
@@ -160,11 +161,21 @@ class ManagedOperationTests(unittest.TestCase):
         retained=remote_fixture(self.state,[('os.json',(self.state/'artifacts'/artifact['artifact_id']/'sources/s1.bin').read_bytes())])
         call('remote.parse',capture_id=retained['artifact_id'],adapter='os',settings=dict(members=['m1']))
         from test_profile_ssh import graph as ssh_profile
-        from src.techexpert import profiles,investigations
+        from src.techexpert import context_policy,profiles,investigations
         profile=ssh_profile();profile['connections'][0]['settings']['known_hosts_file']=remote_args['sources'][0]['connection']['known_hosts_file']
         profiles.save_profile(self.state,profile,expected_revision=0)
         configured=investigations.create(self.state,dict(task='Profile-bound remote acquisition'))
         call('remote.profile_plan',investigation_id=configured['investigation_id'],revision=1,source_ids=['tj','jr'])
+        iid=doc['investigation_id']
+        revision=investigations.revise(self.state,iid,dict(attachments=[dict(id='A-1',kind='case',target_id=cid)]),
+                                       expected_revision=1)['revision']
+        approval=(self.state,iid,revision,['case'],8192)
+        context_policy.save(*approval,context_policy.plan(*approval)['plan_sha256'])
+        scope=dict(attachment='A-1',kind='case-summary')
+        protected=call('code.context',scope=dict(views=[scope]),bindings=dict(selection=scope),
+            context=dict(investigation_id=iid,expected_revision=revision),
+            program='return api("context.read", selection)["status"]')
+        self.assertEqual(protected['value'],'succeeded')
         self.assertEqual(covered,set(self.catalogue.ROUTES))
 
     def test_inflight_run_keeps_pinned_context_without_overwriting_a_new_investigation_revision(self):

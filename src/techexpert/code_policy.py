@@ -31,7 +31,7 @@ def schemas(cap,api_operations):
 def path_key(value):return os.path.normcase(os.path.normpath(str(Path(value).absolute())))
 
 
-def normalize(arguments):
+def normalize(arguments, *, operation='code.execute'):
     from . import capabilities as cap
     from .os_metrics import validate_request
     result=deepcopy(arguments)
@@ -39,8 +39,11 @@ def normalize(arguments):
     bounded(result['bindings'],max_bytes=16384,max_depth=16)
     if len(result['bindings'])>64:raise CodeError('invalid_program','At most64 bindings are supported.')
     # Defaults on the optional objects need validation as objects, too.
-    properties=cap.ROUTES['code.execute']['input_schema']['properties']
+    properties=cap.ROUTES[operation]['input_schema']['properties']
     for field in ('scope','resources'):result[field]=cap.validate(result[field],properties[field])
+    if operation=='code.context':
+        from .context_program import normalize as normalize_views
+        return normalize_views(result)
     for field in ('manifests','measurements','client_episodes'):result['scope'][field]=[str(Path(p).absolute()) for p in result['scope'][field]]
     for item in result['scope'].get('reference_reviews', []):item['manifest']=str(Path(item['manifest']).absolute())
     from .input_files import normalize as intake_request
