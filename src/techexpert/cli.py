@@ -228,6 +228,7 @@ def main(argv=None):
     jr.add_argument('--consistency',choices=('unknown','stopped_writer','provided_snapshot'),default='unknown')
     jr_events=commands.add_parser('jr-events');jr_events.add_argument('artifact_id')
     jr_events.add_argument('--event');jr_events.add_argument('--offset',type=int,default=0);jr_events.add_argument('--limit',type=int,default=20)
+    jr_events.add_argument('--start');jr_events.add_argument('--end')
     jr_record=commands.add_parser('jr-record');jr_record.add_argument('artifact_id');jr_record.add_argument('record_id')
     commands.add_parser('templates')
     template_save=commands.add_parser('template-save',help='save an inert private template variant, without source access')
@@ -485,7 +486,8 @@ def main(argv=None):
                                 utc_offset=args.utc_offset,consistency=args.consistency)
         elif args.command=='jr-events':
             from .native_jr import list_events
-            result=list_events(args.state_dir,args.artifact_id,event=args.event,offset=args.offset,limit=args.limit)
+            window = None if args.start is None and args.end is None else dict(start=args.start,end=args.end)
+            result=list_events(args.state_dir,args.artifact_id,event=args.event,offset=args.offset,limit=args.limit,window=window)
         elif args.command=='jr-record':
             from .native_jr import read_record
             result=read_record(args.state_dir,args.artifact_id,args.record_id)

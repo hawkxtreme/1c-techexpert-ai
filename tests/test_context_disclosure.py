@@ -172,6 +172,34 @@ class ContextDisclosureTests(unittest.TestCase):
         self.assertEqual(evidence['data']['record'], first)
         self.assertNotIn('text', evidence['data']['record'])
 
+    def test_journal_window_uses_reviewed_policy_and_releases_only_typed_fields(self):
+        from src.techexpert import native_jr
+        journal = self.root / 'journal'
+        shutil.copytree(ROOT / 'tests/fixtures/native-jr', journal)
+        artifact = native_jr.read_journal(self.state, journal, platform_version='8.3.27.1989',utc_offset='+03:00')
+        doc = investigations.revise(self.state, self.doc['investigation_id'], dict(
+            attachments=[dict(id='A-jr', kind='artifact', target_id=artifact['artifact_id'])]),
+            expected_revision=self.doc['revision'])
+        request = ('context-read', 'jr-events', '--attachment','A-jr','--limit','3',
+                   '--start','2026-11-16T07:05:42Z','--end','2026-11-16T07:05:44Z')
+        code, denied = self.cli(*request, document=doc)
+        self.assertEqual(code,2,denied)
+        self.assertEqual(denied['stop_reason'],'context_policy_required')
+        self.permit('jr', document=doc)
+        code, result = self.cli(*request, document=doc)
+        self.assertEqual(code,0,result)
+        page = result['data']
+        self.assertEqual(page['coverage']['records_in_window'],4)
+        self.assertEqual(page['matched_count'],4)
+        self.assertEqual(page['next_offset'],3)
+        self.assertFalse(page['coverage']['can_establish_absence'])
+        self.assertNotIn('_$Job$_.Start',json.dumps(page))
+        for record in page['records']:
+            self.assertEqual(record['timestamp'],'2026-11-16T10:05:42+03:00')
+            self.assertNotIn('comment',record)
+            self.assertRegex(record['evidence']['id'],r'^s2:r[1-4]$')
+            self.assertLess(record['evidence']['byte_start'],record['evidence']['byte_end'])
+
     def test_policy_expansion_in_a_new_projection_version_requires_review(self):
         from src.techexpert import context_disclosure, context_policy
         self.permit('tj')

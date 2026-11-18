@@ -72,8 +72,8 @@ def routes(cap):
             ['explicit normalized APDEX measurements and target'],'save measured APDEX; no BSP/native export compatibility claim',outputs),
         'jr.import':route(dict(journal_schema(cap)['properties'],**input_fields(cap)),['path','platform_version'],['selected sequential LGF/LGP directory or approved catalogue group'],
             'save bounded native journal snapshot; no database/run identity inference',outputs),
-        'jr.events':route(dict(**artifact,event=cap.string(2000),offset=cap.integer(0,100000,0),limit=cap.integer(1,100,20)),['artifact_id'],
-            ['verified native JR artifact'],'read bounded page from saved journal',
+        'jr.events':route(dict(**artifact,event=cap.string(2000),window=cap.WINDOW,offset=cap.integer(0,100000,0),limit=cap.integer(1,100,20)),['artifact_id'],
+            ['verified native JR artifact'],'read bounded page and observe timestamps in an optional half-open interval',
             ['artifact_id','records','total_matched','next_offset'],dict(total_matched=dict(type='integer'),next_offset=dict(type=['integer','null']))),
         'jr.record':route(dict(**artifact,record_id=cap.string(64,pattern='s[1-9][0-9]*:r[1-9][0-9]*')),['artifact_id','record_id'],
             ['verified native JR artifact'],'read exact saved record bytes without interpreting serialized1C values',
@@ -165,6 +165,9 @@ def normalize(operation,args):
         if 'utc_offset' in result and (not re.fullmatch(r'[+-](?:[01]\d|2[0-3]):[0-5]\d',result['utc_offset']) or result['utc_offset']=='-00:00'):
             raise InputError('journal offset must be explicit and valid, or omitted as unknown')
         result['path']=str(Path(result['path']).absolute())
+    elif operation=='jr.events' and 'window' in result:
+        from .source_coverage import validate_request
+        result['window']=validate_request(window=result['window'])['window']
     elif operation=='apdex.import':
         from .input_adapters import normalize as normalize_intake
         result=normalize_intake(result,single=True)
@@ -208,8 +211,6 @@ def execute(operation,args,state,output,*,stop=None):
         from .native_jr import list_events,read_record
         data=list_events(state,**args) if operation=='jr.events' else read_record(state,**args)
         if operation=='jr.events':
-            following=args['offset']+len(data['records'])
-            data['next_offset']=following if following<data['total_matched'] else None
             data['truncated']=args['offset']>0 or data['next_offset'] is not None
         return data,[]
     elif operation in ('source.search','source.read'):

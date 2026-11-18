@@ -11,6 +11,7 @@ import re
 import stat
 
 from .artifacts import artifact_folder, load_artifact, save_artifact
+from .analysis import parse_time
 from .inputs import InputError, MAX_EVENTS, MAX_FILE_BYTES, MAX_RECORD_BYTES, MAX_TOTAL_BYTES, read_snapshot
 
 PROFILE='1c-jr-sequential-8.3.27.1989-v1'
@@ -190,10 +191,52 @@ def _saved(state_dir,artifact_id):
         sources.append((source['name'],data))
     return sources,parse_snapshot(sources,utc_offset=report['result']['utc_offset'])
 
-def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20):
+def _window_rows(result, window):
+    """Select recorded instants and describe the observations that were comparable."""
+    start, end = parse_time(window['start']), parse_time(window['end'])
+    first = last = None
+    unplaced = 0
+    selected = []
+    for record in result['records']:
+        try:
+            stamp = parse_time(record['timestamp'])
+        except (ValueError, OverflowError):
+            unplaced += 1
+            continue
+        first = stamp if first is None else min(first, stamp)
+        last = stamp if last is None else max(last, stamp)
+        if start <= stamp < end:
+            selected.append(record)
+    if result['utc_offset'] is None:
+        status = 'time_zone_unknown'
+    elif first is None:
+        status = 'no_parseable_timestamps'
+    elif selected:
+        status = 'observed_timestamps_in_window'
+    else:
+        status = 'no_recorded_timestamps_in_window'
+    coverage = dict(
+        status=status, parse_status=result['status'], issue_count=len(result['issues']),
+        parsed_records=result['event_count'], unplaced_records=unplaced,
+        records_in_window=None if first is None else len(selected),
+        observed_local_range=result['observed_local_range'],
+        observed_utc_range=[stamp.isoformat() if stamp is not None else None for stamp in (first, last)],
+        span_intersects_window=None if first is None else last >= start and first < end,
+        utc_offset=result['utc_offset'], precision_seconds=1, boundaries='half_open',
+        time_basis='declared_fixed_offset' if result['utc_offset'] is not None else 'unknown',
+        clock_alignment='not_verified', can_establish_absence=False,
+    )
+    return selected, coverage
+
+
+def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20,window=None):
+    from .source_coverage import validate_request
+
     if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100:raise InputError('invalid JR pagination')
+    window = validate_request(window=window)['window']
     _,result=_saved(state_dir,artifact_id)
-    selected=[r for r in result['records'] if event is None or r['event']==event]
+    records, coverage = _window_rows(result, window) if window else (result['records'], None)
+    selected = records if event is None else [record for record in records if record['event']==event]
     output=[]
     for record in selected[offset:offset+limit]:
         item={k:v for k,v in record.items() if k not in ('data','uninterpreted_tail','comment')}
@@ -203,8 +246,13 @@ def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20):
             if isinstance(value,str) and len(value)>2000:
                 item[key]=value[:2000];item['truncated_fields'].append(key)
         output.append(item)
-    return dict(artifact_id=artifact_id,profile=PROFILE,total_matched=len(selected),offset=offset,records=output,
-                untrusted_source_content=True,integrity_verified=True,complete_incident_coverage=None)
+    following = offset + len(output)
+    response = dict(artifact_id=artifact_id,profile=PROFILE,total_matched=len(selected),offset=offset,records=output,
+                    next_offset=following if following<len(selected) else None,
+                    untrusted_source_content=True,integrity_verified=True,complete_incident_coverage=None)
+    if coverage is not None:
+        response.update(window=window, coverage=coverage)
+    return response
 
 def read_record(state_dir,artifact_id,record_id):
     sources,result=_saved(state_dir,artifact_id)

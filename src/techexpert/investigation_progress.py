@@ -50,6 +50,20 @@ def _instant(value):
     return value
 
 
+def _occurrence_window(occurrence):
+    from .source_coverage import validate_request
+
+    start, end = occurrence.get('started_at'), occurrence.get('ended_at')
+    if start is None or end is None:
+        return None
+    try:
+        return validate_request(window=dict(start=start, end=end))['window']
+    except InputError:
+        # Older reports may have a point event or a time representation that
+        # cannot be used as the exact bounds of a retained evidence query.
+        return None
+
+
 def _record(folder, operation, revision):
     from .operations import TERMINAL
 
@@ -204,9 +218,10 @@ def view(state, investigation_id):
     validate_decision(doc)
     stage = doc.get('workflow_stage','initial_analysis')
     collection = (doc.get('observation_plan') or {}).get('collection_state','unknown')
-    occurrence = (doc.get('occurrence') or {}).get('status')
+    occurrence = doc.get('occurrence') or {}
+    occurrence_status = occurrence.get('status')
     if (stage not in investigations.STAGES or collection not in investigations.COLLECTION_STATES
-            or occurrence not in (None,'reported_not_verified','evidenced_by_harness')
+            or occurrence_status not in (None,'reported_not_verified','evidenced_by_harness')
             or doc['execution_status'] not in investigations.EXECUTIONS or doc['cause_state'] not in investigations.CAUSES):
         raise InputError('unsupported saved investigation status')
     rows, complete = _operations(state, investigation_id, revisions)
@@ -230,7 +245,8 @@ def view(state, investigation_id):
                 operation_inventory='complete' if complete else 'incomplete',
                 active_checks=None if unknown else sum(row['state'] in ACTIVE for row in rows),
                 recent_checks=recent, more_checks=len(rows)>len(recent), last_recorded_at=last, observed_at=fs.stamp(),
-                collection_state=collection, occurrence_status=occurrence,
+                collection_state=collection, occurrence_status=occurrence_status,
+                occurrence_window=_occurrence_window(occurrence),
                 available_facts=dict(saved=len(doc['facts']), with_tool_measurement=sum('measurement' in row for row in doc['facts']),
                                      evidence_references=len(doc['evidence'])),
                 scope='context-bound local operations and saved report metadata',

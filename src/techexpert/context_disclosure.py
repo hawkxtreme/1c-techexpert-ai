@@ -52,9 +52,9 @@ def validate_request(value):
     kind = args['kind']
     optional = set()
     if kind in PAGES:
-        optional.update(('offset', 'limit'))
+        optional.update(('offset', 'limit', 'window'))
     if kind == 'tj-events':
-        optional.update(('event', 'source', 'window', 'linked_run'))
+        optional.update(('event', 'source', 'linked_run'))
     if kind.endswith('-evidence'):
         optional.add('record')
         record = args.get('record')
@@ -62,6 +62,9 @@ def validate_request(value):
             raise InputError('select a record identifier for this evidence view')
     if set(args) - set(schema['required']) - optional:
         raise InputError('filters are not available for this context view')
+    if kind == 'jr-events' and 'window' in args:
+        from .source_coverage import validate_request as validate_window
+        args['window'] = validate_window(window=args['window'])['window']
     return args
 
 
@@ -203,9 +206,11 @@ def _project(state, attachment, args, aliases):
     if report.get('kind') != 'native-jr':
         raise InputError('selected artifact is not a supported native registration journal')
     if kind == 'jr-events':
-        result = native_jr.list_events(state, target, offset=offset, limit=limit)
+        result = native_jr.list_events(state, target, offset=offset, limit=limit, window=args.get('window'))
         view = _page([fields.jr_event(row, aliases) for row in result['records']],
                      offset, result['total_matched'], clock_alignment='not_verified')
+        if 'window' in result:
+            view.update(window=result['window'], coverage=result['coverage'])
     else:
         result = native_jr.read_record(state, target, args['record'])
         view = dict(record=fields.jr_event(result['record'], aliases))

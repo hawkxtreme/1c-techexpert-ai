@@ -119,6 +119,14 @@ class InvestigationProgressTests(unittest.TestCase):
         self.assertEqual(observed['revision'],after['revision'])
         self.assertEqual(observed['state'],'awaiting_agent')
         self.assertEqual(observed['occurrence_status'],'reported_not_verified')
+        self.assertIsNone(observed['occurrence_window'])
+        investigations.revise(self.state,self.iid,dict(occurrence=dict(source='external_monitoring',
+            message='Уточнение времени из мониторинга',started_at='2026-11-16T12:00:00+03:00',
+            ended_at='2026-11-16T09:45:00Z',evidence=[])),expected_revision=after['revision'])
+        latest = self.view()
+        self.assertEqual(latest['occurrence_status'],'reported_not_verified')
+        self.assertEqual(latest['occurrence_window'],dict(start='2026-11-16T09:00:00+00:00',
+                                                        end='2026-11-16T09:45:00+00:00'))
 
     def test_stop_decision_requires_consistent_outcome_and_preserves_reason(self):
         stop = dict(stage_decision=dict(reason='budget_limit', detail='Достигнут предел чтения'))

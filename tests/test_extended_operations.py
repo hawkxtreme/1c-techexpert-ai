@@ -69,9 +69,12 @@ class ExtendedOperationTests(unittest.TestCase):
         imported=self.call('jr.import',path=str(folder),platform_version='8.3.27.1989',utc_offset='+03:00')
         self.assertEqual(imported['status'],'succeeded',imported.get('message'));aid=imported['data']['artifact_id']
         self.assertIsNone(imported['data']['result']['database_identity'])
-        page=self.call('jr.events',artifact_id=aid,limit=1)
+        window=dict(start='2026-11-16T10:05:42+03:00',end='2026-11-16T07:05:44Z')
+        page=self.call('jr.events',artifact_id=aid,limit=1,window=window)
         self.assertEqual(len(page['data']['records']),1);self.assertTrue(page['truncated'])
         self.assertEqual(page['data']['next_offset'],1)
+        self.assertEqual(page['data']['total_matched'],4)
+        self.assertEqual(page['data']['coverage']['records_in_window'],4)
         proof=self.call('jr.record',artifact_id=aid,record_id=page['data']['records'][0]['id'])
         self.assertEqual(hashlib.sha256(proof['data']['text'].encode()).hexdigest(),proof['data']['record']['sha256'])
         shutil.rmtree(folder)
