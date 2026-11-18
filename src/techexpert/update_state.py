@@ -18,7 +18,7 @@ _TEMPLATE = re.compile(r'USR-[a-z0-9][a-z0-9-]{0,47}')
 _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
-def supports(metadata, observed, *, case_retirement_schemas=()):
+def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -33,7 +33,8 @@ def supports(metadata, observed, *, case_retirement_schemas=()):
         if (type(versions) is not list or not versions or any(type(item) is not int or item not in FORMATS[name] for item in versions)
             or not set(observed[name]) <= set(versions)):
             return False
-    return set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
+    return (set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
+            and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas))
 
 
 def _exists(path):
@@ -49,6 +50,7 @@ def inspect_state(state):
     state = fs.safe(state)
     schemas = {name:set() for name in FORMATS}
     schemas['case-source-retirements'] = set()
+    schemas['investigation-report-retirements'] = set()
     problems = []
     remaining_bytes = 64*1024**2
     remaining_entries = 8192
@@ -189,6 +191,17 @@ def inspect_state(state):
                 if receipt['status'] == 'outcome_unverified':
                     problems.append(dict(kind='case-sources', id=folder.name, source_id=entry.name,
                                          status='retirement_outcome_unverified'))
+        from .investigation_retention import status as report_status
+        for folder in children(retention / 'reports'):
+            if not _ID.fullmatch(folder.name):
+                raise InputError('unexpected report retention entry')
+            if fs.writer_active(folder):
+                problems.append(dict(kind='reports', id=folder.name, status='active'))
+            receipt = report_status(state, folder.name, read=document)
+            if receipt is not None:
+                schema('investigation-report-retirements', receipt)
+                if receipt['status'] == 'cleanup_pending':
+                    problems.append(dict(kind='reports', id=folder.name, status='cleanup_pending'))
         marker(state/'incident-drafts/write.lock','incident-drafts')
         for folder in children(state/'incident-drafts'):
             if _ID.fullmatch(folder.name):

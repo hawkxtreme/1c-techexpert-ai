@@ -142,6 +142,24 @@ class UpdateTests(unittest.TestCase):
                                  case_retirement_schemas=package['case_retirement_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 
+    def test_retired_report_history_requires_a_reader_that_respects_its_receipt(self):
+        from src.techexpert import investigation_retention, investigations
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.update_state import inspect_state, supports
+
+        report = investigations.create(self.state, {'task':'Проверка обновления после очистки отчётов'})
+        preview = investigation_retention.preview(self.state, report['investigation_id'])
+        result = investigation_retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertEqual(result['status'], 'removed')
+        observed = inspect_state(self.state)
+        self.assertEqual(observed['activity'], 'idle_observed')
+        self.assertEqual(observed['schemata']['investigation-report-retirements'], [1])
+        package = read_package(self.bundle)
+        self.assertFalse(supports(package['metadata'], observed['schemata']))
+        self.assertTrue(supports(package['metadata'], observed['schemata'],
+                                 report_retirement_schemas=package['report_retirement_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs

@@ -67,6 +67,9 @@ def read_plan(state,identifier):
         or result.get('profile')!=PLAN or result.get('schema_version')!=1):raise InputError('verified remote transfer plan required')
     settings=remote_budget.normalize(**result['settings'])
     if settings!=result['settings'] or set(result.get('known_hosts_sha256',{}))!={s['id'] for s in settings['sources']}:raise InputError('invalid saved remote settings/trust binding')
+    investigation=result.get('investigation')
+    if (type(investigation) is not dict or investigation.get('id')!=settings['investigation_id']
+        or investigation.get('revision')!=settings['revision']):raise InputError('invalid saved remote investigation binding')
     return report
 
 
@@ -84,6 +87,10 @@ def managed_run(output,operation,investigation_id):
     if plan['request']['operation']!=operation or fs.safe(Path(plan['state_dir'])/'operations'/folder.name)!=fs.safe(folder):raise InputError('remote connection requires its exact managed operation plan')
     context=plan['request'].get('context')
     if context is not None and context['investigation_id']!=investigation_id:raise InputError('remote source plan belongs to another investigation context')
+    if 'investigation_dependencies' in plan and investigation_id not in plan['investigation_dependencies']:
+        raise InputError('remote source investigation is outside the admitted operation plan')
+    from .investigation_retention import require_available
+    require_available(plan['state_dir'],investigation_id)
     return folder.name
 
 
@@ -102,8 +109,9 @@ def _trust(output,plan,source):
 
 
 def _session(state,output,plan,source,operation,protocol_bytes,retained_bytes,timeout_seconds,stop,work):
+    run_id=managed_run(output,operation,plan['result']['settings']['investigation_id'])
     plan_tag=dependency(state,plan)
-    settings=_trust(output,plan,source);run_id=managed_run(output,operation,plan['result']['settings']['investigation_id'])
+    settings=_trust(output,plan,source)
     with remote_budget.reserve(state,plan['result']['settings'],source['id'],run_id,protocol_bytes,retained_bytes) as charge:
         started=fs.stamp();client=Session(ssh_command(settings),max_bytes=protocol_bytes,timeout=timeout_seconds,should_stop=stop)
         error=None;value=None

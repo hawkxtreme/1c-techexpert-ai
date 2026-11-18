@@ -1,5 +1,5 @@
 """Durable single-owner SC01 runs. Repeated keys reuse evidence, never repeat work."""
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import hashlib
 import os
 from pathlib import Path
@@ -71,6 +71,9 @@ def _guard_dependency_paths(state,kind,identifier):
 def _verify_target(state,kind,identifier,*,inputs=None,revision=None):
     if kind not in ('cases','artifacts','comparisons','investigations') or not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):
         raise InputError('invalid operation product identity')
+    if kind=='investigations':
+        from .investigation_retention import require_available
+        require_available(state,identifier)
     base=_snapshot_folder(state,kind,identifier,revision);fs.inventory(base)
     if kind=='investigations':
         from .investigations import load,revision_folder
@@ -323,6 +326,11 @@ def cancel(state,run_id,*,executor_id):
     return _fit_view(updated,updated['limits']['max_result_bytes'])
 
 def run(state,request,*,parent_guard=None):
+    with ExitStack() as admission:
+        return _run(state, request, admission, parent_guard=parent_guard)
+
+
+def _run(state,request,admission,*,parent_guard=None):
     original=request;state=fs.safe(state);request=capabilities.normalize_request(request)
     run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest();folder=fs.folder(state,run_id)
     if folder.exists():
@@ -332,14 +340,20 @@ def run(state,request,*,parent_guard=None):
         old=fs.plan(folder)
         if _semantic(old['request'])!=_semantic(request):raise InputError('operation key conflict; a changed request requires a new key')
         return _fit_view(dict(result(state,run_id),replayed=True),request['budget']['max_result_bytes'])
+    from .investigation_retention import request_ids, writer as report_writer
+    dependencies=request_ids(state,request)
+    for identifier in dependencies:
+        admission.enter_context(report_writer(state, identifier))
     context=_context(state,request);_space(state);versions=_versions()
     fs.private(folder.parent)
     try:folder.mkdir()
-    except FileExistsError:return run(state,original,parent_guard=parent_guard)
+    except FileExistsError:
+        admission.close()
+        return run(state,original,parent_guard=parent_guard)
     fs.private(folder)
     with fs.writer(folder):
         started=time.monotonic();plan=dict(schema_version=1,request=request,state_dir=str(state),context=context,versions=versions,
-            deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp())
+            deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp(),investigation_dependencies=dependencies)
         boundary=kernel_context.current()
         if boundary:
             plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])
@@ -352,6 +366,7 @@ def run(state,request,*,parent_guard=None):
             executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=request['budget']['timeout_seconds'],stop_verified=False)
         fs.record(folder,current,'claimed');fs.private(folder/'work-state')
         fs.write(folder/'plan-receipt.json',dict(sha256=fs.digest(plan)))
+        admission.close()
         stopping=None;last_check=0;last_heartbeat=started
         def stop_reason():
             if (folder/'cancel.json').exists():return 'cancelled'

@@ -13,6 +13,7 @@ from .readiness import MANIFEST, canonical, parse_inventory
 PLUGIN = '1c-techexpert-ai'
 FORMAT = 'src/techexpert/assets/update-format.json'
 CASE_RETIREMENT_FORMAT = 'src/techexpert/assets/case-retirement-format.json'
+REPORT_RETIREMENT_FORMAT = 'src/techexpert/assets/report-retirement-format.json'
 MIB = 1024**2
 ARCHIVE_LIMIT = 16*MIB
 LIMITS = dict(max_depth=12, max_files=512, max_file_bytes=MIB, max_total_bytes=16*MIB)
@@ -59,6 +60,20 @@ def _allowed(name, listed):
     return any(name.startswith(folder) and suffix in suffixes for folder, suffixes in _FILES.items())
 
 
+def _retirement_schemas(contents, listed, filename, field):
+    if filename not in contents:
+        return []
+    declared = _json(contents[filename])
+    versions = declared.get(field)
+    if (filename not in listed or set(declared) != {'schema_version', field}
+            or type(declared['schema_version']) is not int or declared['schema_version'] != 1
+            or type(versions) is not list or not versions
+            or any(type(version) is not int or not 1 <= version <= 2**31-1 for version in versions)
+            or len(set(versions)) != len(versions)):
+        raise InputError('invalid retirement compatibility declaration')
+    return versions
+
+
 def read_package(path):
     path = safe(path)
     data, identity = input_files.read(path, ARCHIVE_LIMIT, keep=True)
@@ -99,20 +114,11 @@ def read_package(path):
     if type(revision) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}', revision):
         raise InputError('unsupported knowledge revision')
     contract = _json(contents[FORMAT]) if FORMAT in contents else None
-    retirement = []
-    if CASE_RETIREMENT_FORMAT in contents:
-        declared = _json(contents[CASE_RETIREMENT_FORMAT])
-        retirement = declared.get('case_source_retirements')
-        if (CASE_RETIREMENT_FORMAT not in listed or set(declared) != {'schema_version', 'case_source_retirements'}
-                or type(declared['schema_version']) is not int or declared['schema_version'] != 1
-                or type(retirement) is not list or not retirement
-                or any(type(version) is not int or not 1 <= version <= 2**31-1 for version in retirement)
-                or len(set(retirement)) != len(retirement)):
-            raise InputError('invalid case retirement compatibility declaration')
     return dict(path=str(path), identity=identity, metadata=dict(version=version, knowledge_revision=revision,
         knowledge_schema=book.get('schema_version'), state_contract=contract), inventory=inventory, files=contents,
         hashes={name:dict(sha256=_digest(value), bytes=len(value)) for name, value in contents.items()},
-        archive=data, case_retirement_schemas=retirement)
+        archive=data, case_retirement_schemas=_retirement_schemas(contents, listed, CASE_RETIREMENT_FORMAT, 'case_source_retirements'),
+        report_retirement_schemas=_retirement_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'))
 
 
 def installed_inventory(root):

@@ -162,7 +162,14 @@ def _staged(state, release_id):
         _verify_tree(folder/'bundle',value['files'])
     except (OSError,ValueError) as exc:
         raise InputError('staged package failed integrity verification') from exc
-    return dict(value, case_retirement_schemas=archive['case_retirement_schemas'])
+    return dict(value, case_retirement_schemas=archive['case_retirement_schemas'],
+                report_retirement_schemas=archive['report_retirement_schemas'])
+
+
+def _supports(package, observed):
+    return supports(package['metadata'], observed['schemata'],
+                    case_retirement_schemas=package['case_retirement_schemas'],
+                    report_retirement_schemas=package['report_retirement_schemas'])
 
 
 def _presentation(state, record):
@@ -182,8 +189,7 @@ def check(state, path, *, current_root=ROOT):
     change = compare_packages(current,candidate,compare_supplemental=False)
     changes = {path for item in change['components'].values() for path in item['changed']+item['added']+item['removed']}
     activity = inspect_state(state)
-    compatible = supports(candidate['metadata'], activity['schemata'],
-                          case_retirement_schemas=candidate['case_retirement_schemas']) if activity['metadata_complete'] else None
+    compatible = _supports(candidate, activity) if activity['metadata_complete'] else None
     static = dict(root=str(current_root), inventory_sha256=current['inventory_sha256'],
         observed_sha256=fs.digest(current['observed']))
     plan = dict(schema_version=1,kind='stage',state=str(state),package=candidate['path'],archive=candidate['identity'],
@@ -220,8 +226,7 @@ def stage(state, plan, *, expected_sha256):
     if (current['inventory_sha256']!=plan['current']['inventory_sha256']
         or fs.digest(current['observed'])!=plan['current']['observed_sha256']):
         raise InputError('current bundle changed since the reviewed update plan')
-    if not supports(package['metadata'], inspect_state(state)['schemata'],
-                    case_retirement_schemas=package['case_retirement_schemas']):
+    if not _supports(package, inspect_state(state)):
         raise InputError('candidate does not cover the observed saved state schema')
     reserve = package['identity']['bytes']+sum(row['bytes'] for row in package['hashes'].values())
     _space(folder,reserve)
@@ -255,7 +260,7 @@ def selected(state):
 
 def _ensure_safe_point(state, record, *, require_idle):
     observed = inspect_state(state)
-    if not supports(record['metadata'], observed['schemata'], case_retirement_schemas=record['case_retirement_schemas']):
+    if not _supports(record, observed):
         raise InputError('candidate does not cover the observed saved state schema')
     if require_idle and observed['activity']!='idle_observed':
         raise InputError('await a safe point: saved activity is active or unresolved')

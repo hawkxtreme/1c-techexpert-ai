@@ -40,6 +40,7 @@ class RemoteOperationTests(unittest.TestCase):
         request=self.request('remote.inspect',args,'remote-denied')
         result=operations.run(self.state,request)
         self.assertEqual(result['status'],'partial',result)
+        self.assertEqual(fs.plan(fs.folder(self.state,result['run_id']))['investigation_dependencies'],[self.args['investigation_id']])
         self.assertEqual(result['data']['sources'],[])
         self.assertFalse(result['data']['result']['listing_complete'])
         replay=operations.run(self.state,request)
@@ -78,6 +79,36 @@ class RemoteOperationTests(unittest.TestCase):
         request['context']=dict(investigation_id=other['investigation_id'],expected_revision=1)
         result=operations.run(self.state,request)
         self.assertEqual(result['status'],'invalid_input',result)
+        self.assertFalse((self.state/'remote-budgets').exists())
+
+    def test_report_retirement_fences_indirect_remote_references_before_worker_start(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_retention as retention
+
+        plan = self.plan()['data']['artifact_id']
+        iid = self.args['investigation_id']
+        args = dict(plan_id=plan, source_id='tj', protocol_bytes=16384, timeout_seconds=1)
+        preview = retention.preview(self.state, iid)
+        request = self.request('remote.inspect', args, 'indirect-active-reference')
+        run_id = hashlib.sha256(request['operation_key'].encode()).hexdigest()
+        folder = fs.private(self.state/'operations'/run_id)
+        sealed = dict(schema_version=1, request=request)
+        fs.write(folder/'plan.json', sealed)
+        fs.write(folder/'plan-receipt.json', dict(sha256=fs.digest(sealed)))
+        fs.write(folder/'status.json', dict(schema_version=1, run_id=run_id, status='running', stop_verified=False))
+        with self.assertRaisesRegex(InputError, 'related operation'):
+            retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        fs.write(folder/'status.json', dict(schema_version=1, run_id=run_id, status='failed', stop_verified=True))
+        preview = retention.preview(self.state, iid)
+        self.assertEqual(retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])['status'], 'removed')
+        with patch.object(operations.operation_process, 'run', side_effect=AssertionError('worker started after cleanup')):
+            with self.assertRaisesRegex(InputError, 'investigation reports were removed'):
+                operations.run(self.state,self.request('remote.inspect',args,'indirect-after-retirement'))
+            scopes = [dict(operations=['remote.plan'], remote_plans=[dict(settings=self.args)]),
+                      dict(operations=['remote.inspect'], artifacts=[plan], remote_calls=[dict(plan_id=plan, source_id='tj')])]
+            for scope in scopes:
+                with self.subTest(scope=scope['operations']), self.assertRaisesRegex(InputError, 'investigation reports were removed'):
+                    operations.run(self.state,self.request('code.execute',dict(program='return 0',scope=scope),'scoped-after-retirement'))
         self.assertFalse((self.state/'remote-budgets').exists())
 
     def test_new_mcp_tools_are_real_finite_operations_and_passive_discovery(self):

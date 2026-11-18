@@ -9,6 +9,7 @@ CATEGORIES = {
     'export-work-copies': ('policy.json', 'source_export_work_copy_days'),
     'case-inputs': ('case-input-policy.json', 'case_input_days'),
     'case-indexes': ('case-index-policy.json', 'case_index_days'),
+    'reports': ('report-policy.json', 'investigation_report_days'),
 }
 DEFAULT_CATEGORY = 'export-work-copies'
 

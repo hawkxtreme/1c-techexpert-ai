@@ -376,8 +376,11 @@ def _read_revision(state_dir,iid,revision):
     return doc,receipt
 
 def _read_head(state_dir, investigation_id):
+    from .investigation_retention import require_available
+    from .operation_state import safe
+    require_available(state_dir, investigation_id)
     first=revision_folder(state_dir,investigation_id,1).parent.parent
-    return json_value(read_snapshot(first/'head.json',8192).decode('utf-8'),reject_duplicates=True)
+    return json_value(read_snapshot(safe(first/'head.json'),8192).decode('utf-8'),reject_duplicates=True)
 
 
 def _revision_chain(state_dir, investigation_id, head, revision):
@@ -428,9 +431,7 @@ def source_context(state_dir,investigation_id,*,revision=None):
     from .source_passports import context
     from .operations import _verify_target
     if revision is None:
-        from .operation_state import read,safe
-        head=read(safe(revision_folder(state_dir,investigation_id,1).parent.parent/'head.json'),8192)
-        revision=head.get('revision')
+        revision=_read_head(state_dir,investigation_id).get('revision')
     return context(_verify_target(state_dir,'investigations',investigation_id,revision=revision))
 
 
@@ -470,6 +471,12 @@ def create(state_dir,request):
 def revise(state_dir,investigation_id,patch,*,expected_revision):
     _object(patch,EDITABLE)
     if type(expected_revision) is not int:raise InputError('expected revision required')
+    from .investigation_retention import writer
+    with writer(state_dir, investigation_id):
+        return _revise(state_dir, investigation_id, patch, expected_revision=expected_revision)
+
+
+def _revise(state_dir,investigation_id,patch,*,expected_revision):
     folder=revision_folder(state_dir,investigation_id,1).parent.parent
     lock=folder/'write.lock'
     try:

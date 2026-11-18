@@ -273,3 +273,192 @@ class InvestigationMaterialsTests(unittest.TestCase):
             case_retention.apply(self.state, review['plan'], expected_sha256=review['plan_sha256'])
         self.assertTrue(target.exists())
         self.assertIsNone(case_retention.status(self.state, case, 's1'))
+
+
+class InvestigationReportRetentionTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.state = Path(temp.name) / 'private'
+        self.case = investigate(ROOT / 'examples/sc01/case.json', self.state)['case_id']
+        self.ids = [create(self.state, {'task': 'Сохранённое расследование'})['investigation_id'] for _ in range(2)]
+        for iid in self.ids:
+            revise(self.state, iid, dict(attachments=[dict(id='A-1', kind='case', target_id=self.case)],
+                   evidence=[dict(id='E-1', attachment='A-1', record='s1:2')]), expected_revision=1)
+        self.iid = self.ids[0]
+        self.root = self.state / 'investigations' / self.iid
+
+    def test_report_cleanup_preserves_the_other_consumer_and_external_files(self):
+        from src.techexpert import investigation_retention as retention, investigations, storage
+        from src.techexpert.inputs import InputError
+
+        proof = storage.read_evidence(self.state, self.case, 's1:2')
+        report_files = [item for item in self.root.rglob('*') if item.is_file()]
+        original_bytes = sum(item.stat().st_size for item in report_files)
+        original_paths = set(self.state.rglob('*'))
+        preview = retention.preview(self.state, self.iid)
+        self.assertEqual(set(self.state.rglob('*')), original_paths)
+        self.assertEqual(preview['logical_bytes'], original_bytes)
+        self.assertEqual(preview['plan']['attached_products'], [{'kind':'case','id':self.case}])
+        with self.assertRaisesRegex(InputError, 'plan digest'):
+            retention.apply(self.state, preview['plan'], expected_sha256='0'*64)
+        self.assertTrue(self.root.exists())
+        result = retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertEqual(result['status'], 'removed')
+        self.assertEqual(result['logical_bytes_removed'], original_bytes)
+        self.assertFalse(self.root.exists())
+        self.assertEqual(storage.read_evidence(self.state, self.case, 's1:2'), proof)
+        self.assertEqual(investigations.load(self.state, self.ids[1])['revision'], 2)
+        self.root.mkdir()
+        replacement = self.root / 'personal.txt'
+        replacement.write_bytes(b'reoccupied')
+        self.assertTrue(retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])['replayed'])
+        self.assertEqual(replacement.read_bytes(), b'reoccupied')
+        with self.assertRaisesRegex(InputError, 'investigation reports were removed'):
+            investigations.load(self.state, self.iid)
+
+    def test_cli_keeps_source_review_on_live_reports_and_shows_deleted_status(self):
+        def run(*parts):
+            call = subprocess.run([sys.executable, '-B', '-X', 'utf8', str(ROOT/'techexpert.py'),
+                '--state-dir', str(self.state), *map(str, parts)], capture_output=True, encoding='utf-8', timeout=25)
+            self.assertEqual(call.returncode, 0, call.stdout + call.stderr)
+            return json.loads(call.stdout)
+
+        self.assertIn('source_review', run('investigation', self.iid))
+        plan = run('investigation-cleanup-plan', self.iid)
+        path = self.state.parent/'approved.json'
+        path.write_text(json.dumps(plan['plan']), encoding='utf-8')
+        result = run('investigation-cleanup-apply', path, '--expected-sha256', plan['plan_sha256'])
+        self.assertEqual(result['status'], 'removed')
+        self.assertEqual(run('investigation', self.iid)['status'], 'removed')
+        self.assertEqual(run('investigation-materials', self.iid)['operation_references'], [])
+
+    def test_cleanup_resumes_the_same_payload_after_an_interruption(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_retention as retention
+        from src.techexpert.inputs import InputError
+
+        preview = retention.preview(self.state, self.iid)
+        remove = retention._remove_file
+        calls = 0
+
+        def interrupt(path, expected, **options):
+            nonlocal calls
+            calls += 1
+            remove(path, expected, **options)
+            if calls == 2:
+                raise OSError('injected after disposal but before recording completion')
+
+        with patch.object(retention, '_remove_file', side_effect=interrupt), self.assertRaises(OSError):
+            retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertFalse(self.root.exists())
+        self.assertEqual(retention.status(self.state, self.iid)['status'], 'cleanup_pending')
+        payload = retention.registry(self.state, self.iid) / 'payload'
+        self.assertFalse((payload / 'revisions/000001/receipt.json').exists())
+        foreign = payload / 'unreviewed.txt'
+        foreign.write_bytes(b'must stay')
+        with self.assertRaisesRegex(InputError, 'unreviewed files'):
+            retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertEqual(foreign.read_bytes(), b'must stay')
+        foreign.unlink()
+        result = retention.apply(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertEqual(result['status'], 'removed')
+        self.assertEqual(result['logical_bytes_removed'], preview['logical_bytes'])
+
+    def test_missing_payload_is_distinct_from_a_verified_empty_payload(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_retention as retention
+        from src.techexpert.inputs import InputError
+
+        preview = retention.preview(self.state, self.iid)
+        arguments = (self.state, preview['plan'])
+        approval = dict(expected_sha256=preview['plan_sha256'])
+        with patch.object(retention, '_remove_file', side_effect=OSError('interrupted before disposal')):
+            with self.assertRaises(OSError):
+                retention.apply(*arguments, **approval)
+        payload = retention.registry(self.state, self.iid) / 'payload'
+        displaced = self.state.parent / 'displaced-test-payload'
+        payload.rename(displaced)
+        with self.assertRaisesRegex(InputError, 'custody payload is missing'):
+            retention.apply(*arguments, **approval)
+        self.assertTrue((displaced/'head.json').is_file())
+        self.assertEqual(retention.status(self.state, self.iid)['status'], 'cleanup_pending')
+        displaced.rename(payload)
+        seal = retention._seal
+
+        def interrupt_completion(path, value):
+            if path.name == 'receipt.json':
+                raise OSError('completion interrupted')
+            return seal(path, value)
+
+        with patch.object(retention, '_seal', side_effect=interrupt_completion), self.assertRaises(OSError):
+            retention.apply(*arguments, **approval)
+        self.assertFalse(payload.exists())
+        self.assertEqual(retention.apply(*arguments, **approval)['status'], 'removed')
+
+    def test_unattempted_missing_member_cannot_be_counted_as_removed(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_retention as retention
+        from src.techexpert.inputs import InputError
+
+        preview = retention.preview(self.state, self.iid)
+        approval = dict(expected_sha256=preview['plan_sha256'])
+        with patch.object(retention, '_remove_file', side_effect=OSError('interrupted before disposal')):
+            with self.assertRaises(OSError):
+                retention.apply(self.state, preview['plan'], **approval)
+        payload = retention.registry(self.state, self.iid) / 'payload'
+        member = payload / 'revisions/000001/report.json'
+        displaced = self.state.parent / 'displaced-report.json'
+        member.rename(displaced)
+        with self.assertRaisesRegex(InputError, 'unattempted report file is missing'):
+            retention.apply(self.state, preview['plan'], **approval)
+        self.assertTrue(displaced.is_file())
+        self.assertTrue((payload/'head.json').is_file())
+        self.assertEqual(retention.status(self.state, self.iid)['status'], 'cleanup_pending')
+
+    def test_report_policy_revision_and_new_related_operation_invalidate_the_review(self):
+        from src.techexpert import investigation_retention as retention, operation_state as fs, retention_policy
+        from src.techexpert.inputs import InputError
+
+        self.assertEqual(retention.preview(self.state, self.iid, use_policy=True)['status'], 'retained_by_policy')
+        retention_policy.save(self.state, dict(schema_version=1, investigation_report_days=0),
+                              expected_revision=0, category='reports')
+        first = retention.preview(self.state, self.iid, use_policy=True)
+        retention_policy.save(self.state, dict(schema_version=1, investigation_report_days=30),
+                              expected_revision=1, category='reports')
+        with self.assertRaisesRegex(InputError, 'retention policy changed'):
+            retention.apply(self.state, first['plan'], expected_sha256=first['plan_sha256'])
+        current = retention.preview(self.state, self.iid)
+        key = 'related-operation'
+        run_id = hashlib.sha256(key.encode()).hexdigest()
+        run = fs.private(self.state/'operations'/run_id)
+        request = dict(operation_key=key, operation='case.events', arguments={},
+                       context=dict(investigation_id=self.iid, expected_revision=2))
+        operation = dict(schema_version=1, request=request)
+        fs.write(run/'plan.json', operation)
+        fs.write(run/'plan-receipt.json', dict(sha256=fs.digest(operation)))
+        fs.write(run/'status.json', dict(schema_version=1, run_id=run_id, status='running', stop_verified=False))
+        with self.assertRaisesRegex(InputError, 'related operation'):
+            retention.apply(self.state, current['plan'], expected_sha256=current['plan_sha256'])
+        fs.write(run/'plan.json', dict(operation, request=dict(request, context=dict(investigation_id=self.ids[1]))))
+        with self.assertRaisesRegex(InputError, 'operation relationship'):
+            retention.apply(self.state, current['plan'], expected_sha256=current['plan_sha256'])
+        (run/'plan.json').unlink()
+        with self.assertRaisesRegex(InputError, 'operation relationship'):
+            retention.apply(self.state, current['plan'], expected_sha256=current['plan_sha256'])
+        self.assertTrue(self.root.exists())
+        self.assertIsNone(retention.status(self.state, self.iid))
+        self.assertEqual(retention_policy.load(self.state, category='case-indexes')['revision'], 0)
+
+    def test_cleanup_admission_shares_the_writer_with_report_and_operation_admission(self):
+        from src.techexpert import investigation_retention, operations
+        from src.techexpert.inputs import InputError
+
+        request = dict(schema_version=1, operation='investigation.sources', executor_id='lab',
+                       operation_key='during-report-retention', arguments=dict(investigation_id=self.iid, revision=2))
+        with investigation_retention.writer(self.state, self.iid, require_report=False):
+            with self.assertRaisesRegex(InputError, 'writer is active'):
+                revise(self.state, self.iid, {}, expected_revision=2)
+            with self.assertRaisesRegex(InputError, 'writer is active'):
+                operations.run(self.state, request)
+        self.assertFalse((self.state/'operations').exists())

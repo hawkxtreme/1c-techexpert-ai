@@ -289,6 +289,10 @@ def view(state, investigation_id, *, revision=None, category=None, offset=0, lim
     if type(offset) is not int or not 0 <= offset <= MAX_ROWS or type(limit) is not int or not 1 <= limit <= 100:
         raise InputError('materials offset and page size are out of range')
     state = fs.safe(state)
+    from .investigation_retention import status as report_status
+    retired = report_status(state, investigation_id)
+    if retired is not None:
+        return retired
     location = investigations.revision_folder(state, investigation_id, 1).parent.parent
     inventory = Inventory()
     owner = dict(product_kind='investigation', product_id=investigation_id)
