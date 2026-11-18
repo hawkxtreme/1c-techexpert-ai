@@ -118,6 +118,8 @@ from . import logcfg_api as _logcfg
 ROUTES.update(_logcfg.routes(_sys.modules[__name__]))
 from . import remote_api as _remote
 ROUTES.update(_remote.routes(_sys.modules[__name__]))
+from . import fix_verification as _fix
+ROUTES[_fix.OPERATION]=_fix.route(_sys.modules[__name__])
 CODE_API=tuple(ROUTES)
 PROGRAM_EXECUTIONS=('code.execute','code.context')
 from .code_policy import schemas as _code_schemas
@@ -231,6 +233,11 @@ def normalize_request(value):
     if operation=='sample.describe':
         from .sample_description import normalize
         args=normalize(**args)
+    if operation==_fix.OPERATION:
+        args=_fix.normalize(args)
+        context=result.get('context')
+        if context is not None and (context['investigation_id'],context['expected_revision'])!=(args['investigation_id'],args['revision']):
+            raise InputError('fix verification requires the exact investigation revision in its invocation context')
     if operation in _logcfg.OPERATIONS:args=_logcfg.normalize(operation,args)
     if operation in _remote.OPERATIONS:args=_remote.normalize(operation,args)
     if operation=='os.import':
@@ -296,6 +303,9 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
     elif operation=='sample.describe':
         from .sample_description import describe
         data=describe(state,**args)
+    elif operation==_fix.OPERATION:
+        data=_fix.evaluate(state,output,args)
+        targets=[dict(kind='artifacts',id=data['artifact_id'])]
     elif operation in _logcfg.OPERATIONS:data,targets=_logcfg.execute(operation,args,state,output)
     elif operation in _remote.OPERATIONS:data,targets=_remote.execute(operation,args,state,output,stop)
     elif operation=='case.events':data=storage.list_native_events(state,**args,index_memory_bytes=memory_bytes)

@@ -115,13 +115,16 @@ def read_artifact_record(state_dir,artifact_id):
     return report,receipt['report_sha256']
 
 
-def load_artifact(state_dir,artifact_id):
+def load_artifact(state_dir,artifact_id,*,input_state_dir=None):
     report,_=read_artifact_record(state_dir,artifact_id)
     folder=artifact_folder(state_dir,artifact_id)
     for source in report['sources']:
         data=read_snapshot(source_path(folder,source,kind=report['kind']))
         if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:
             raise InputError('saved artifact evidence integrity mismatch')
+    if report['kind']=='fix_verification':
+        from .fix_verification import verify_inputs
+        verify_inputs(state_dir if input_state_dir is None else input_state_dir,report)
     return report
 
 

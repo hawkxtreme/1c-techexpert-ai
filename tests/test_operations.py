@@ -169,6 +169,10 @@ class ManagedOperationTests(unittest.TestCase):
         iid=doc['investigation_id']
         revision=investigations.revise(self.state,iid,dict(attachments=[dict(id='A-1',kind='case',target_id=cid)]),
                                        expected_revision=1)['revision']
+        planned_check=call('fix.verify',investigation_id=iid,revision=revision,measure='Measure the reported change',
+            operation='load orders',control='Repeat the same workload',minimum_observations=1,
+            goal=dict(kind='duration',value=5),before=dict(attachments=['A-1']))
+        self.assertEqual(planned_check['result']['status'],'awaiting_measurements')
         approval=(self.state,iid,revision,['case'],8192)
         context_policy.save(*approval,context_policy.plan(*approval)['plan_sha256'])
         scope=dict(attachment='A-1',kind='case-summary')

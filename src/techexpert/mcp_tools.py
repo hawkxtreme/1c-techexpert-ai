@@ -93,7 +93,7 @@ def tools(profile='full'):
         result.append(dict(name=name,title=operation,description=f"{operation}: {route['impact']}. Sources: {'; '.join(route['required_sources'])}. "
             'Same managed CLI operation, private receipts, fixed budgets. Evidence needs interpretation by the current AI harness; partial coverage is not absence of cause.',
             inputSchema=tool_input_schema(operation,profile),outputSchema=deepcopy(route['output_schema']),
-            annotations=dict(readOnlyHint=operation not in {'input.inspect','case.analyze','case.compare','os.collect','os.import',*cap.PROGRAM_EXECUTIONS,*cap._logcfg.OPERATIONS,*cap._remote.OPERATIONS}|cap._diagnostics.CREATORS,destructiveHint=operation=='client.observe',
+            annotations=dict(readOnlyHint=operation not in {'input.inspect','case.analyze','case.compare','os.collect','os.import',cap._fix.OPERATION,*cap.PROGRAM_EXECUTIONS,*cap._logcfg.OPERATIONS,*cap._remote.OPERATIONS}|cap._diagnostics.CREATORS,destructiveHint=operation=='client.observe',
                 idempotentHint=True,openWorldHint=operation in {'input.inspect','source.check','case.analyze','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS,'remote.inspect','remote.capture'}|cap._diagnostics.CREATORS)))
     controls=control_names(profile)
     for suffix,(action,args,description) in CONTROLS.items():

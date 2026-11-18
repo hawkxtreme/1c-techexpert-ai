@@ -125,6 +125,9 @@ def attachment_case_ids(state, attachments):
                 fs.safe(folder / name)
             report, _ = storage.read_comparison_record(state, item['target_id'])
             cases.update(input_['case_id'] for input_ in report['input_reports'])
+        if item.get('scope')=='fix_verification':
+            from .fix_verification import case_dependencies
+            cases.update(case_dependencies(state,item))
     return cases
 
 

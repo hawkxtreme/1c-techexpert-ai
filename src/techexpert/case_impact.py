@@ -60,6 +60,8 @@ def observed(state, case, file_digest, source_id):
 
     affected = []
     case_digest = investigations._digest(case)
+    verification_digest = fs.digest(case)
+    includes_verification = False
     for folder in _locations(state / 'investigations'):
         _require(inventory, folder, 'head.json')
         head = investigations._read_head(state, folder.name)
@@ -81,6 +83,14 @@ def observed(state, case, file_digest, source_id):
                     if attachment['report_sha256'] != comparison_digests[identifier]:
                         raise InputError('saved investigation refers to a different comparison digest')
                     derived.append(attachment['id'])
+                if attachment.get('scope')=='fix_verification':
+                    from .fix_verification import case_dependencies
+                    dependencies=case_dependencies(state,attachment)
+                    if case['case_id'] in dependencies:
+                        if dependencies[case['case_id']]!=verification_digest:
+                            raise InputError('saved fix verification refers to a different case digest')
+                        derived.append(attachment['id'])
+                        includes_verification=True
             if not (direct or derived):
                 continue
             counts, uses = materials._uses(doc, limit=None)
@@ -91,5 +101,5 @@ def observed(state, case, file_digest, source_id):
             add(affected, dict(investigation_id=folder.name, revision=doc['revision'],
                                report_sha256=investigations._digest(doc), attachments=direct + derived,
                                evidence=evidence))
-    return dict(comparisons=comparisons, investigations=affected,
-                scope='saved_case_and_comparison_attachments', case_reverification_lost=True)
+    scope='saved_case_comparison_and_verification_attachments' if includes_verification else 'saved_case_and_comparison_attachments'
+    return dict(comparisons=comparisons, investigations=affected,scope=scope,case_reverification_lost=True)

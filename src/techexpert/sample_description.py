@@ -164,7 +164,7 @@ def _case_row(state, resource):
     if type(life) is dict and life.get('status') == 'established':
         if life.get('state') == 'completed':
             outcome = 'success'
-        elif life.get('state') in ('failed', 'cancelled'):
+        elif life.get('state') in ('failed', 'canceled', 'cancelled'):
             outcome = 'failed'
     return dict(resource['ref'], observation_id=resource['ref']['id'], operation_binding='caller_reported_not_verified',
         started_at=stamp, value_seconds=value, outcome=outcome, outcome_basis='platform_job_state_not_business_correctness',
@@ -209,11 +209,11 @@ def _duplicates(resources, case_rows):
     return excluded
 
 
-def describe(state, inputs, operation, **options):
+def describe(state, inputs, operation, *, observe=None, maximum_bytes=MAX_TOTAL_BYTES, **options):
     args = normalize(inputs, operation, **options)
     state = Path(state)
     resources, plans, dependencies = [], {}, []
-    remaining = MAX_TOTAL_BYTES
+    remaining = maximum_bytes
     for ref in args['inputs']:
         resource = _load(state, ref, remaining, plans)
         remaining -= resource['size']
@@ -288,6 +288,8 @@ def describe(state, inputs, operation, **options):
             if row['value_seconds'] is not None and not duration(row['value_seconds']):
                 row.update(value_seconds=None, original_value_in_retained_source=True)
             fingerprint.update(fs.encode(row))
+            if observe is not None:
+                observe(row, resource['report'])
             if args['offset'] < counts['inspected'] <= args['offset'] + args['limit']:
                 records.append(row)
     statistics = describe_values(values)

@@ -84,7 +84,7 @@ def _pointer(value,pointer):
 def _verify_evidence(state_dir,doc):
     attachments=_list(doc['attachments'],16);aids=_ids(attachments,'A');targets={}
     for item in attachments:
-        _object(item,('id','kind','target_id','report_sha256','source_origin'),('id','kind','target_id'))
+        _object(item,('id','kind','target_id','report_sha256','source_origin','scope'),('id','kind','target_id'))
         if doc['schema_version']==2:
             from .operations import _guard_dependency_paths
             kinds=dict(case='cases',artifact='artifacts',comparison='comparisons')
@@ -92,6 +92,13 @@ def _verify_evidence(state_dir,doc):
             _guard_dependency_paths(state_dir,kinds[item['kind']],item['target_id'])
         target=_target(state_dir,item);digest=_digest(target)
         if item.get('report_sha256',digest)!=digest:raise InputError('investigation attachment integrity mismatch')
+        if target.get('kind')=='fix_verification' and item['kind']=='artifact':
+            from .fix_verification import require_parent
+            require_parent(target,doc)
+            if item.get('scope','fix_verification')!='fix_verification':raise InputError('invalid fix verification attachment scope')
+            item['scope']='fix_verification'
+        elif 'scope' in item:
+            raise InputError('unexpected investigation attachment scope')
         origin=target.get('origin',target.get('result',{}).get('origin','not_established'))
         if item.get('source_origin',origin)!=origin:raise InputError('attachment origin disagrees with saved tool report')
         item.update(report_sha256=digest,source_origin=origin);targets[item['id']]=target
@@ -102,7 +109,12 @@ def _verify_evidence(state_dir,doc):
         attachment=next(a for a in attachments if a['id']==item['attachment']);record=item['record']
         if attachment['kind']=='case':proof=read_evidence(state_dir,attachment['target_id'],record)
         elif attachment['kind']=='artifact':
-            if targets[item['attachment']]['kind']=='native-jr' and isinstance(record,str) and ':r' in record:
+            target=targets[item['attachment']]
+            if target['kind']=='fix_verification':
+                from .fix_verification import evidence
+                if record!='report':raise InputError('fix verification evidence requires its calculation report')
+                proof=evidence(target,doc)
+            elif target['kind']=='native-jr' and isinstance(record,str) and ':r' in record:
                 from .native_jr import read_record
                 found=read_record(state_dir,attachment['target_id'],record)['record']
                 proof={k:found[k] for k in ('source','file','byte_start','byte_end','sha256')}
@@ -304,11 +316,26 @@ def _validate(state_dir,doc):
 
 def _basis(doc):
     value={k:doc.get(k) for k in ('episode','attachments','evidence','facts','hypotheses','contradictions','template','variant','time_mode','scale','profile_sha256','occurrence')}
+    verification={item['id'] for item in doc['attachments'] if item.get('scope')=='fix_verification'}
+    if verification:
+        value['attachments']=[item for item in doc['attachments'] if item['id'] not in verification]
+        value['evidence']=[item for item in doc['evidence'] if item['attachment'] not in verification]
     for key in ('source_bindings','source_links'):
         if doc.get(key):value[key]=doc[key]
     clarifications=[item['text'] for item in investigation_task.saved(doc) if item['revision']>1]
     if clarifications:value['task_clarifications']=clarifications
     return _digest(value)
+
+def _verification_rebound(previous, current):
+    attachments = {item['id']:item for item in previous['attachments'] if item.get('scope')=='fix_verification'}
+    if not attachments:
+        return False
+    selected = {item['id']:item for item in current['attachments']}
+    if any(selected.get(identifier)!=item for identifier,item in attachments.items()):
+        return True
+    evidence = {item['id']:item for item in current['evidence']}
+    return any(evidence.get(item['id'])!=item for item in previous['evidence'] if item['attachment'] in attachments)
+
 
 def _md(value):
     return re.sub(r'([\\`*_{}\[\]()#+\-.!|>])',r'\\\1',html.escape(str(value),quote=False))
@@ -376,8 +403,16 @@ def render(doc):
             lines+=['','## Ссылки','']
             for item in citations['legacy']:
                 lines.append('- '+_md(item['purpose'])+': <'+item['url']+'>; '+_md(item['applicability']))
-    lines+=['','## Проверка исправления','',_md(json.dumps(doc['improvement'],ensure_ascii=False)),
-            '', '## План наблюдения','',_md(json.dumps(doc['observation_plan'],ensure_ascii=False)),
+    lines+=['','## Проверка исправления','']
+    if doc['improvement'] is not None:
+        lines.append(_md(json.dumps(doc['improvement'],ensure_ascii=False)))
+    for item in doc['evidence']:
+        proof=item['proof']
+        if proof.get('method')=='fix-verification-v1':
+            from .fix_verification import summarize_proof
+            lines.append('- '+_md(item['id'])+' · ревизия '+str(proof['revision'])+' · '
+                         + _md(summarize_proof(proof)))
+    lines+=['', '## План наблюдения','',_md(json.dumps(doc['observation_plan'],ensure_ascii=False)),
             '', '## Версии и ограничения учёта','',_md(json.dumps(doc['versions'],ensure_ascii=False)),
             '',_md(json.dumps(dict(current_harness=doc['harness'],assessment_harness=doc['assessment_harness']),ensure_ascii=False)),
             '', 'Расход записан со слов harness; общий исполнитель плана и подсчёт его токенов здесь не реализованы.', '']
@@ -560,17 +595,18 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
         decision=doc.pop('stage_decision',None)
         old_assessment=doc['assessment'];doc['assessment']=None;_validate(state_dir,doc)
         basis=_basis(doc)
+        basis_changed=basis!=previous['analysis_basis_sha256'] or _verification_rebound(previous,doc)
         if 'assessment' in patch:
             doc['assessment']=old_assessment;doc['assessment_status']='provided_by_harness' if old_assessment else 'not_provided'
             doc['assessment_harness']=deepcopy(doc['harness']) if old_assessment else None
-        elif basis!=previous['analysis_basis_sha256']:
+        elif basis_changed:
             doc['assessment_status']='stale_due_to_revision' if previous['assessment'] else 'not_provided'
             doc['assessment_harness']=None
         else:doc['assessment']=old_assessment
-        if basis!=previous['analysis_basis_sha256'] and 'improvement' not in patch:doc['improvement']=None
+        if basis_changed and 'improvement' not in patch:doc['improvement']=None
         doc['analysis_basis_sha256']=basis
         stage_fields=('workflow_stage','execution_status','assessment','improvement','tool_runs','observation_plan','open_questions')
-        same_stage=(basis==previous['analysis_basis_sha256'] and all(doc.get(key)==previous.get(key) for key in stage_fields))
+        same_stage=(not basis_changed and all(doc.get(key)==previous.get(key) for key in stage_fields))
         if decision is not None and ('stage_decision' in patch or same_stage):doc['stage_decision']=decision
         _validate(state_dir,doc)
         from .case_retention import attachment_case_ids, case_writers

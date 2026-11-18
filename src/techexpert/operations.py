@@ -98,7 +98,7 @@ def _verify_target(state,kind,identifier,*,inputs=None,revision=None):
         return verified_case(state,identifier)
     if kind=='artifacts':
         from .artifacts import load_artifact
-        return load_artifact(state,identifier)
+        return load_artifact(state,identifier,input_state_dir=inputs)
     from .storage import load_comparison
     return load_comparison(state,identifier,input_state_dir=inputs)
 
@@ -113,6 +113,9 @@ def _promote(state,folder,worker):
         if kind == 'comparisons':
             from .case_retention import case_writers
             guard = case_writers(state, (item['case_id'] for item in worker['data']['input_reports']))
+        elif kind=='artifacts' and worker['data'].get('kind')==capabilities._fix.KIND:
+            from .case_retention import case_writers
+            guard = case_writers(state,(item['id'] for item in worker['data']['result']['dependencies'] if item['kind']=='cases'))
         else:
             guard = nullcontext()
         with guard:
@@ -149,7 +152,7 @@ def _snapshots(state,operation,args,data,*,output=None):
     elif operation in ('case.compare','comparison.show'):
         report=add('comparisons',data['comparison_id'])
         for item in report['input_reports']:add('cases',item['case_id'])
-    elif operation in ('input.inspect','os.collect','os.import','artifact.show'):add('artifacts',data['artifact_id'])
+    elif operation in ('input.inspect','os.collect','os.import','artifact.show',capabilities._fix.OPERATION):add('artifacts',data['artifact_id'])
     elif operation in capabilities._diagnostics.CREATORS|capabilities._diagnostics.ARTIFACT_READS:
         add('artifacts',data['artifact_id'])
     elif operation=='investigation.sources':

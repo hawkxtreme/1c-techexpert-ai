@@ -36,6 +36,16 @@ def validated_records(records):
     return valid, operations
 
 
+def measurement_category(success, duration, target_seconds):
+    if not success:
+        return 'frustrated'
+    if duration is None:
+        return 'unknown'
+    if duration<=target_seconds:
+        return 'satisfied'
+    return 'tolerating' if duration<=4*target_seconds else 'frustrated'
+
+
 def calculate(records,target_seconds,*,operation=None,start=None,end=None):
     target=number(target_seconds,'target_seconds',True)
     if target>365*86400:raise ValueError('target_seconds exceeds one year')
@@ -52,11 +62,7 @@ def calculate(records,target_seconds,*,operation=None,start=None,end=None):
     for row,timestamp,duration in valid:
         if row['operation']!=operation or (lower is not None and timestamp<lower) or (upper is not None and timestamp>=upper):continue
         selected.append(row['id'])
-        if not row['success']:counts['frustrated']+=1
-        elif duration is None:counts['unknown']+=1
-        elif duration<=target:counts['satisfied']+=1
-        elif duration<=4*target:counts['tolerating']+=1
-        else:counts['frustrated']+=1
+        counts[measurement_category(row['success'],duration,target)]+=1
     total=len(selected)
     return dict(schema_version=1,profile='apdex-measurements-v1',operation=operation,
         target_seconds=target,tolerating_limit_seconds=4*target,unit='seconds',
