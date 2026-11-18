@@ -23,6 +23,7 @@ PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
 AUDIT_NAME = re.compile(r'[0-9]{20}-[a-f0-9]{32}\.json')
+SUMMARY_REFERENCE = re.compile(r'view:([a-f0-9]{32}):([0-9]{20}-[a-f0-9]{32})')
 
 
 def argument_schema():
@@ -109,6 +110,38 @@ def receipt(state, investigation_id, receipt_id):
     if fs.digest(item) != document['sha256'] or item['investigation_id'] != investigation_id or item['id'] != receipt_id:
         raise InputError('context history integrity check failed')
     return item
+
+
+def verify_case_summary(state, reference, case):
+    """Check a summary citation against its receipt and a verified retained case."""
+    match = SUMMARY_REFERENCE.fullmatch(reference)
+    if match is None:
+        raise InputError('invalid context summary evidence reference')
+    investigation, receipt_id = match.groups()
+    entry = receipt(state, investigation, receipt_id)
+    report_sha256 = investigations._digest(case)
+    if (entry['source_id'] != case['case_id'] or entry['source_report_sha256'] != report_sha256
+            or (entry['view'], entry['category'], entry['source_kind'], entry['state'])
+               != ('case-summary', 'case', 'case', 'prepared')
+            or entry.get('reference', reference) != reference):
+        raise InputError('context summary evidence does not identify this retained case')
+    doc = policy.selected_investigation(state, investigation, entry['investigation_revision'])
+    scope, _ = policy.scope(doc)
+    target = next((item for item in doc['attachments'] if item['id'] == entry['attachment']), None)
+    if (scope != entry['policy_scope_sha256'] or target is None or
+            (target['kind'], target['target_id'], target['report_sha256']) != ('case', case['case_id'], report_sha256)):
+        raise InputError('context summary evidence differs from the investigation revision')
+    binding = dict(investigation_id=investigation, scope_sha256=scope, policy_sha256=entry['policy_sha256'])
+    saved = policy.verify_delivery(state, binding)
+    if (entry['policy'] != saved or 'case' not in saved['categories'] or
+            entry['rule_version'] != saved['rule_version']):
+        raise InputError('context summary evidence differs from the reviewed disclosure policy')
+    payload = _fit(fields.case_summary(case), saved['max_bytes'])
+    if entry['payload_bytes'] != len(payload) or entry['payload_sha256'] != sha256(payload).hexdigest():
+        raise InputError('context summary evidence payload does not match the retained case')
+    policy.verify_delivery(state, binding)
+    return {key: entry[key] for key in ('id', 'investigation_id', 'investigation_revision', 'attachment',
+                                        'view', 'source_report_sha256', 'payload_bytes', 'payload_sha256')}
 
 
 def _page(records, start, matched, **metadata):
@@ -207,6 +240,8 @@ def _record(state, doc, attachment, saved, kind, category, payload, consumer):
             payload_bytes=len(payload), payload_sha256=sha256(payload).hexdigest(), rule_version=policy.RULE_VERSION,
             cleanup='typed_fields_and_scoped_aliases',
             withheld=['raw_source_content', 'free_text', 'paths_and_credentials'])
+        if kind == 'case-summary':
+            item['reference'] = f"view:{doc['investigation_id']}:{receipt_id}"
         if consumer is not None:
             item['consumer'] = consumer
         fs.write(folder / (receipt_id + '.json'), dict(entry=item, sha256=fs.digest(item)))

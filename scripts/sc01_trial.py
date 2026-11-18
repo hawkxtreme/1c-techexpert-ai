@@ -180,15 +180,20 @@ def _answer(raw):
 
 
 def _evidence(output,doc,response):
+    from src.techexpert.context_disclosure import verify_case_summary
     from src.techexpert.operations import _guard_dependency_paths
     from src.techexpert.storage import verified_case,read_evidence
     allowed={s['original_sha256'] for s in doc['diagnosis_sources']};state=output/'diagnosis/state';result=[]
     for ref in response['evidence']:
         cid=ref['case_id'];_guard_dependency_paths(state,'cases',cid);case=verified_case(state,cid)
         if not case['sources'] or any(source['sha256'] not in allowed for source in case['sources']):raise InputError('cited case is not based on the prepared participant inputs')
-        proof=read_evidence(state,cid,ref['id'])
-        result.append(dict(case_id=cid,id=ref['id'],case_report_sha256=fs.digest(case),
-            proof={key:proof[key] for key in ('sha256','line','byte_start','byte_end') if key in proof}))
+        identifier=ref['id']
+        if identifier.startswith('view:'):
+            proof=verify_case_summary(state,identifier,case)
+        else:
+            record=read_evidence(state,cid,identifier)
+            proof={key:record[key] for key in ('sha256','line','byte_start','byte_end') if key in record}
+        result.append(dict(case_id=cid,id=identifier,case_report_sha256=fs.digest(case),proof=proof))
     return result
 
 

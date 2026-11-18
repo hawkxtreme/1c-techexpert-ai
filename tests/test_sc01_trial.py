@@ -159,6 +159,39 @@ class TrialTests(unittest.TestCase):
         with self.assertRaises((ValueError,OSError)):self.api.release(self.trial,answer)
         self.assertFalse((self.trial/'diagnosis/verification').exists())
 
+    def test_verified_case_summary_can_support_diagnosis_without_an_unrelated_record(self):
+        from src.techexpert import context_disclosure, context_policy, investigations, operation_state as fs
+
+        self.prepare();answer=self.answer()
+        state=self.trial/'diagnosis/state';cid=self.case['case_id']
+        iid=investigations.create(state, dict(task='Review the retained case measurements'))['investigation_id']
+        revision=investigations.revise(state,iid,dict(attachments=[dict(id='A-1',kind='case',target_id=cid)]),
+            expected_revision=1)['revision']
+        approval=(state,iid,revision,['case'],8192)
+        context_policy.save(*approval,context_policy.plan(*approval)['plan_sha256'])
+        ready=context_disclosure.read(state,dict(investigation_id=iid,revision=revision,attachment='A-1',kind='case-summary'))
+        entry=ready['disclosure'];reference=f"view:{iid}:{entry['id']}"
+        doc=json.loads(answer.read_bytes());doc['evidence'][0]['id']=reference;fs.write(answer,doc)
+        path=state/'context-disclosure/history'/iid/(entry['id']+'.json')
+        original=path.read_bytes()
+        falsified=dict(entry,payload_sha256='a'*64)
+        fs.write(path,dict(entry=falsified,sha256=fs.digest(falsified)))
+        with self.assertRaises(ValueError):self.api.release(self.trial,answer)
+        self.assertEqual(self.api.status(self.trial)['release_status'],'withheld')
+        fs.write(path,json.loads(original))
+
+        result=self.api.release(self.trial,answer)
+        self.assertEqual(result['release_status'],'released')
+        proof,=result['evidence_verified_at_release']
+        self.assertEqual(proof['id'],reference)
+        self.assertEqual(proof['proof']['payload_sha256'],entry['payload_sha256'])
+        self.assertEqual(context_disclosure.history(state,iid,revision)['total'],1)
+        self.assertEqual(entry['reference'],reference)
+        revoke=(state,iid,revision,[],8192)
+        context_policy.save(*revoke,context_policy.plan(*revoke)['plan_sha256'])
+        with self.assertRaisesRegex(ValueError,'policy changed'):
+            context_disclosure.verify_case_summary(state,reference,self.case)
+
     def test_interrupted_disclosure_retains_work_and_does_not_restart(self):
         self.prepare();answer=self.answer(insufficient=True)
         from scripts import sc01_trial

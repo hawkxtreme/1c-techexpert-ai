@@ -23,7 +23,8 @@ BOUNDARY=('\n\nEvaluation workspace: use the supplied skills, references, genera
 def diagnosis_schema():
     text=dict(type='string',minLength=1,maxLength=8192)
     evidence=dict(type='object',additionalProperties=False,required=['case_id','id','observation'],properties=dict(
-        case_id=dict(type='string',pattern='^[a-f0-9]{32}$'),id=dict(type='string',minLength=1,maxLength=128),observation=text))
+        case_id=dict(type='string',pattern='^[a-f0-9]{32}$'),id=dict(type='string',minLength=1,maxLength=128,
+            description='Record evidence ID or an exact case summary disclosure reference.'),observation=text))
     nullable=dict(anyOf=[text,dict(type='null')])
     return {'$schema':'https://json-schema.org/draft/2020-12/schema','type':'object','additionalProperties':False,
         'required':['status','cause_hypothesis','proposed_change','evidence','limitations'],

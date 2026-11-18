@@ -172,3 +172,4 @@ def verify_delivery(state, binding):
     if saved is None or saved['rule_version'] != RULE_VERSION or fs.digest(saved) != binding['policy_sha256']:
         raise InputError('context policy changed before delivery')
     require_available(state, binding['investigation_id'])
+    return public_policy(saved)
