@@ -20,9 +20,9 @@ DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
     'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'},
     'context-intake':{'request'},'context-attach':{'run_id','revision'},'context-task':{'request'},
-    'investigation-progress':{'investigation_id'}}
+    'investigation-progress':{'investigation_id'},'os-observation':{'request'}}
 _RUN_ACTIONS=('run','context-intake')
-_REQUEST_ACTIONS=(*_RUN_ACTIONS,'context-task')
+_REQUEST_ACTIONS=(*_RUN_ACTIONS,'context-task','os-observation')
 
 
 def _limits(value):
@@ -183,6 +183,8 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
         if action not in _REQUEST_ACTIONS:raise InputError('inline request requires a managed request action')
         if action=='context-task':
             from .investigation_task import normalize
+        elif action=='os-observation':
+            from .os_observation import normalize
         else:
             from .capabilities import normalize_request as normalize
         request_document=normalize(request_document)

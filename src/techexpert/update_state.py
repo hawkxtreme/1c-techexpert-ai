@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import check_history, context_excerpt, context_intake, context_program, investigation_progress, investigation_task, operation_state as fs, operations, report_references
+from . import check_history, context_excerpt, context_intake, context_program, investigation_progress, investigation_task, operation_state as fs, operations, os_observation, report_references
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -21,7 +21,7 @@ _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionEr
 def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
              tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
              context_program_schemas=(), report_reference_schemas=(), investigation_progress_schemas=(),
-             check_history_schemas=(), investigation_task_schemas=()):
+             check_history_schemas=(), investigation_task_schemas=(), os_observation_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -42,6 +42,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             and set(observed.get('investigation-progress', ())) <= set(investigation_progress_schemas)
             and set(observed.get('check-history', ())) <= set(check_history_schemas)
             and set(observed.get('investigation-task', ())) <= set(investigation_task_schemas)
+            and set(observed.get('os-observation', ())) <= set(os_observation_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
             and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
             and set(observed.get('context-intake', ())) <= set(context_intake_schemas)
@@ -66,6 +67,7 @@ def inspect_state(state):
     schemas['investigation-progress'] = set()
     schemas['check-history'] = set()
     schemas['investigation-task'] = set()
+    schemas['os-observation'] = set()
     schemas['tj-reference-windows'] = set()
     schemas['context-disclosure'] = set()
     schemas['context-intake'] = set()
@@ -135,6 +137,8 @@ def inspect_state(state):
                         binding = check_history.saved_binding(plan)
                         if binding is not None:
                             schemas['check-history'].add(binding['schema_version'])
+                    if 'observation' in plan['request']:
+                        schemas['os-observation'].add(os_observation.FORMAT)
                     if 'presentation' in plan['request']:
                         if not context_intake.protects(plan['request']):
                             raise InputError('unknown retained operation presentation')
@@ -265,6 +269,11 @@ def inspect_state(state):
         for path in children(state/'incident-private'):
             if path.suffix=='.lock':
                 marker(path,'incident-private')
+        for folder in children(state/os_observation.ROOT):
+            if not _ID.fullmatch(folder.name):
+                raise InputError('unexpected observation registry entry')
+            ledger=os_observation.read_ledger(state,folder.name,read=document)
+            schema('os-observation',ledger)
         managed(state/'operations','operations',_RUN)
         managed(state/'kernel-calls','kernel-calls',_ID)
     except _ERRORS:

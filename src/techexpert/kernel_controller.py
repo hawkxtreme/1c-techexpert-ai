@@ -41,19 +41,20 @@ def main(folder,memory_bytes):
         time.sleep(.01)
     permit=fs.read(directory/'start-permit.json',8192)
     if permit.get('plan_sha256')!=fs.digest(plan) or permit.get('child')!=fs.process_identity(os.getpid()):raise InputError('kernel permit process identity mismatch')
-    from . import capabilities,operations,kernel,context_intake,investigation_task
+    from . import capabilities,operations,kernel,context_intake,investigation_task,os_observation
     started=time.monotonic();admitted_at=started;response_limit=kernel.MAX_RESPONSE;run_id=None
     request=None;operation=None
     try:
         action=plan['action'];args=kernel._arguments(action,plan['arguments']);request=None;run_id=args.get('run_id')
         timeout=plan['limits']['query_seconds']
         if action in kernel._REQUEST_ACTIONS:
-            limit=investigation_task.MAX_REQUEST if action=='context-task' else 128*1024
-            path=fs.safe(args['request']) if action=='context-task' else args['request']
+            control={'context-task':investigation_task,'os-observation':os_observation}.get(action)
+            limit=control.MAX_REQUEST if control else 128*1024
+            path=fs.safe(args['request']) if control else args['request']
             raw=json_value(read_snapshot(path,limit).decode('utf-8-sig'),reject_duplicates=True)
-            if action=='context-task':
-                operation=investigation_task.OPERATION
-                request=investigation_task.normalize(raw)
+            if control:
+                operation=control.OPERATION
+                request=control.normalize(raw)
             else:
                 request=(context_intake.prepare(raw) if action=='context-intake' else
                          capabilities.normalize_request(raw))
@@ -67,6 +68,7 @@ def main(folder,memory_bytes):
         state=Path(plan['state_dir'])
         if action=='run':value=operations.run(state,request)
         elif action=='context-task':value=investigation_task.record(state,request)
+        elif action=='os-observation':value=os_observation.control(state,request)
         elif action=='context-intake':value=context_intake.acquire(state,request)
         elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':
@@ -88,7 +90,7 @@ def main(folder,memory_bytes):
         value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
         private=plan['action'].startswith('context-') or plan['action']=='investigation-progress' or (type(request) is dict and
-            (context_intake.protects(request) or request['operation']=='code.context'))
+            (context_intake.protects(request) or request.get('operation')=='code.context'))
         message='The selected local context request could not be completed.' if private else str(exc)[:512]
         value=dict(status='error',message=message,data=None);code=2
         if plan['action']=='context-task' and isinstance(exc,investigation_task.TaskError):

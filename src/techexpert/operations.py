@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from . import capabilities,operation_state as fs,operation_process,kernel_context
-from . import check_history,context_intake,context_program
+from . import check_history,context_intake,context_program,os_observation
 from .inputs import InputError
 from .storage import ROOT
 
@@ -276,6 +276,8 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
     elif request['operation']==context_program.OPERATION:
         value=context_program.public_state(value)
         stop_reason=value.get('stop_reason')
+    if 'os_observation' in plan:
+        value['observation_reservation']=plan['os_observation']['reservation']
     prepared_path=folder/'prepared-output.json'
     if prepared_path.exists():
         prepared=fs.read(prepared_path)
@@ -396,6 +398,7 @@ def _run(state,request,admission,*,parent_guard=None):
         if reason:
             return check_history.declined(request,run_id,reason,previous)
     _space(state)
+    observation,ledger=os_observation.prepare_run(state,request,context,run_id)
     fs.private(folder.parent)
     try:folder.mkdir()
     except FileExistsError:
@@ -407,6 +410,10 @@ def _run(state,request,admission,*,parent_guard=None):
             deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp(),investigation_dependencies=dependencies)
         if history is not None or request['operation']==context_program.OPERATION:
             plan['check_binding']=history
+        if observation is not None:
+            plan['os_observation']=observation
+            plan['deadline_monotonic']=min(plan['deadline_monotonic'],started+observation['collector']['duration_seconds']+30,
+                                           started+os_observation.time_left(observation))
         boundary=kernel_context.current()
         if boundary:
             plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])
@@ -415,9 +422,12 @@ def _run(state,request,admission,*,parent_guard=None):
             if boundary.get('cancel_files'):plan['kernel']['cancel_files']=boundary['cancel_files']
             if boundary.get('limits'):plan['kernel']['limits']=boundary['limits']
         fs.write(folder/'plan.json',plan)
+        timeout=request['budget']['timeout_seconds'] if observation is None else max(0,plan['deadline_monotonic']-started)
         current=dict(schema_version=1,run_id=run_id,status='preparing',owner=fs.process_identity(os.getpid()),child=None,
-            executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=request['budget']['timeout_seconds'],stop_verified=False)
+            executor_id=request['executor_id'],heartbeat_at=fs.stamp(),started_at=fs.stamp(),timeout_seconds=timeout,stop_verified=False)
         fs.record(folder,current,'claimed');fs.private(folder/'work-state')
+        if observation is not None:
+            os_observation.commit_reservation(state,context,ledger)
         fs.write(folder/'plan-receipt.json',dict(sha256=fs.digest(plan)))
         admission.close()
         stopping=None;last_check=0;last_heartbeat=started
@@ -462,7 +472,7 @@ def _run(state,request,admission,*,parent_guard=None):
                 current.update(status='cancelled' if reason=='cancelled' else 'failed',stop_verified=True,stop_reason=reason,finished_at=fs.stamp())
                 fs.record(folder,current,'not_started');return status(state,run_id)
             memory=request['arguments']['resources']['memory_bytes'] if request['operation'] in capabilities.PROGRAM_EXECUTIONS else 1024**3
-            process=operation_process.run(folder,guard=guard,on_started=on_started,timeout=request['budget']['timeout_seconds']+3,memory_bytes=memory)
+            process=operation_process.run(folder,guard=guard,on_started=on_started,timeout=timeout+3,memory_bytes=memory)
             current['process']=process;current['stop_verified']=process['tree_finished'] and _nested_stopped(state,folder,plan,current)
             if not process['tree_finished']:raise InputError('owned process tree stop is unknown')
             current['stop_reason']=current.get('stop_reason') or process.get('guard_error') or process.get('stop_reason')

@@ -2,7 +2,7 @@
 from copy import deepcopy
 import json
 
-from . import __version__,capabilities as cap,check_history,investigation_task,responses
+from . import __version__,capabilities as cap,check_history,investigation_task,os_observation,responses
 from .inputs import InputError
 
 MODERN='2026-07-28'
@@ -28,6 +28,7 @@ CONTEXT_READ='techexpert_context_read'
 CONTEXT_INTAKE='techexpert_context_intake'
 CONTEXT_ATTACH='techexpert_context_attach'
 CONTEXT_TASK='techexpert_investigation_task'
+OS_OBSERVATION='techexpert_os_observation'
 PROGRESS='techexpert_investigation_progress'
 ATTACH_SCHEMA=cap.obj(dict(run_id=RUN,revision=cap.integer(1,1000,1)),('run_id','revision'))
 
@@ -44,6 +45,8 @@ def control_names(profile):
     names = {PROGRESS} if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
     if profile in ('full', 'context'):
         names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH,CONTEXT_TASK))
+    if profile=='full':
+        names.add(OS_OBSERVATION)
     return names
 
 
@@ -65,6 +68,9 @@ def input_schema(operation):
         context=cap.obj(dict(investigation_id=cap.CASE,expected_revision=cap.integer(1,1000,1)),['investigation_id','expected_revision']))
     if operation in check_history.READS:
         fields['repeat_reason']=dict(cap.REPEAT_REASON,description='Reason for repeating the same saved investigation read after verified stop. Requires context and a fresh key.')
+    if operation=='os.collect':
+        fields['observation']=dict(os_observation.binding_schema(),
+                                   description='Approved plan and selected source. With this binding, arguments may only tighten duration_seconds, interval_seconds and max_bytes.')
     return cap.obj(fields,['operation_key','executor_id','arguments'])
 
 
@@ -113,12 +119,19 @@ def tools(profile='full'):
             inputSchema=investigation_task.argument_schema(),outputSchema=responses.schema(),
             description='Save the task from the current chat, or add a clarification to an exact investigation revision. Returns identifiers and metadata. No source access.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
+    if OS_OBSERVATION in controls:
+        result.append(dict(name=OS_OBSERVATION,title=os_observation.OPERATION,
+            inputSchema=os_observation.argument_schema(),outputSchema=responses.schema(),
+            description='Preview, record the exact user-approved OS observation, or read its remaining budget. Does not launch a collection.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     return sorted(result,key=lambda t:t['name'])
 
 
 def prepare(name,arguments,profile='full'):
     if name == CONTEXT_TASK:
         return investigation_task.ACTION,dict(request='inline-request.json'),investigation_task.normalize(arguments)
+    if name == OS_OBSERVATION:
+        return os_observation.ACTION,dict(request='inline-request.json'),os_observation.normalize(arguments)
     if name == CONTEXT_READ:
         from .context_disclosure import compact,validate_request
         return 'context-read',dict(selection=compact(validate_request(arguments))),None

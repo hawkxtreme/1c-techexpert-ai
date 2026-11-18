@@ -191,10 +191,11 @@ def catalogue(operation=None):
 def normalize_request(value):
     from .check_history import READS
     from .context_intake import PRESENTATION, validate as validate_intake
+    from .os_observation import binding_schema, sampler_arguments
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
     schema=obj(dict(schema_version=dict(type='integer',minimum=1,maximum=1),operation_key=identity,executor_id=identity,operation=string(64),
         arguments=dict(type='object',maxProperties=32,additionalProperties={}),
-        presentation=string(24,enum=[PRESENTATION]),repeat_reason=REPEAT_REASON,
+        presentation=string(24,enum=[PRESENTATION]),repeat_reason=REPEAT_REASON,observation=binding_schema(),
         budget=obj(dict(timeout_seconds=dict(type='number',minimum=.1,maximum=1830),max_result_bytes=integer(16384,MAX_RESULT,MAX_RESULT))),
         context=obj(dict(investigation_id=CASE,expected_revision=integer(1,1000,1)),('investigation_id','expected_revision'))),
         ('schema_version','operation_key','executor_id','operation','arguments'))
@@ -208,7 +209,10 @@ def normalize_request(value):
         if operation not in READS or 'context' not in result or 'presentation' in result:
             raise InputError('repeat reason requires a managed read of saved investigation evidence')
         result['repeat_reason']=result['repeat_reason'].strip()
-    args=validate(arguments,ROUTES[operation]['input_schema'])
+    planned='observation' in result
+    if planned and (operation!='os.collect' or 'context' not in result or 'presentation' in result):
+        raise InputError('approved observation requires an investigation-bound OS collection')
+    args=sampler_arguments(arguments) if planned else validate(arguments,ROUTES[operation]['input_schema'])
     for key in ('manifest','measurements','identity_file','known_hosts_file'):
         if key in args:args[key]=str(Path(args[key]).absolute())
     if operation in ('source.check','case.coverage'):
@@ -232,7 +236,7 @@ def normalize_request(value):
     if operation=='os.import':
         from .input_adapters import normalize
         args=normalize(args,single=True)
-    if operation=='os.collect':
+    if operation=='os.collect' and not planned:
         from .os_metrics import validate_request as os_request
         args=os_request(args)
     if operation in PROGRAM_EXECUTIONS:
@@ -243,7 +247,7 @@ def normalize_request(value):
     if operation in _diagnostics.OPERATIONS:args=_diagnostics.normalize(operation,args)
     ceiling=timeout_limit(operation,args)
     timeout=ceiling if operation=='case.analyze' else ROUTES[operation].get('default_timeout_seconds',ceiling)
-    if operation=='os.collect':timeout=args.get('duration_seconds',0)+30
+    if operation=='os.collect' and not planned:timeout=args['duration_seconds']+30
     budget=dict(timeout_seconds=timeout,max_result_bytes=MAX_RESULT)
     budget.update(result.get('budget',{}))
     if budget['timeout_seconds']>ceiling:raise InputError('operation timeout exceeds catalogue')

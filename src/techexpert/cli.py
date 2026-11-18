@@ -159,6 +159,8 @@ def main(argv=None):
         os_command.add_argument('--identity-file')
         os_command.add_argument('--known-hosts-file')
     os_import=commands.add_parser('os-import')
+    os_observation=commands.add_parser('os-observation',help='preview, approve or inspect a saved OS observation')
+    os_observation.add_argument('request',type=Path)
     os_import.add_argument('measurements',type=Path)
     pg=commands.add_parser('postgresql')
     pg.add_argument('operation',choices=('capabilities','activity','locks','database_stats','statements'))
@@ -450,6 +452,11 @@ def main(argv=None):
             result=(dict(status='planned_not_started',request=request,
                          prerequisites='Existing SSH/WinRM access and Python on remote nodes; no service or permission changes are automatic.')
                     if args.command=='os-plan' else collect_os(args.state_dir,request))
+        elif args.command=='os-observation':
+            from . import kernel
+            call=kernel.invoke(args.state_dir,'os-observation',dict(request=str(args.request)))
+            kernel.emit(call,sys.stdout)
+            return call['exit_code']
         elif args.command=='os-import':
             from .os_metrics import import_os
             result=import_os(args.state_dir,args.measurements)

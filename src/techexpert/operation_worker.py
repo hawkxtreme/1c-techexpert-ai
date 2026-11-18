@@ -62,8 +62,10 @@ def main(folder):
             limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
     outcome='succeeded';data=None;targets=[];message=None;stop_reason=None;command_stop=None
     try:
+        from .os_observation import execution_arguments
         bound = plan.get('kernel',{}).get('limits',{}).get('memory_bytes',memory)
-        data,targets=execute(request['operation'],request['arguments'],Path(plan['state_dir']),folder/'work-state',
+        args=execution_arguments(request,plan,folder.name)
+        data,targets=execute(request['operation'],args,Path(plan['state_dir']),folder/'work-state',
                              stop=stop, memory_bytes=min(memory,bound))
         if request['operation'] in PROGRAM_EXECUTIONS:outcome=data['result_status']
         else:outcome,stop_reason=output_status(request['operation'],data)

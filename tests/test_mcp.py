@@ -67,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),50)
+        tools=self.tools();self.assertEqual(len(tools),51)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -115,7 +115,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),50);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),51);self.assertFalse(self.state.exists())
 
     def test_context_profile_exposes_retained_views_and_bundled_knowledge(self):
         p,replies=self.start(profile='context')
