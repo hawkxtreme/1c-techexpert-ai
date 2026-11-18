@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import check_history, context_excerpt, context_intake, context_program, investigation_progress, operation_state as fs, operations, report_references
+from . import check_history, context_excerpt, context_intake, context_program, investigation_progress, investigation_task, operation_state as fs, operations, report_references
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -20,7 +20,8 @@ _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionEr
 
 def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
              tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
-             context_program_schemas=(), report_reference_schemas=(), investigation_progress_schemas=(), check_history_schemas=()):
+             context_program_schemas=(), report_reference_schemas=(), investigation_progress_schemas=(),
+             check_history_schemas=(), investigation_task_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -40,6 +41,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             and set(observed.get('report-references', ())) <= set(report_reference_schemas)
             and set(observed.get('investigation-progress', ())) <= set(investigation_progress_schemas)
             and set(observed.get('check-history', ())) <= set(check_history_schemas)
+            and set(observed.get('investigation-task', ())) <= set(investigation_task_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
             and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
             and set(observed.get('context-intake', ())) <= set(context_intake_schemas)
@@ -63,6 +65,7 @@ def inspect_state(state):
     schemas['report-references'] = set()
     schemas['investigation-progress'] = set()
     schemas['check-history'] = set()
+    schemas['investigation-task'] = set()
     schemas['tj-reference-windows'] = set()
     schemas['context-disclosure'] = set()
     schemas['context-intake'] = set()
@@ -195,6 +198,8 @@ def inspect_state(state):
                                 schemas['report-references'].add(version)
                             if 'stage_decision' in report:
                                 schemas['investigation-progress'].add(investigation_progress.FORMAT)
+                            if investigation_task.saved(report):
+                                schemas['investigation-task'].add(investigation_task.FORMAT)
                 else:
                     report = document(folder/'report.json')
                     schema(kind,report)

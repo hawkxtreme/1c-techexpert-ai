@@ -236,6 +236,8 @@ def main(argv=None):
     template.add_argument('--database-mode',choices=('file','server','unknown'))
     template.add_argument('--time-mode',choices=('unknown','past','current','reproduce'))
     investigation_create=commands.add_parser('investigation-create');investigation_create.add_argument('request',type=Path)
+    task=commands.add_parser('investigation-task',help='save a new chat task or clarification')
+    task.add_argument('request',type=Path)
     investigation=commands.add_parser('investigation');investigation.add_argument('investigation_id');investigation.add_argument('--revision',type=int)
     progress=commands.add_parser('investigation-progress',help='observe saved investigation and local check status')
     progress.add_argument('investigation_id')
@@ -501,6 +503,11 @@ def main(argv=None):
         elif args.command=='investigation-progress':
             from . import kernel
             call=kernel.invoke(args.state_dir,'investigation-progress',dict(investigation_id=args.investigation_id))
+            kernel.emit(call,sys.stdout)
+            return call['exit_code']
+        elif args.command=='investigation-task':
+            from . import investigation_task,kernel
+            call=kernel.invoke(args.state_dir,investigation_task.ACTION,dict(request=str(args.request)))
             kernel.emit(call,sys.stdout)
             return call['exit_code']
         elif args.command=='investigation-materials':

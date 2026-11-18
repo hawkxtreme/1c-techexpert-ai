@@ -15,7 +15,7 @@ import re
 import uuid
 
 from . import __version__
-from . import investigation_progress, report_references
+from . import investigation_progress, investigation_task, report_references
 from .artifacts import load_artifact,artifact_evidence,encoded
 from .incident_templates import catalogue as templates,plan as template_plan
 from .inputs import InputError,json_value,read_snapshot
@@ -148,6 +148,7 @@ def _validate(state_dir,doc):
     if doc['time_mode'] not in ('unknown','past','current','reproduce') or doc['scale'] not in ('one','several','all','background','unknown'):raise InputError('invalid investigation time or scale')
     if doc['execution_status'] not in EXECUTIONS:raise InputError('invalid execution status')
     _text(doc['task']);_object(doc['episode'],('description','start','end','utc_offset','database_mode','operation','user_reported_baseline','client_context','recurrence_seconds','requested_window_seconds'))
+    investigation_task.saved(doc)
     for key,value in doc['episode'].items():
         if key in ('recurrence_seconds','requested_window_seconds'):
             if value is not None and (type(value) not in (int,float) or not math.isfinite(value) or not 0<value<=31*86400):raise InputError('invalid periodic incident interval')
@@ -305,6 +306,8 @@ def _basis(doc):
     value={k:doc.get(k) for k in ('episode','attachments','evidence','facts','hypotheses','contradictions','template','variant','time_mode','scale','profile_sha256','occurrence')}
     for key in ('source_bindings','source_links'):
         if doc.get(key):value[key]=doc[key]
+    clarifications=[item['text'] for item in investigation_task.saved(doc) if item['revision']>1]
+    if clarifications:value['task_clarifications']=clarifications
     return _digest(value)
 
 def _md(value):
@@ -334,7 +337,12 @@ def render(doc):
            '', 'Проверены структура и ссылки. Причинное объяснение принадлежит указанному harness; правильность механизма инструментом не доказана.',
            *(['','Принадлежность источников для части выводов требует отдельной проверки.'] if source_review and source_review['needs_clarification'] else []),
            '', '## Контекст', '',f"Шаблон: {doc['template']['id']}, ревизия {doc['template']['revision']}. Время: {doc['time_mode']}. Масштаб: {doc['scale']}.",
-           '',_md(json.dumps(doc['episode'],ensure_ascii=False)), '', '## Наблюдения', '']
+           '',_md(json.dumps(doc['episode'],ensure_ascii=False))]
+    clarifications=[item for item in investigation_task.saved(doc) if item['revision']>1]
+    if clarifications:
+        lines+=['','## Уточнения из чата','']
+        lines.extend('- '+_md(item['text']) for item in clarifications)
+    lines+=['', '## Наблюдения', '']
     for fact in doc['facts']:
         lines.append('- '+fact['id']+': '+_md(fact['text'])+' ('+', '.join(fact['evidence'])+').')
         if 'measurement' in fact:lines.append('  Значение инструмента: '+_md(fact['measurement']['value'])+'; '+_md(fact['measurement']['pointer'])+'.')
@@ -457,15 +465,22 @@ def source_context(state_dir,investigation_id,*,revision=None):
 
 
 def create(state_dir,request):
-    _object(request,('task','template_id','template_revision','variant','time_mode','scale','episode','harness'),('task',))
+    return _create(state_dir,request,identifier=uuid.uuid4().hex)
+
+
+def _create(state_dir,request,*,identifier,task_note=None):
+    template_only=task_note is not None and task_note['text'] is None
+    _object(request,('task','template_id','template_revision','variant','time_mode','scale','episode','harness'),
+            ('template_id',) if template_only else ('task',))
     request=dict(dict(template_id='TPL-00'),**request)
-    _text(request['task']);book=templates()
+    book=templates()
     if (('time_mode' in request and request['time_mode'] not in book['time_modes'])
         or ('scale' in request and request['scale'] not in book['scales'])):raise InputError('invalid investigation time or scale')
     if 'template_revision' in request and (type(request['template_revision']) is not int or request['template_revision']<1):
         raise InputError('invalid requested template revision')
     selected=template_plan(request['template_id'],variant=request.get('variant'),time_mode=request.get('time_mode'),
                            state_dir=state_dir,revision=request.get('template_revision'))
+    task=_text(selected['template']['title'] if template_only else request['task'])
     defaults=selected['defaults']
     episode={}
     if 'database_mode' in defaults:episode['database_mode']=defaults['database_mode']
@@ -476,8 +491,8 @@ def create(state_dir,request):
     skill_digest=hashlib.sha256()
     for path in sorted((ROOT/'skills').rglob('SKILL.md')):
         skill_digest.update(path.relative_to(ROOT).as_posix().encode());skill_digest.update(read_snapshot(path,256*1024))
-    doc=dict(schema_version=2,investigation_id=uuid.uuid4().hex,revision=1,parent_sha256=None,
-        created_at=datetime.now(timezone.utc).isoformat(),task=request['task'],template=selected['template'],variant=selected['variant'],
+    doc=dict(schema_version=2,investigation_id=identifier,revision=1,parent_sha256=None,
+        created_at=datetime.now(timezone.utc).isoformat(),task=task,template=selected['template'],variant=selected['variant'],
         template_catalogue_sha256=selected['catalogue_sha256'],time_mode=selected['time_mode'],
         scale=request.get('scale',defaults.get('scale','unknown')),episode=episode,
         profile_snapshot=profile,profile_sha256=_digest(profile) if profile else None,
@@ -486,6 +501,7 @@ def create(state_dir,request):
         attachments=[],evidence=[],facts=[],hypotheses=[],contradictions=[],open_questions=[],tool_runs=[],assessment=None,
         assessment_status='not_provided',assessment_harness=None,improvement=None,observation_plan=None,structural_validation_only=True,
         workflow_stage='initial_analysis',occurrence=None,source_bindings=[],source_links=[])
+    if task_note is not None:investigation_task.append(doc,task_note)
     _validate(state_dir,doc);doc['analysis_basis_sha256']=_basis(doc)
     return _persist(state_dir,doc)
 
@@ -497,7 +513,7 @@ def revise(state_dir,investigation_id,patch,*,expected_revision):
         return _revise(state_dir, investigation_id, patch, expected_revision=expected_revision)
 
 
-def _revise(state_dir,investigation_id,patch,*,expected_revision):
+def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None):
     folder=revision_folder(state_dir,investigation_id,1).parent.parent
     lock=folder/'write.lock'
     try:
@@ -539,6 +555,7 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision):
             doc.update(profile_snapshot=profile,profile_sha256=_digest(profile))
         doc.update(changes);doc['revision']+=1;doc['parent_sha256']=_digest(previous)
         doc['created_at']=datetime.now(timezone.utc).isoformat()
+        if task_note is not None:investigation_task.append(doc,task_note)
         # Compute normalized evidence before detecting whether an old assessment is stale.
         decision=doc.pop('stage_decision',None)
         old_assessment=doc['assessment'];doc['assessment']=None;_validate(state_dir,doc)

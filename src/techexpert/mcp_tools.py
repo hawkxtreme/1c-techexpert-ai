@@ -2,7 +2,7 @@
 from copy import deepcopy
 import json
 
-from . import __version__,capabilities as cap,check_history,responses
+from . import __version__,capabilities as cap,check_history,investigation_task,responses
 from .inputs import InputError
 
 MODERN='2026-07-28'
@@ -27,6 +27,7 @@ CONTEXT_TOOLS=('knowledge.search','knowledge.card','code.context')
 CONTEXT_READ='techexpert_context_read'
 CONTEXT_INTAKE='techexpert_context_intake'
 CONTEXT_ATTACH='techexpert_context_attach'
+CONTEXT_TASK='techexpert_investigation_task'
 PROGRESS='techexpert_investigation_progress'
 ATTACH_SCHEMA=cap.obj(dict(run_id=RUN,revision=cap.integer(1,1000,1)),('run_id','revision'))
 
@@ -42,7 +43,7 @@ def selected_operations(profile='full'):
 def control_names(profile):
     names = {PROGRESS} if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
     if profile in ('full', 'context'):
-        names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH))
+        names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH,CONTEXT_TASK))
     return names
 
 
@@ -107,10 +108,17 @@ def tools(profile='full'):
         result.append(dict(name=CONTEXT_ATTACH,title='context.attach',inputSchema=deepcopy(ATTACH_SCHEMA),outputSchema=responses.schema(),
             description='Link an already saved intake result to an explicit revision of its investigation in the same environment.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
+    if CONTEXT_TASK in controls:
+        result.append(dict(name=CONTEXT_TASK,title=investigation_task.OPERATION,
+            inputSchema=investigation_task.argument_schema(),outputSchema=responses.schema(),
+            description='Save the task from the current chat, or add a clarification to an exact investigation revision. Returns identifiers and metadata. No source access.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     return sorted(result,key=lambda t:t['name'])
 
 
 def prepare(name,arguments,profile='full'):
+    if name == CONTEXT_TASK:
+        return investigation_task.ACTION,dict(request='inline-request.json'),investigation_task.normalize(arguments)
     if name == CONTEXT_READ:
         from .context_disclosure import compact,validate_request
         return 'context-read',dict(selection=compact(validate_request(arguments))),None

@@ -41,24 +41,32 @@ def main(folder,memory_bytes):
         time.sleep(.01)
     permit=fs.read(directory/'start-permit.json',8192)
     if permit.get('plan_sha256')!=fs.digest(plan) or permit.get('child')!=fs.process_identity(os.getpid()):raise InputError('kernel permit process identity mismatch')
-    from . import capabilities,operations,kernel,context_intake
+    from . import capabilities,operations,kernel,context_intake,investigation_task
     started=time.monotonic();admitted_at=started;response_limit=kernel.MAX_RESPONSE;run_id=None
-    request=None
+    request=None;operation=None
     try:
         action=plan['action'];args=kernel._arguments(action,plan['arguments']);request=None;run_id=args.get('run_id')
         timeout=plan['limits']['query_seconds']
-        if action in kernel._RUN_ACTIONS:
-            raw=json_value(read_snapshot(args['request'],128*1024).decode('utf-8-sig'),reject_duplicates=True)
-            request=(context_intake.prepare(raw) if action=='context-intake' else
-                     capabilities.normalize_request(raw))
-            timeout=request['budget']['timeout_seconds'];response_limit=request['budget']['max_result_bytes']
-            run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest()
+        if action in kernel._REQUEST_ACTIONS:
+            limit=investigation_task.MAX_REQUEST if action=='context-task' else 128*1024
+            path=fs.safe(args['request']) if action=='context-task' else args['request']
+            raw=json_value(read_snapshot(path,limit).decode('utf-8-sig'),reject_duplicates=True)
+            if action=='context-task':
+                operation=investigation_task.OPERATION
+                request=investigation_task.normalize(raw)
+            else:
+                request=(context_intake.prepare(raw) if action=='context-intake' else
+                         capabilities.normalize_request(raw))
+                operation=request['operation']
+                timeout=request['budget']['timeout_seconds'];response_limit=request['budget']['max_result_bytes']
+                run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest()
         active['deadline']=plan['started_monotonic']+timeout
         fs.write(directory/'admitted.json',dict(plan_sha256=fs.digest(plan),run_id=run_id,timeout_seconds=timeout))
         admitted_at=time.monotonic()
         if context.stop():raise TimeoutError(context.stop())
         state=Path(plan['state_dir'])
         if action=='run':value=operations.run(state,request)
+        elif action=='context-task':value=investigation_task.record(state,request)
         elif action=='context-intake':value=context_intake.acquire(state,request)
         elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':
@@ -83,10 +91,12 @@ def main(folder,memory_bytes):
             (context_intake.protects(request) or request['operation']=='code.context'))
         message='The selected local context request could not be completed.' if private else str(exc)[:512]
         value=dict(status='error',message=message,data=None);code=2
+        if plan['action']=='context-task' and isinstance(exc,investigation_task.TaskError):
+            value.update(message=str(exc),stop_reason=exc.reason)
     dispatch_finished=time.monotonic()
     try:
         from .responses import normalize
-        value=context.attach(normalize(value,operation=request['operation'] if request else None,run_id=run_id))
+        value=context.attach(normalize(value,operation=operation,run_id=run_id))
         if len(fs.encode(value))>response_limit:value=context.attach(dict(status='failed',stop_reason='output_limit',data=None));code=3
         kernel._write_response(directory/'response.json',value,code,plan)
     except MemoryError as exc:

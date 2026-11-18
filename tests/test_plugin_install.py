@@ -82,7 +82,7 @@ class PluginInstallTests(unittest.TestCase):
                 if not stream.closed:stream.close()
         self.assertEqual(replies[0]['result']['serverInfo']['version'],__version__)
         tools=next(item['result']['tools'] for item in replies if item.get('id')==2)
-        self.assertEqual(len(tools),49)
+        self.assertEqual(len(tools),50)
         self.assertIn('techexpert_code_execute',{item['name'] for item in tools})
         self.assertFalse(state.exists());self.assertFalse((self.bundle/'cases').exists())
 

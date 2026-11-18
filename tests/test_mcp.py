@@ -67,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),49)
+        tools=self.tools();self.assertEqual(len(tools),50)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -115,7 +115,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),49);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),50);self.assertFalse(self.state.exists())
 
     def test_context_profile_exposes_retained_views_and_bundled_knowledge(self):
         p,replies=self.start(profile='context')
@@ -124,7 +124,7 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(set(tools),{'techexpert_context_read','techexpert_context_intake',
                                      'techexpert_context_attach','techexpert_knowledge_card',
                                      'techexpert_knowledge_search','techexpert_code_context',
-                                     'techexpert_investigation_progress'})
+                                     'techexpert_investigation_progress','techexpert_investigation_task'})
         self.assertIn('context',tools['techexpert_code_context']['inputSchema']['required'])
         self.assertFalse(self.state.exists())
         self.send(p,'tools/call',dict(name='techexpert_case_show',arguments={}),identifier=2)

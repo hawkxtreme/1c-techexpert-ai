@@ -19,9 +19,10 @@ MAX_MCP_RESPONSE=64*1024**2
 DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
     'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'},
-    'context-intake':{'request'},'context-attach':{'run_id','revision'},
+    'context-intake':{'request'},'context-attach':{'run_id','revision'},'context-task':{'request'},
     'investigation-progress':{'investigation_id'}}
 _RUN_ACTIONS=('run','context-intake')
+_REQUEST_ACTIONS=(*_RUN_ACTIONS,'context-task')
 
 
 def _limits(value):
@@ -49,7 +50,7 @@ def _arguments(action,value):
         from .context_disclosure import compact,validate_request
         from .inputs import json_value
         return dict(selection=compact(validate_request(json_value(value['selection'],reject_duplicates=True))))
-    return dict(value,request=str(Path(value['request']).absolute())) if action in _RUN_ACTIONS else dict(value)
+    return dict(value,request=str(Path(value['request']).absolute())) if action in _REQUEST_ACTIONS else dict(value)
 
 
 def _space(path):
@@ -179,9 +180,12 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
         from .mcp_tools import VERSIONS
         if wire_version not in VERSIONS:raise InputError('unsupported MCP wire version')
     if request_document is not None:
-        from .capabilities import normalize_request
-        if action not in _RUN_ACTIONS:raise InputError('inline request requires a managed run action')
-        request_document=normalize_request(request_document)
+        if action not in _REQUEST_ACTIONS:raise InputError('inline request requires a managed request action')
+        if action=='context-task':
+            from .investigation_task import normalize
+        else:
+            from .capabilities import normalize_request as normalize
+        request_document=normalize(request_document)
         if len(fs.encode(request_document))>128*1024:raise InputError('inline operation request exceeds byte limit')
     if cancel_event is not None and cancel_event.is_set():raise InputError('cancelled before admission')
     arguments=_arguments(action,arguments);limits=_limits(limits);state=fs.safe(state);_space(state)
@@ -251,6 +255,15 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
         transport=dict(elapsed_before_delivery_seconds=time.monotonic()-started,full_response_json_decoded=False,
             memory_peak_bytes=None,scope='bounded small metadata and chunked response transport; no separate OS quota for setup/receipt/stream I/O'),
         stop_reason=reason,cancellation_requested=cancel_started is not None,plan_sha256=fs.digest(plan))
+    if action=='context-task' and request_document is not None:
+        # The owner can discard this owned input once the controller and the scan are finished.
+        receipt['task_request_input']='retained_stop_unverified'
+        if process['tree_finished'] is True:
+            try:
+                fs.safe(directory/'request.json').unlink(missing_ok=True)
+                receipt['task_request_input']='removed_after_stop'
+            except (OSError,ValueError):
+                receipt['task_request_input']='retained_cleanup_failed'
     if (directory/'metrics.json').exists():receipt['controller_metrics']=fs.read(directory/'metrics.json',65536)
     call=dict(call_id=call_id,folder=str(directory),response_name=response['name'],exit_code=response['exit_code'],wire_version=wire_version)
     try:_write_checked(directory/'call-receipt.json',receipt)
