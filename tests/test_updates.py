@@ -252,6 +252,7 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(observed['schemata']['operations'], [1])
         self.assertFalse(supports(package['metadata'], observed['schemata'], **compatible))
         self.assertTrue(supports(package['metadata'], observed['schemata'], **compatible,
+                                 check_history_schemas=package['check_history_schemas'],
                                  context_program_schemas=package['context_program_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 

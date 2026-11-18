@@ -60,7 +60,10 @@ def authorize(state, plan):
             raise CodeError('context_category_not_allowed', 'Continue with views covered by the saved policy.')
         if attachments.get(label) != kind:
             raise CodeError('scope_denied', 'Use an approved view of an attachment in the selected revision.')
-    return dict(investigation_id=doc['investigation_id'], scope_sha256=scope, policy_sha256=fs.digest(saved)), saved['max_bytes']
+    binding = dict(investigation_id=doc['investigation_id'], scope_sha256=scope, policy_sha256=fs.digest(saved))
+    if 'check_binding' in plan and (plan['check_binding'] or {}).get('policy') != binding:
+        raise CodeError('context_policy_changed', 'The disclosure policy changed after admission. Review it before a new run.')
+    return binding, saved['max_bytes']
 
 
 def call_request(plan, operation, args):

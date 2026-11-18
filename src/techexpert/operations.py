@@ -8,7 +8,7 @@ import time
 
 from . import __version__
 from . import capabilities,operation_state as fs,operation_process,kernel_context
-from . import context_intake,context_program
+from . import check_history,context_intake,context_program
 from .inputs import InputError
 from .storage import ROOT
 
@@ -389,7 +389,13 @@ def _run(state,request,admission,*,parent_guard=None):
     dependencies=request_ids(state,request)
     for identifier in dependencies:
         admission.enter_context(report_writer(state, identifier))
-    context=_context(state,request);_space(state);versions=_versions()
+    context=_context(state,request);versions=_versions()
+    history=check_history.binding(state,request,context,versions) if parent_guard is None else None
+    if history is not None:
+        reason,previous=check_history.previous(state,request,context,history)
+        if reason:
+            return check_history.declined(request,run_id,reason,previous)
+    _space(state)
     fs.private(folder.parent)
     try:folder.mkdir()
     except FileExistsError:
@@ -399,6 +405,8 @@ def _run(state,request,admission,*,parent_guard=None):
     with fs.writer(folder):
         started=time.monotonic();plan=dict(schema_version=fs.plan_schema(request['operation']),request=request,state_dir=str(state),context=context,versions=versions,
             deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp(),investigation_dependencies=dependencies)
+        if history is not None or request['operation']==context_program.OPERATION:
+            plan['check_binding']=history
         boundary=kernel_context.current()
         if boundary:
             plan['deadline_monotonic']=min(plan['deadline_monotonic'],boundary['deadline'])

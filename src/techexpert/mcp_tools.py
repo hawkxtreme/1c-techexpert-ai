@@ -2,7 +2,7 @@
 from copy import deepcopy
 import json
 
-from . import __version__,capabilities as cap,responses
+from . import __version__,capabilities as cap,check_history,responses
 from .inputs import InputError
 
 MODERN='2026-07-28'
@@ -57,12 +57,14 @@ def tool_input_schema(operation, profile):
 
 def input_schema(operation):
     route=cap.ROUTES[operation]
-    return cap.obj(dict(operation_key=dict(IDENTITY,description='Stable key for one semantic operation. Repeat after uncertainty; a changed request needs a reviewed new key.'),
+    fields=dict(operation_key=dict(IDENTITY,description='Stable key for one semantic operation. Repeat after uncertainty; a changed request needs a reviewed new key.'),
         executor_id=dict(IDENTITY,description='Caller label, not authentication.'),arguments=deepcopy(route['input_schema']),
         budget=cap.obj(dict(timeout_seconds=dict(type='number',minimum=.1,maximum=route['timeout_seconds']),
             max_result_bytes=cap.integer(16384,cap.MAX_RESULT,cap.MAX_RESULT))),
-        context=cap.obj(dict(investigation_id=cap.CASE,expected_revision=cap.integer(1,1000,1)),['investigation_id','expected_revision'])),
-        ['operation_key','executor_id','arguments'])
+        context=cap.obj(dict(investigation_id=cap.CASE,expected_revision=cap.integer(1,1000,1)),['investigation_id','expected_revision']))
+    if operation in check_history.READS:
+        fields['repeat_reason']=dict(cap.REPEAT_REASON,description='Reason for repeating the same saved investigation read after verified stop. Requires context and a fresh key.')
+    return cap.obj(fields,['operation_key','executor_id','arguments'])
 
 
 def intake_schema():

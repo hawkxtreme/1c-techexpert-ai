@@ -18,6 +18,7 @@ def array(items,limit=16):return dict(type='array',items=items,maxItems=limit,de
 
 CASE=string(32,pattern='[a-f0-9]{32}')
 SHA256=string(64,pattern='[a-f0-9]{64}')
+REPEAT_REASON=string(512,pattern=r'.*\S.*')
 FILE=string()
 WINDOW=obj(dict(start=string(64),end=string(64)),('start','end'))
 COVERAGE=dict(window=WINDOW,required_events=array(string(64)),required_fields=array(string(128)))
@@ -188,11 +189,12 @@ def catalogue(operation=None):
         not_yet_managed=['source export execution','investigation/profile mutations','knowledge-use','incident drafts'])
 
 def normalize_request(value):
+    from .check_history import READS
     from .context_intake import PRESENTATION, validate as validate_intake
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
     schema=obj(dict(schema_version=dict(type='integer',minimum=1,maximum=1),operation_key=identity,executor_id=identity,operation=string(64),
         arguments=dict(type='object',maxProperties=32,additionalProperties={}),
-        presentation=string(24,enum=[PRESENTATION]),
+        presentation=string(24,enum=[PRESENTATION]),repeat_reason=REPEAT_REASON,
         budget=obj(dict(timeout_seconds=dict(type='number',minimum=.1,maximum=1830),max_result_bytes=integer(16384,MAX_RESULT,MAX_RESULT))),
         context=obj(dict(investigation_id=CASE,expected_revision=integer(1,1000,1)),('investigation_id','expected_revision'))),
         ('schema_version','operation_key','executor_id','operation','arguments'))
@@ -202,6 +204,10 @@ def normalize_request(value):
     arguments=raw.get('arguments');raw['arguments']={}
     result=validate(raw,schema);operation=result['operation']
     if operation not in ROUTES:raise InputError('operation is not in the executable catalogue')
+    if 'repeat_reason' in result:
+        if operation not in READS or 'context' not in result or 'presentation' in result:
+            raise InputError('repeat reason requires a managed read of saved investigation evidence')
+        result['repeat_reason']=result['repeat_reason'].strip()
     args=validate(arguments,ROUTES[operation]['input_schema'])
     for key in ('manifest','measurements','identity_file','known_hosts_file'):
         if key in args:args[key]=str(Path(args[key]).absolute())

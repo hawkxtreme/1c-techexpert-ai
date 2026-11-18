@@ -16,6 +16,7 @@ CASE_RETIREMENT_FORMAT = 'src/techexpert/assets/case-retirement-format.json'
 REPORT_RETIREMENT_FORMAT = 'src/techexpert/assets/report-retirement-format.json'
 REPORT_REFERENCE_FORMAT = 'src/techexpert/assets/report-reference-format.json'
 INVESTIGATION_PROGRESS_FORMAT = 'src/techexpert/assets/investigation-progress-format.json'
+CHECK_HISTORY_FORMAT = 'src/techexpert/assets/check-history-format.json'
 TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
 CONTEXT_DISCLOSURE_FORMAT = 'src/techexpert/assets/context-disclosure-format.json'
 CONTEXT_INTAKE_FORMAT = 'src/techexpert/assets/context-intake-format.json'
@@ -127,6 +128,7 @@ def read_package(path):
         report_retirement_schemas=_additional_schemas(contents, listed, REPORT_RETIREMENT_FORMAT, 'investigation_report_retirements'),
         report_reference_schemas=_additional_schemas(contents, listed, REPORT_REFERENCE_FORMAT, 'report_references'),
         investigation_progress_schemas=_additional_schemas(contents, listed, INVESTIGATION_PROGRESS_FORMAT, 'investigation_progress'),
+        check_history_schemas=_additional_schemas(contents, listed, CHECK_HISTORY_FORMAT, 'check_history'),
         tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'),
         context_disclosure_schemas=_additional_schemas(contents, listed, CONTEXT_DISCLOSURE_FORMAT, 'context_disclosure'),
         context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'),
