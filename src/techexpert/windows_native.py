@@ -79,6 +79,7 @@ def _kernel():
         'UpdateProcThreadAttribute':([c.c_void_p,w.DWORD,c.c_size_t,c.c_void_p,c.c_size_t,c.c_void_p,c.c_void_p],w.BOOL),
         'DeleteProcThreadAttributeList':([c.c_void_p],None),
         'CreateProcessW':([w.LPCWSTR,w.LPWSTR,c.c_void_p,c.c_void_p,w.BOOL,w.DWORD,c.c_void_p,w.LPCWSTR,c.c_void_p,c.POINTER(_Process)],w.BOOL),
+        'GetModuleFileNameW':([w.HMODULE,w.LPWSTR,w.DWORD],w.DWORD),
         'CreateFileW':([w.LPCWSTR,w.DWORD,w.DWORD,c.c_void_p,w.DWORD,w.DWORD,w.HANDLE],w.HANDLE),
         'GetFileInformationByHandle':([w.HANDLE,c.POINTER(_FileInfo)],w.BOOL),
         'GetFileInformationByHandleEx':([w.HANDLE,c.c_int,c.c_void_p,w.DWORD],w.BOOL),
@@ -87,6 +88,15 @@ def _kernel():
     for name,(args,result) in signatures.items():
         function=getattr(dll,name);function.argtypes=args;function.restype=result
     return dll
+
+
+def current_executable():
+    """Use the loaded process image for PID-bound children, including from a venv."""
+    buffer=c.create_unicode_buffer(32768)
+    length=_kernel().GetModuleFileNameW(None,buffer,len(buffer))
+    if not length:raise c.WinError(c.get_last_error())
+    if length>=len(buffer):raise InputError('current executable path exceeds the Windows buffer')
+    return buffer.value
 
 
 def _security():

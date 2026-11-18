@@ -120,6 +120,41 @@ class KernelBoundaryTests(unittest.TestCase):
         self.assertTrue(receipt['controller']['tree_finished'])
         self.assertNotIn(b'\r\n',result.stdout)
 
+    @unittest.skipUnless(os.name=='nt','Windows virtual-environment launcher')
+    def test_windows_venv_preserves_exact_pids_for_managed_cli_and_direct_workers(self):
+        import venv
+        from src.techexpert.operation_state import read
+        environment=self.folder/'среда с пробелами'
+        venv.EnvBuilder(with_pip=False,symlinks=False).create(environment)
+        python=str(environment/'Scripts/python.exe')
+        program='return api("knowledge.search", {"query": "SC-01"})["data"]["knowledge_revision"]'
+        path,request=self.request('code.execute',program=program,scope=dict(operations=['knowledge.search']))
+        direct='''import json, sys
+from pathlib import Path
+from src.techexpert import operations
+request = json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
+print(json.dumps(operations.run(Path(sys.argv[1]), request), ensure_ascii=False))
+'''
+        env=dict(os.environ,PYTHONPATH='',PYTHONDONTWRITEBYTECODE='1')
+        for route in ('cli','direct'):
+            with self.subTest(route=route):
+                state=self.folder/route
+                args=(['techexpert.py','--state-dir',str(state),'operation-run',str(path)] if route=='cli'
+                    else ['-c',direct,str(state),str(path)])
+                result=subprocess.run([python,'-B','-X','utf8',*args],cwd=ROOT,env=env,capture_output=True,timeout=25)
+                value=json.loads(result.stdout)
+                self.assertEqual((result.returncode,value['status']),(0,'succeeded'),value)
+                self.assertTrue(value['data']['value'])
+                self.assertTrue(value['stop_verified'])
+                worker=state/'operations'/value['run_id']
+                self.assertEqual(read(worker/'start-permit.json')['child'],read(worker/'worker-identity.json'))
+                if route=='cli':
+                    call=self.api.inspect_call(state,value['kernel_call_id'])
+                    controller=state/'kernel-calls'/call['call_id']
+                    permit=read(controller/'start-permit.json')
+                    self.assertEqual(permit['child']['pid'],call['controller']['pid'])
+                    self.assertTrue(call['controller']['tree_finished'])
+
     def test_a_corrupt_saved_usage_counter_is_not_presented_as_verified_measurement(self):
         path,request=self.request();call=self.api.invoke(self.state,'run',dict(request=str(path)))
         receipt=Path(call['folder'])/'call-receipt.json';original=receipt.read_text(encoding='utf-8')
