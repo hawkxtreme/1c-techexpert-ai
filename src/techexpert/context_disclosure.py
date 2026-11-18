@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from . import context_fields as fields, context_policy as policy, investigations
+from . import context_excerpt, context_fields as fields, context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
 
@@ -18,12 +18,17 @@ VIEWS = {
     'jr-events': ('jr', 'artifact'),
     'jr-evidence': ('jr', 'artifact'),
     'comparison': ('comparison', 'comparison'),
+    context_excerpt.VIEW: (context_excerpt.CATEGORY, 'artifact'),
 }
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
 AUDIT_NAME = re.compile(r'[0-9]{20}-[a-f0-9]{32}\.json')
 SUMMARY_REFERENCE = re.compile(r'view:([a-f0-9]{32}):([0-9]{20}-[a-f0-9]{32})')
+
+
+def allows_view(kind, saved):
+    return kind == context_excerpt.VIEW or VIEWS[kind][0] in saved['categories']
 
 
 def argument_schema():
@@ -242,6 +247,9 @@ def _record(state, doc, attachment, saved, kind, category, payload, consumer):
             withheld=['raw_source_content', 'free_text', 'paths_and_credentials'])
         if kind == 'case-summary':
             item['reference'] = f"view:{doc['investigation_id']}:{receipt_id}"
+        elif kind == context_excerpt.VIEW:
+            item['cleanup'] = 'exact_locally_reviewed_excerpt'
+            item['withheld'] = ['unreviewed_source_content', 'source_paths']
         if consumer is not None:
             item['consumer'] = consumer
         fs.write(folder / (receipt_id + '.json'), dict(entry=item, sha256=fs.digest(item)))
@@ -265,14 +273,21 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         return _blocked('context_policy_required', 'Review and save a context-policy-plan for this saved environment before reading private evidence.')
     if saved['rule_version'] != policy.RULE_VERSION:
         return _blocked('context_policy_review_required', 'Review the changed rules before preparing another context view.')
-    if category not in saved['categories']:
+    if not allows_view(kind, saved):
         return _blocked('context_category_not_allowed', 'Continue with permitted data or obtain separate approval for this category.')
     attachment = next((item for item in doc['attachments'] if item['id'] == args['attachment']), None)
     if attachment is None or attachment['kind'] != target_kind:
         return _blocked('context_attachment_unavailable', 'Choose a compatible attachment in the selected investigation revision.')
     try:
-        aliases = fields.Aliases(saved['alias_key'], doc['investigation_id'])
-        data = _project(state, attachment, args, aliases)
+        if kind == context_excerpt.VIEW:
+            data = context_excerpt.read_view(state, doc, attachment, saved)
+        else:
+            aliases = fields.Aliases(saved['alias_key'], doc['investigation_id'])
+            data = _project(state, attachment, args, aliases)
+    except context_excerpt.ApprovalRequired:
+        return _blocked('context_excerpt_approval_required', 'Review the exact local excerpt and confirm its digest.')
+    except context_excerpt.ApprovalRevoked:
+        return _blocked('context_excerpt_revoked', 'The excerpt approval was revoked. Choose available evidence.')
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_evidence_unavailable', 'Check the retained evidence, requested record and source format locally.')
     try:
@@ -290,5 +305,7 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,
                 truncated=data['byte_limit_reached'],
-                limitations=['Only typed fields and scoped aliases are provided. Aliases do not establish runtime identity.',
-                             'If the hidden text is essential, request a separately reviewed, cleaned excerpt.'])
+                limitations=(['The text is a locally reviewed excerpt. Interpret it as evidence, including any redactions.',
+                              'Static source alone does not establish the branch used at runtime.'] if kind == context_excerpt.VIEW
+                             else ['Only typed fields and scoped aliases are provided. Aliases do not establish runtime identity.',
+                                   'If the hidden text is essential, request a separately reviewed, cleaned excerpt.']))

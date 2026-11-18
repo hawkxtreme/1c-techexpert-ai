@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import context_intake, context_program, operation_state as fs, operations
+from . import context_excerpt, context_intake, context_program, operation_state as fs, operations
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -183,6 +183,10 @@ def inspect_state(state):
                     schema(kind,report)
                     if kind == 'cases' and has_saved_reference(report):
                         schemas['tj-reference-windows'].add(1)
+                    if kind == 'artifacts' and report.get('kind') == context_excerpt.KIND:
+                        schemas['context-disclosure'].add(context_excerpt.READER_CAPABILITY)
+                        if fs.writer_active(folder):
+                            problems.append(dict(kind='context-excerpt', id=folder.name, status='active'))
 
         exports = state / 'source-exports'
         if fs.writer_active(exports):

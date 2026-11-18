@@ -94,15 +94,20 @@ def _response_limit(plan):return MAX_MCP_RESPONSE if plan.get('wire_version') el
 
 
 def _write_response(path,value,code,plan):
+    from .context_excerpt import VIEW
     from .responses import normalize
     value=normalize(value)
     binding=None
+    views=[]
     if plan.get('action')=='context-read' and code==0:
         entry=value['disclosure']
+        views=[entry]
         binding=dict(scope_sha256=entry['policy_scope_sha256'],policy_sha256=entry['policy_sha256'],
                      investigation_id=entry['investigation_id'])
     if value.get('operation')=='code.context' and value.get('data') is not None:
         binding=value['data']['policy_binding']
+        views=[item['view'] for item in value['data']['calls'] if item.get('view') is not None]
+    excerpts=sorted({(view['source_id'],view['source_report_sha256']) for view in views if view['view']==VIEW})
     delivery=dict(operation=value['operation'],run_id=value['run_id']) if binding is not None else None
     payload_bytes=len(json.dumps(value,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')) if plan.get('wire_version') else None
     if plan.get('wire_version'):
@@ -116,6 +121,8 @@ def _write_response(path,value,code,plan):
     if binding is not None:
         receipt['context_policy_binding']=binding
         receipt['context_delivery']=delivery
+    if excerpts:
+        receipt['context_excerpt_bindings']=excerpts
     if plan.get('wire_version'):
         payload=len(value['content'][0]['text'].encode('utf-8'))
         receipt.update(encoding='mcp-tool-result-compact-v1',structured_payload_compact_bytes=payload,
@@ -312,14 +319,21 @@ def emit(call,output):
         if any(receipt.get(k)!=v for k,v in identity.items()):raise InputError('kernel response integrity mismatch')
         if 'context_policy_binding' in receipt or (plan['action']=='context-read' and receipt['exit_code']==0):
             from .context_policy import verify_delivery
-            try:verify_delivery(plan['state_dir'],receipt['context_policy_binding'])
+            reason='context_policy_changed'
+            try:
+                verify_delivery(plan['state_dir'],receipt['context_policy_binding'])
+                if 'context_excerpt_bindings' in receipt:
+                    from .context_excerpt import require_approval
+                    reason='context_excerpt_approval_unavailable'
+                    for artifact_id,digest in receipt['context_excerpt_bindings']:
+                        require_approval(plan['state_dir'],artifact_id,digest)
             except (OSError,ValueError,KeyError,TypeError):
                 call['exit_code']=2
                 selected=receipt.get('context_delivery',dict(operation='context.read',run_id=None))
                 emit(dict(wire_version=call.get('wire_version'),inline_response=dict(
                     status='invalid_input',operation=selected['operation'],run_id=selected['run_id'],kernel_call_id=plan['call_id'],
-                    stop_reason='context_policy_changed',data=None,
-                    limitations=['Verify the current disclosure policy and available investigation.'])),output)
+                    stop_reason=reason,data=None,
+                    limitations=['Verify the current disclosure policy and the approved material.'])),output)
                 return
         before=os.fstat(stream.fileno());stream.seek(0)
         while block:=stream.read(CHUNK):output.write(decoder.decode(block))

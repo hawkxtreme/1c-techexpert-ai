@@ -2,7 +2,7 @@
 from copy import deepcopy
 from hashlib import sha256
 
-from . import context_disclosure as disclosure, context_policy as policy, operation_state as fs
+from . import context_disclosure as disclosure, context_excerpt, context_policy as policy, operation_state as fs
 from .code_values import CodeError
 from .context_fields import ATTACHMENT_ID
 from .inputs import InputError
@@ -55,8 +55,8 @@ def authorize(state, plan):
         raise CodeError('context_policy_review_required', 'Review the current disclosure rules before running the program.')
     attachments = {item['id']: item['kind'] for item in doc['attachments']}
     for label, view in selections(plan['request']['arguments']):
-        category, kind = disclosure.VIEWS[view]
-        if category not in saved['categories']:
+        _, kind = disclosure.VIEWS[view]
+        if not disclosure.allows_view(view, saved):
             raise CodeError('context_category_not_allowed', 'Continue with views covered by the saved policy.')
         if attachments.get(label) != kind:
             raise CodeError('scope_denied', 'Use an approved view of an attachment in the selected revision.')
@@ -111,6 +111,8 @@ def verify_view(state, plan, run_id, doc, binding, record, saved):
             entry['policy_sha256'] != binding['policy_sha256'] or entry['policy_scope_sha256'] != binding['scope_sha256'] or
             entry.get('consumer') != dict(kind=OPERATION, run_id=run_id, index=record['index'])):
         raise InputError('program view source or policy identity mismatch')
+    if request['kind'] == context_excerpt.VIEW:
+        context_excerpt.require_approval(state, target['target_id'], target['report_sha256'])
     reply = saved['reply']
     if (set(reply) != {'status', 'data', 'truncated'} or reply['status'] != 'succeeded' or
             type(reply['truncated']) is not bool or reply['truncated'] != record['truncated'] or

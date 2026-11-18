@@ -23,23 +23,25 @@ def artifact_folder(state_dir, artifact_id):
     return Path(state_dir)/'artifacts'/artifact_id
 
 
-def _file_name(value):
+def _file_name(value, *, kind=None):
+    if kind == 'context_excerpt' and value == 'review.txt':
+        return value
     if (type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}\.(?:xml|bin|diff)',value)
         or value.split('.')[0].upper() in {'CON','PRN','AUX','NUL',*[f'{p}{i}' for p in ('COM','LPT') for i in range(1,10)]}):
         raise InputError('invalid artifact source file name')
     return value
 
 
-def source_name(source):
+def source_name(source, *, kind=None):
     if type(source) is not dict or not re.fullmatch(r's(?:[1-9]|[12][0-9]|3[0-2])',str(source.get('id',''))):
         raise InputError('invalid artifact source identity')
-    return _file_name(source.get('file_name',source['id']+'.bin'))
+    return _file_name(source.get('file_name',source['id']+'.bin'),kind=kind)
 
 
-def source_path(folder, source):
+def source_path(folder, source, *, kind=None):
     """Resolve a sealed leaf, never an original input path or supplied directory."""
     from .operation_state import safe
-    return safe(Path(folder)/'sources'/source_name(source))
+    return safe(Path(folder)/'sources'/source_name(source,kind=kind))
 
 
 def save_artifact(state_dir, kind, request, sources, result, *, input_intake=None, source_names=None):
@@ -48,7 +50,7 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
     if not isinstance(sources,list) or len(sources)>32:raise InputError('at most 32 evidence files allowed')
     if source_names is not None:
         if type(source_names) is not list or len(source_names)!=len(sources):raise InputError('invalid artifact source names')
-        names=[_file_name(name) for name in source_names]
+        names=[_file_name(name,kind=kind) for name in source_names]
         if len({name.casefold() for name in names})!=len(names):raise InputError('duplicate artifact source file name')
     request_data=encoded(request,1024*1024)
     evidence=[];total=0
@@ -77,7 +79,7 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
     (folder/'request.json').write_bytes(request_data)
     (folder/'report.json').write_bytes(report_data)
     for metadata,(_,data) in zip(evidence,sources):
-        source_path(folder,metadata).write_bytes(data)
+        source_path(folder,metadata,kind=kind).write_bytes(data)
     write_json(folder/'receipt.json',dict(schema_version=1,
         report_sha256=hashlib.sha256(report_data).hexdigest(),request_sha256=hashlib.sha256(request_data).hexdigest()))
     return report
@@ -102,7 +104,7 @@ def read_artifact_record(state_dir,artifact_id):
     for i,source in enumerate(evidence,1):
         if type(source) is not dict or source.get('id')!=f's{i}':raise InputError('invalid artifact evidence identity')
         if ('file_name' in source)!=(report['schema_version']==2):raise InputError('invalid artifact source schema')
-        name=source_name(source).casefold()
+        name=source_name(source,kind=report['kind']).casefold()
         if name in names:raise InputError('duplicate artifact source file name')
         names.add(name)
         size=source.get('bytes');sha256=source.get('sha256')
@@ -117,7 +119,7 @@ def load_artifact(state_dir,artifact_id):
     report,_=read_artifact_record(state_dir,artifact_id)
     folder=artifact_folder(state_dir,artifact_id)
     for source in report['sources']:
-        data=read_snapshot(source_path(folder,source))
+        data=read_snapshot(source_path(folder,source,kind=report['kind']))
         if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:
             raise InputError('saved artifact evidence integrity mismatch')
     return report
@@ -125,6 +127,7 @@ def load_artifact(state_dir,artifact_id):
 
 def artifact_evidence(state_dir,artifact_id,source_id):
     report=load_artifact(state_dir,artifact_id)
+    if report['kind']=='context_excerpt':raise InputError('use the reviewed excerpt context view')
     source=next((s for s in report['sources'] if s['id']==source_id),None)
     if source is None:raise InputError('unknown artifact evidence source')
     path=source_path(artifact_folder(state_dir,artifact_id),source)

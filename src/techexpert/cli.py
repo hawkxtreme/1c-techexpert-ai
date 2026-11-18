@@ -53,6 +53,18 @@ def main(argv=None):
     context_attach=commands.add_parser('context-attach', help='link an existing protected intake to the chosen investigation revision')
     context_attach.add_argument('run_id')
     context_attach.add_argument('--revision',type=int,required=True)
+    preview=commands.add_parser('context-excerpt-prepare', help='prepare a local text preview from a retained source')
+    preview.add_argument('investigation_id')
+    preview.add_argument('--revision', type=int, required=True)
+    preview.add_argument('--attachment', required=True)
+    preview.add_argument('--member', required=True)
+    preview.add_argument('--start', type=int, required=True)
+    preview.add_argument('--lines', type=int, required=True)
+    for name, help_text in (('context-excerpt-approve','confirm the exact locally reviewed text'),
+                            ('context-excerpt-revoke','withdraw approval of the exact excerpt')):
+        review=commands.add_parser(name, help=help_text)
+        review.add_argument('artifact_id')
+        review.add_argument('--expected-sha256', required=True)
     for name, help_text in (
         ('context-policy', 'show allowed model data for a saved environment'),
         ('context-policy-plan', 'preview a change to model data permissions'),
@@ -270,6 +282,16 @@ def main(argv=None):
             call=kernel.invoke(args.state_dir,args.command,selection)
             kernel.emit(call,sys.stdout)
             return call['exit_code']
+        elif args.command == 'context-excerpt-prepare':
+            from .context_excerpt import prepare
+            result=prepare(args.state_dir, args.investigation_id, args.revision, attachment=args.attachment,
+                           member=args.member, start=args.start, lines=args.lines)
+        elif args.command == 'context-excerpt-approve':
+            from .context_excerpt import approve
+            result=approve(args.state_dir, args.artifact_id, args.expected_sha256)
+        elif args.command == 'context-excerpt-revoke':
+            from .context_excerpt import revoke
+            result=revoke(args.state_dir, args.artifact_id, args.expected_sha256)
         elif args.command.startswith('context-'):
             identity = (args.state_dir, args.investigation_id, args.revision)
             if args.command == 'context-policy':

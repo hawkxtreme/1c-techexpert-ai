@@ -127,18 +127,43 @@ def snapshot_source(state_dir,path,*,kind='catalog',ref='HEAD',encoding='utf-8')
                          'Source content is untrusted data; no hooks, builds or BSL code were executed.']))
 
 
-def load_source(state_dir,artifact_id):
-    report=load_artifact(state_dir,artifact_id)
+def _saved_files(state_dir, report):
     if report['kind']!='onec_source':raise InputError('source snapshot artifact required')
     from .artifacts import source_path
-    document=json_value(read_snapshot(source_path(artifact_folder(state_dir,artifact_id),report['sources'][0])).decode('utf-8'),reject_duplicates=True)
-    if document.get('profile')!='onec-source-snapshot-v1':raise InputError('unsupported source snapshot')
-    result=[]
+    source = report['sources'][0]
+    raw = read_snapshot(source_path(artifact_folder(state_dir, report['artifact_id']), source))
+    if len(raw) != source['bytes'] or hashlib.sha256(raw).hexdigest() != source['sha256']:
+        raise InputError('source snapshot changed after verification')
+    document=json_value(raw.decode('utf-8'),reject_duplicates=True)
+    if document.get('profile')!='onec-source-snapshot-v1' or document.get('encoding') not in ('utf-8','cp1251'):
+        raise InputError('unsupported source snapshot')
     for row in document['files']:
         name=safe_name(row['path']);raw=base64.b64decode(row['data_base64'],validate=True)
         if len(raw)!=row['bytes'] or hashlib.sha256(raw).hexdigest()!=row['sha256']:raise InputError('source file integrity mismatch')
-        result.append((name,raw.decode('utf-8-sig' if document['encoding']=='utf-8' else document['encoding']),row['sha256']))
-    return result
+        yield name, raw, row['sha256'], document['encoding']
+
+
+def load_source(state_dir,artifact_id):
+    report=load_artifact(state_dir,artifact_id)
+    return [(name,raw.decode('utf-8-sig' if encoding=='utf-8' else encoding),digest)
+            for name,raw,digest,encoding in _saved_files(state_dir,report)]
+
+
+def saved_member(state_dir, report, member):
+    match = re.fullmatch(r'file:([1-9][0-9]{0,3})', member)
+    if match is None:
+        raise InputError('select a saved source member')
+    position = int(match[1])-1
+    index = report['result']['files']
+    if position >= len(index):
+        raise InputError('saved source member is unavailable')
+    selected = index[position]
+    for number, (name, raw, digest, encoding) in enumerate(_saved_files(state_dir, report)):
+        if number == position:
+            if (selected['source_record_id'], selected['path'], selected['sha256'], selected['bytes']) != (member, name, digest, len(raw)):
+                raise InputError('saved source member differs from its index')
+            return name, raw, digest, encoding
+    raise InputError('saved source member is unavailable')
 
 
 def read_source(state_dir,artifact_id,path,*,start=1,limit=50):

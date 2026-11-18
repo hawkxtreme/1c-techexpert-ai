@@ -86,7 +86,7 @@ def _source_members(folder, kind, report):
         if type(source) is not dict or source.get('id') != f's{index}':
             raise InputError('invalid saved material source identity')
         if kind == 'artifact':
-            name, size = artifacts.source_name(source), source['bytes']
+            name, size = artifacts.source_name(source, kind=report['kind']), source['bytes']
         else:
             name, size = f's{index}.bin', source.get('size')
         if size is not None and (type(size) is not int or not 0 <= size <= MAX_FILE_BYTES):
