@@ -18,7 +18,8 @@ _TEMPLATE = re.compile(r'USR-[a-z0-9][a-z0-9-]{0,47}')
 _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError)
 
 
-def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(), tj_reference_schemas=()):
+def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
+             tj_reference_schemas=(), context_disclosure_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -35,7 +36,8 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             return False
     return (set(observed.get('case-source-retirements', ())) <= set(case_retirement_schemas)
             and set(observed.get('investigation-report-retirements', ())) <= set(report_retirement_schemas)
-            and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas))
+            and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
+            and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas))
 
 
 def _exists(path):
@@ -53,6 +55,7 @@ def inspect_state(state):
     schemas['case-source-retirements'] = set()
     schemas['investigation-report-retirements'] = set()
     schemas['tj-reference-windows'] = set()
+    schemas['context-disclosure'] = set()
     problems = []
     remaining_bytes = 64*1024**2
     remaining_entries = 8192
@@ -208,6 +211,15 @@ def inspect_state(state):
                 schema('investigation-report-retirements', receipt)
                 if receipt['status'] == 'cleanup_pending':
                     problems.append(dict(kind='reports', id=folder.name, status='cleanup_pending'))
+        from .context_policy import stored_policy
+        for folder in children(state / 'context-disclosure' / 'policies'):
+            if not _RUN.fullmatch(folder.name):
+                raise InputError('unexpected context disclosure policy entry')
+            if fs.writer_active(folder):
+                problems.append(dict(kind='context-disclosure', status='active'))
+            policy = stored_policy(folder, folder.name, read=document)
+            if policy is not None:
+                schema('context-disclosure', policy)
         marker(state/'incident-drafts/write.lock','incident-drafts')
         for folder in children(state/'incident-drafts'):
             if _ID.fullmatch(folder.name):

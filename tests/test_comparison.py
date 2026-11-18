@@ -73,6 +73,21 @@ class ComparisonTests(unittest.TestCase):
         self.assertIsNone(result['performance']['after_median_seconds'])
         self.assertEqual(result['performance']['status'], 'not_comparable')
 
+    def test_protected_projection_keeps_synthetic_calculation_separate(self):
+        from src.techexpert.context_fields import comparison_summary
+
+        before, after = series()
+        supplied = comparison_summary(self.compare(before, after))
+        for report in before + after:
+            report['origin'] = 'synthetic'
+        synthetic = comparison_summary(self.compare(before, after))
+        self.assertEqual(supplied['verification_scope'], 'provided_evidence_only')
+        self.assertEqual(synthetic['verification_scope'], 'synthetic_calculations_only')
+        self.assertEqual(supplied['provenance']['overall'], 'provided')
+        self.assertEqual(synthetic['provenance']['overall'], 'synthetic')
+        self.assertFalse(supplied['provenance']['origin_authenticity_verified'])
+        self.assertFalse(synthetic['provenance']['origin_authenticity_verified'])
+
     def test_mode_and_existing_cause_labels_do_not_determine_effect(self):
         before, after = series()
         for case in before+after:

@@ -56,6 +56,9 @@ def main(folder,memory_bytes):
         if context.stop():raise TimeoutError(context.stop())
         state=Path(plan['state_dir'])
         if action=='run':value=operations.run(state,request)
+        elif action=='context-read':
+            from .context_disclosure import read
+            value=read(state,json_value(args['selection'],reject_duplicates=True))
         elif action=='cancel':value=operations.cancel(state,args['run_id'],executor_id=args['executor_id'])
         elif action=='inspect':value=dict(status='succeeded',call=kernel.inspect_call(state,args['call_id']))
         else:value={'result':operations.result,'status':operations.status,'reconcile':operations.reconcile}[action](state,args['run_id'])
@@ -66,7 +69,8 @@ def main(folder,memory_bytes):
         cancelled=str(exc)=='cancelled'
         value=dict(status='cancelled' if cancelled else 'failed',stop_reason='cancelled' if cancelled else 'kernel_timeout',run_id=run_id,data=None);code=130 if cancelled else 3
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-        value=dict(status='error',message=str(exc)[:512],data=None);code=2
+        message='The selected local context view could not be prepared.' if plan['action']=='context-read' else str(exc)[:512]
+        value=dict(status='error',message=message,data=None);code=2
     dispatch_finished=time.monotonic()
     try:
         from .responses import normalize

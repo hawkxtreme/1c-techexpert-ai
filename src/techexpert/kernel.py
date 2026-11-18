@@ -18,7 +18,7 @@ MAX_RESPONSE=16*1024**2
 MAX_MCP_RESPONSE=64*1024**2
 DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
-    'cancel':{'run_id','executor_id'},'inspect':{'call_id'}}
+    'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'}}
 
 
 def _limits(value):
@@ -39,6 +39,10 @@ def _arguments(action,value):
     if 'run_id' in value and not re.fullmatch('[a-f0-9]{64}',value['run_id']):raise InputError('invalid operation run ID')
     if 'call_id' in value and not re.fullmatch('[a-f0-9]{32}',value['call_id']):raise InputError('invalid kernel call ID')
     if 'executor_id' in value and not re.fullmatch('[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}',value['executor_id']):raise InputError('invalid executor ID')
+    if action=='context-read':
+        from .context_disclosure import compact,validate_request
+        from .inputs import json_value
+        return dict(selection=compact(validate_request(json_value(value['selection'],reject_duplicates=True))))
     return dict(value,request=str(Path(value['request']).absolute())) if action=='run' else dict(value)
 
 
@@ -88,6 +92,11 @@ def _response_limit(plan):return MAX_MCP_RESPONSE if plan.get('wire_version') el
 def _write_response(path,value,code,plan):
     from .responses import normalize
     value=normalize(value)
+    binding=None
+    if plan.get('action')=='context-read' and code==0:
+        entry=value['disclosure']
+        binding=dict(scope_sha256=entry['policy_scope_sha256'],policy_sha256=entry['policy_sha256'],
+                     investigation_id=entry['investigation_id'])
     payload_bytes=len(json.dumps(value,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')) if plan.get('wire_version') else None
     if plan.get('wire_version'):
         from .mcp_tools import result
@@ -97,6 +106,7 @@ def _write_response(path,value,code,plan):
     else:fs.write(path,value)
     identity=file_identity(path,_response_limit(plan))
     receipt=dict(**identity,name=path.name,exit_code=code,plan_sha256=fs.digest(plan))
+    if binding is not None:receipt['context_policy_binding']=binding
     if plan.get('wire_version'):
         payload=len(value['content'][0]['text'].encode('utf-8'))
         receipt.update(encoding='mcp-tool-result-compact-v1',structured_payload_compact_bytes=payload,
@@ -228,7 +238,8 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
             result_availability='incomplete_invocation_receipt',stop_reason='kernel_receipt_commit_failed',data=None,
             kind='kernel_invocation',data_omitted=True,snapshots=[],evidence=[],truncated=True,
             controller_response=response,controller_response_was_verified=True,
-            message=str(exc)[:512],limitations=['Original controller response and operation files are retained. Invocation metrics were not committed; no operation was repeated.'])
+            message='The local invocation receipt could not be recorded.' if action=='context-read' else str(exc)[:512],
+            limitations=['Original controller response and operation files are retained. Invocation metrics were not committed; no operation was repeated.'])
         call.update(exit_code=1,diagnostics=['Final invocation receipt was not committed.'])
         try:
             failure=_write_response(directory/'receipt-error-response.json',partial,1,plan)
@@ -287,6 +298,16 @@ def emit(call,output):
     with fs.safe(directory/receipt['name']).open('rb') as stream:
         identity=_stream_identity(stream,_response_limit(plan))
         if any(receipt.get(k)!=v for k,v in identity.items()):raise InputError('kernel response integrity mismatch')
+        if plan['action']=='context-read' and receipt['exit_code']==0:
+            from .context_policy import verify_delivery
+            try:verify_delivery(plan['state_dir'],receipt['context_policy_binding'])
+            except (OSError,ValueError,KeyError,TypeError):
+                call['exit_code']=2
+                emit(dict(wire_version=call.get('wire_version'),inline_response=dict(
+                    status='invalid_input',operation='context.read',kernel_call_id=plan['call_id'],
+                    stop_reason='context_policy_changed',data=None,
+                    limitations=['Verify the current disclosure policy and available investigation.'])),output)
+                return
         before=os.fstat(stream.fileno());stream.seek(0)
         while block:=stream.read(CHUNK):output.write(decoder.decode(block))
         output.write(decoder.decode(b'',final=True));output.flush()

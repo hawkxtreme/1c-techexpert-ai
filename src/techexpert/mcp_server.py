@@ -56,7 +56,7 @@ class _FramedOutput:
 class Server:
     def __init__(self,state,input_stream,output_fd,*,profile='full'):
         self.state=state;self.input=input_stream;self.output_fd=output_fd
-        self.profile=profile;self.operations=tools.selected_operations(profile)
+        self.profile=profile;self.tool_names=tools.selected_operations(profile).keys() | tools.control_names(profile)
         self.closed=threading.Event();self.lock=threading.Lock();self.pending={}
         self.outgoing=queue.Queue(maxsize=16);self.pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='mcp-tool')
         self.incoming=queue.Queue(maxsize=2)
@@ -129,8 +129,8 @@ class Server:
     def launch(self,identifier,params,version):
         if set(params)-{'name','arguments','_meta'} or not isinstance(params.get('name'),str):raise RPCError(-32602,'Expected tools/call name and arguments.')
         name=params['name'];arguments=params.get('arguments',{})
-        if name not in self.operations and name not in {'techexpert_'+k for k in tools.CONTROLS}:raise RPCError(-32602,'Unknown tool; inspect tools/list.')
-        try:action,arguments,request=tools.prepare(name,arguments)
+        if name not in self.tool_names:raise RPCError(-32602,'Unknown tool; inspect tools/list.')
+        try:action,arguments,request=tools.prepare(name,arguments,self.profile)
         except (ValueError,TypeError,KeyError):
             self.send(dict(jsonrpc='2.0',id=identifier,result=tools.small_error('Invalid tool arguments; inspect this tool inputSchema and use bounded values.',version)));return
         with self.lock:

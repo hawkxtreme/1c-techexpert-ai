@@ -21,7 +21,7 @@ def main(argv=None):
     parser.add_argument('--state-dir', type=Path, default=default_state_dir())
     commands = parser.add_subparsers(dest='command', required=True)
     mcp=commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
-    mcp.add_argument('--profile',choices=['full','direct','program'],default='full')
+    mcp.add_argument('--profile',choices=['full','direct','program','context'],default='full')
     catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
     operation_run=commands.add_parser('operation-run');operation_run.add_argument('request',type=Path)
     for name in ('operation-status','operation-result','operation-reconcile','operation-cancel'):
@@ -48,6 +48,31 @@ def main(argv=None):
         commands.add_parser(name).add_argument('document',type=Path)
     profile_impact=commands.add_parser('profile-impact');profile_impact.add_argument('before',type=Path);profile_impact.add_argument('after',type=Path)
     profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
+    from . import context_disclosure, context_policy
+    for name, help_text in (
+        ('context-policy', 'show allowed model data for a saved environment'),
+        ('context-policy-plan', 'preview a change to model data permissions'),
+        ('context-policy-save', 'save the exactly reviewed model data permissions'),
+        ('context-history', 'review metadata for previously prepared context views'),
+        ('context-read', 'read typed evidence under a saved disclosure policy'),
+    ):
+        context_command = commands.add_parser(name, help=help_text)
+        context_command.add_argument('investigation_id')
+        context_command.add_argument('--revision', type=int, required=True)
+        if name in ('context-policy-plan','context-policy-save'):
+            context_command.add_argument('--allow', action='append', choices=context_policy.CATEGORIES, default=[])
+            context_command.add_argument('--max-bytes', type=int, default=context_policy.DEFAULT_BYTES)
+        if name == 'context-policy-save':
+            context_command.add_argument('--expected-sha256', required=True)
+        if name in ('context-history','context-read'):
+            context_command.add_argument('--limit', type=int)
+            context_command.add_argument('--offset', type=int)
+        if name == 'context-read':
+            context_command.add_argument('kind', choices=context_disclosure.VIEWS)
+            context_command.add_argument('--attachment', required=True)
+            for option in ('record','source','event','start','end'):
+                context_command.add_argument('--'+option)
+            context_command.add_argument('--linked-run', action='store_true', default=None)
     commands.add_parser('demo')
     analyze = commands.add_parser('analyze')
     analyze.add_argument('manifest', type=Path)
@@ -232,6 +257,27 @@ def main(argv=None):
         if args.command=='capabilities':
             from .capabilities import catalogue
             result=catalogue(args.operation)
+        elif args.command.startswith('context-'):
+            identity = (args.state_dir, args.investigation_id, args.revision)
+            if args.command == 'context-policy':
+                result = context_policy.show(*identity)
+            elif args.command == 'context-policy-plan':
+                result = context_policy.plan(*identity, args.allow, args.max_bytes)
+            elif args.command == 'context-policy-save':
+                result = context_policy.save(*identity, args.allow, args.max_bytes, args.expected_sha256)
+            elif args.command == 'context-history':
+                result = context_disclosure.history(*identity, offset=0 if args.offset is None else args.offset,
+                                                      limit=20 if args.limit is None else args.limit)
+            else:
+                from . import kernel
+                selection = {key: getattr(args,key) for key in ('investigation_id','revision','kind','attachment',
+                    'record','event','source','offset','limit','linked_run') if getattr(args,key) is not None}
+                if args.start is not None or args.end is not None:
+                    selection['window'] = dict(start=args.start,end=args.end)
+                call = kernel.invoke(args.state_dir, 'context-read',
+                    dict(selection=context_disclosure.compact(context_disclosure.validate_request(selection))))
+                kernel.emit(call, sys.stdout)
+                return call['exit_code']
         elif args.command.startswith('operation-') or args.command=='kernel-call':
             from . import kernel
             if args.command=='operation-run':
@@ -553,6 +599,10 @@ def main(argv=None):
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status']=='blocked' else 0
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        if args.command.startswith('context-'):
+            emit(dict(status='error', code='context_input_or_state_error',
+                      message='Verify the selected investigation, available local state and current policy plan.'))
+            return 2
         emit(dict(status='error', code='input_or_state_error', message=str(exc)))
         return 2
 

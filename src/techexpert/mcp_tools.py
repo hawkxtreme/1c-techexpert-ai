@@ -20,13 +20,31 @@ CONTROLS={
     'kernel_call':('inspect',cap.obj(dict(call_id=CALL),['call_id']),'Inspect a checked controller receipt, resource scope and ownership; model counters remain unknown.'),
 }
 OPERATIONS={'techexpert_'+name.replace('.','_'):name for name in cap.ROUTES}
-PROFILES=('full','direct','program')
+PROFILES=('full','direct','program','context')
+CONTEXT_TOOLS=('knowledge.search','knowledge.card')
+CONTEXT_READ='techexpert_context_read'
 
 
 def selected_operations(profile='full'):
     if profile not in PROFILES:raise InputError('Unsupported fixed MCP catalogue profile')
+    if profile=='context':
+        return {name:operation for name,operation in OPERATIONS.items() if operation in CONTEXT_TOOLS}
     return {name:operation for name,operation in OPERATIONS.items()
         if profile=='full' or (operation.startswith('code.') if profile=='program' else not operation.startswith('code.'))}
+
+
+def control_names(profile):
+    names = set() if profile == 'context' else {'techexpert_'+suffix for suffix in CONTROLS}
+    if profile in ('full', 'context'):
+        names.add(CONTEXT_READ)
+    return names
+
+
+def tool_input_schema(operation, profile):
+    value = input_schema(operation)
+    if profile == 'context':
+        value['properties'].pop('context')
+    return value
 
 
 def input_schema(operation):
@@ -45,22 +63,34 @@ def tools(profile='full'):
         route=cap.ROUTES[operation]
         result.append(dict(name=name,title=operation,description=f"{operation}: {route['impact']}. Sources: {'; '.join(route['required_sources'])}. "
             'Same managed CLI operation, private receipts, fixed budgets. Evidence needs interpretation by the current AI harness; partial coverage is not absence of cause.',
-            inputSchema=input_schema(operation),outputSchema=deepcopy(route['output_schema']),
+            inputSchema=tool_input_schema(operation,profile),outputSchema=deepcopy(route['output_schema']),
             annotations=dict(readOnlyHint=operation not in {'input.inspect','case.analyze','case.compare','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS,*cap._remote.OPERATIONS}|cap._diagnostics.CREATORS,destructiveHint=operation=='client.observe',
                 idempotentHint=True,openWorldHint=operation in {'input.inspect','source.check','case.analyze','os.collect','os.import','code.execute',*cap._logcfg.OPERATIONS,'remote.inspect','remote.capture'}|cap._diagnostics.CREATORS)))
+    controls=control_names(profile)
     for suffix,(action,args,description) in CONTROLS.items():
+        if 'techexpert_'+suffix not in controls:
+            continue
         result.append(dict(name='techexpert_'+suffix,title=suffix,description=description,inputSchema=deepcopy(args),outputSchema=responses.schema(),
             annotations=dict(readOnlyHint=action not in ('reconcile','cancel'),destructiveHint=False,idempotentHint=True,openWorldHint=False)))
+    if CONTEXT_READ in controls:
+        from .context_disclosure import argument_schema
+        result.append(dict(name=CONTEXT_READ,title='context.read',inputSchema=argument_schema(),outputSchema=responses.schema(),
+            description='Read one pinned investigation attachment through its reviewed model disclosure policy. '
+                        'Rows contain typed fields and scoped aliases. Each prepared view has a local disclosure receipt.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=False)))
     return sorted(result,key=lambda t:t['name'])
 
 
-def prepare(name,arguments):
+def prepare(name,arguments,profile='full'):
+    if name == CONTEXT_READ:
+        from .context_disclosure import compact,validate_request
+        return 'context-read',dict(selection=compact(validate_request(arguments))),None
     if name in OPERATIONS:
         operation=OPERATIONS[name]
         if not isinstance(arguments,dict):raise InputError('Tool arguments must be an object; inspect tools/list.')
         request=cap.normalize_request(dict(arguments,schema_version=1,operation=operation))
         # Do not let the injected fixed fields hide unexpected caller arguments.
-        if set(arguments)-input_schema(operation)['properties'].keys():raise InputError('Unsupported tool argument; inspect tools/list.')
+        if set(arguments)-tool_input_schema(operation,profile)['properties'].keys():raise InputError('Unsupported tool argument; inspect tools/list.')
         return 'run',dict(request='inline-request.json'),request
     suffix=name.removeprefix('techexpert_')
     if name.startswith('techexpert_') and suffix in CONTROLS:

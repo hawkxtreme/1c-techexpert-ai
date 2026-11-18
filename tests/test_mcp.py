@@ -67,7 +67,7 @@ class MCPTests(unittest.TestCase):
 
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),44)
+        tools=self.tools();self.assertEqual(len(tools),45)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -115,7 +115,20 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),44);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),45);self.assertFalse(self.state.exists())
+
+    def test_context_profile_exposes_retained_views_and_bundled_knowledge(self):
+        p,replies=self.start(profile='context')
+        self.send(p,'tools/list')
+        tools={tool['name']:tool for tool in self.receive(replies)['result']['tools']}
+        self.assertEqual(set(tools),{'techexpert_context_read','techexpert_knowledge_card',
+                                     'techexpert_knowledge_search'})
+        self.assertFalse(self.state.exists())
+        self.send(p,'tools/call',dict(name='techexpert_case_show',arguments={}),identifier=2)
+        self.assertEqual(self.receive(replies,2)['error']['code'],-32602)
+        self.send(p,'tools/call',dict(name='techexpert_operation_result',arguments={}),identifier=3)
+        self.assertEqual(self.receive(replies,3)['error']['code'],-32602)
+        self.assertFalse(self.state.exists())
 
     def test_modern_metadata_required_on_every_request_and_not_borrowed_from_previous(self):
         p,q=self.start();self.send(p,'server/discover');self.receive(q)

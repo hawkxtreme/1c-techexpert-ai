@@ -184,6 +184,24 @@ class UpdateTests(unittest.TestCase):
         self.assertTrue(supports(package['metadata'], seen['schemata'], tj_reference_schemas=package['tj_reference_schemas']))
         self.assertTrue(self.check()['state_schema_compatible'])
 
+    def test_reviewed_context_policy_requires_a_reader_with_policy_support(self):
+        from src.techexpert import context_policy, investigations
+        from src.techexpert.release_packages import read_package
+        from src.techexpert.update_state import inspect_state, supports
+
+        doc = investigations.create(self.state, {'task':'Ограничение выдачи'})
+        args = (self.state, doc['investigation_id'], doc['revision'], ['tj'], 4096)
+        preview = context_policy.plan(*args)
+        package = read_package(self.bundle)
+        self.assertTrue(supports(package['metadata'], inspect_state(self.state)['schemata']))
+        context_policy.save(*args, preview['plan_sha256'])
+        seen = inspect_state(self.state)
+        self.assertEqual(seen['schemata']['context-disclosure'], [1])
+        self.assertFalse(supports(package['metadata'], seen['schemata']))
+        self.assertTrue(supports(package['metadata'], seen['schemata'],
+                                 context_disclosure_schemas=package['context_disclosure_schemas']))
+        self.assertTrue(self.check()['state_schema_compatible'])
+
     def test_tampered_staged_file_cannot_be_selected(self):
         from src.techexpert.updates import select_plan
         from src.techexpert import operation_state as fs
