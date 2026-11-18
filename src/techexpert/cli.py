@@ -34,6 +34,15 @@ def main(argv=None):
     readiness=commands.add_parser('readiness')
     readiness.add_argument('--entrypoint-sha256')
     readiness.add_argument('--investigation')
+    update_check=commands.add_parser('update-check',help='inspect an explicit local product package')
+    update_check.add_argument('package',type=Path);update_check.add_argument('--current-root',type=Path,default=ROOT)
+    for name in ('update-stage','update-apply'):
+        update_action=commands.add_parser(name)
+        update_action.add_argument('plan',type=Path);update_action.add_argument('--expected-sha256',required=True)
+    update_plan=commands.add_parser('update-plan')
+    update_plan.add_argument('release_id');update_plan.add_argument('--installed-root',type=Path)
+    update_plan.add_argument('--codex-profile',type=Path);update_plan.add_argument('--maintenance-window',action='store_true')
+    commands.add_parser('update-status')
     profile_command=commands.add_parser('profile');profile_command.add_argument('--resolved',action='store_true')
     for name in ('profile-upgrade','profile-resolve'):
         commands.add_parser(name).add_argument('document',type=Path)
@@ -203,6 +212,31 @@ def main(argv=None):
         elif args.command == 'readiness':
             from .readiness import check
             result=check(args.state_dir,entrypoint_sha256=args.entrypoint_sha256,investigation_id=args.investigation)
+        elif args.command.startswith('update-'):
+            from . import operation_state, updates
+            if args.command=='update-check':
+                result=updates.check(args.state_dir,args.package,current_root=args.current_root)
+            elif args.command=='update-status':
+                result=updates.selected(args.state_dir)
+            elif args.command=='update-plan':
+                if args.codex_profile:
+                    if args.installed_root:
+                        raise InputError('Codex activation derives its cache from the selected profile')
+                    from .update_codex import plan_install
+                    result=plan_install(args.state_dir,args.release_id,args.codex_profile,maintenance_window=args.maintenance_window)
+                else:
+                    if args.maintenance_window:
+                        raise InputError('select the Codex profile for a maintenance window')
+                    result=updates.select_plan(args.state_dir,args.release_id,installed_root=args.installed_root)
+            else:
+                plan=operation_state.read(args.plan,64*1024)
+                if type(plan) is not dict:
+                    raise InputError('update plan must be an object')
+                procedure=updates.stage if args.command=='update-stage' else updates.select
+                if args.command=='update-apply' and plan.get('kind')=='codex_install':
+                    from .update_codex import install
+                    procedure=install
+                result=procedure(args.state_dir,plan,expected_sha256=args.expected_sha256)
         elif args.command == 'profile-save':
             from .profiles import save_profile
             from .inputs import read_snapshot,json_value

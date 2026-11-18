@@ -14,7 +14,7 @@ class CommandStopped(InputError):
         super().__init__('command stopped: '+reason)
 
 
-def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None,should_stop=None):
+def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None,should_stop=None,cwd=None):
     if not isinstance(argv,list) or not argv or any(not isinstance(x,str) or '\0' in x for x in argv):
         raise InputError('explicit command arguments required')
     if (type(timeout) not in (int,float) or not 0<timeout<=3600
@@ -31,7 +31,7 @@ def run_bounded(argv,*,timeout=20,max_bytes=2*1024*1024,input_data=None,env=None
     if reason:raise CommandStopped(reason)
     flags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0
     process=subprocess.Popen(argv,stdin=subprocess.PIPE if input_data is not None else subprocess.DEVNULL,
-                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False,env=env,creationflags=flags)
+                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,shell=False,env=env,cwd=cwd,creationflags=flags)
     output=[bytearray(),bytearray()];overflow=threading.Event();failures=[]
     def read(stream,slot):
         try:

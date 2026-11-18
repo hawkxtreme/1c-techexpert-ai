@@ -12,14 +12,14 @@ from .inputs import InputError
 MAX_CENTRAL_BYTES=256*1024
 
 
-def catalogue(stream,bound):
+def catalogue(stream,bound,*,max_entries=files.MAX_ENTRIES):
     stream.seek(0,2);size=stream.tell()
     if size>files.MAX_ARCHIVE_BYTES:raise InputError('archive byte limit')
     stream.seek(max(0,size-65557));tail=stream.read(65557);offset=tail.rfind(b'PK\x05\x06')
     if offset<0 or len(tail)-offset<22:raise InputError('unsupported ZIP end record')
     _,disk,cd_disk,on_disk,count,cd_size,cd_offset,comment=struct.unpack_from('<4s4H2LH',tail,offset)
     end=size-len(tail)+offset
-    if (disk or cd_disk or on_disk!=count or count>files.MAX_ENTRIES or cd_size>MAX_CENTRAL_BYTES
+    if (disk or cd_disk or on_disk!=count or count>max_entries or cd_size>MAX_CENTRAL_BYTES
         or cd_offset+cd_size!=end or offset+22+comment!=len(tail)
         or count==0xffff or cd_offset==0xffffffff):raise InputError('unsupported or excessive ZIP directory')
     # stdlib follows this locator even when all classic fields are ordinary,
@@ -71,6 +71,11 @@ def inspect(path,bound):
 
 def selected(path,bound,identity,names):
     data,_=files.read(path,files.MAX_ARCHIVE_BYTES,keep=True,expected=identity)
+    yield from members(data,bound,names)
+
+
+def members(data,bound,names):
+    """Decode complete payloads from a checked ZIP snapshot."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             for name,expected in names:

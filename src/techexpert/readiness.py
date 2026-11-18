@@ -40,10 +40,11 @@ def _member(root,name):
     if not current.is_file():raise InputError('bundle member is not a regular file')
     return current
 
-def _inventory(root):
-    doc=json_value(read_snapshot(_member(root,MANIFEST),1024*1024).decode('utf-8'),reject_duplicates=True)
+def parse_inventory(data,*,expected_version=__version__):
+    doc=json_value(data.decode('utf-8'),reject_duplicates=True)
     if (not isinstance(doc,dict) or type(doc.get('schema_version')) is not int or doc['schema_version']!=1
-        or doc.get('product_version')!=__version__ or doc.get('normalization')!='utf8-lf-v1'
+        or expected_version is not None and doc.get('product_version')!=expected_version
+        or doc.get('normalization')!='utf8-lf-v1'
         or set(doc)!={'schema_version','product_version','normalization','components','members'}):
         raise InputError('incompatible bundle inventory')
     groups=doc['components'];members=doc['members']
@@ -63,6 +64,12 @@ def _inventory(root):
         if (not name or parts.is_absolute() or '..' in parts.parts or parts.as_posix()!=name
             or '\\' in name or ':' in name or any(ord(c)<32 for c in name) or name==MANIFEST):
             raise InputError('invalid bundle path')
+    return doc
+
+
+def _inventory(root):
+    doc=parse_inventory(read_snapshot(_member(root,MANIFEST),1024*1024))
+    groups=doc['components'];members=doc['members']
     good={};checks=[];total=0
     for group,names in groups.items():
         bad=[]

@@ -49,6 +49,9 @@ def write(path,value):
 
 def plan(folder):
     value=read(folder/'plan.json',128*1024);receipt=read(folder/'plan-receipt.json',8192)
+    return checked_plan(folder,value,receipt)
+
+def checked_plan(folder,value,receipt):
     if (digest(value)!=receipt.get('sha256') or value.get('schema_version')!=1
         or hashlib.sha256(value['request']['operation_key'].encode()).hexdigest()!=folder.name):raise InputError('operation plan integrity mismatch')
     return value

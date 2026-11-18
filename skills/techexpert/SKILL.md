@@ -27,7 +27,7 @@ description: "Помочь расследовать техническую пр�
 
 Открывай навык, нужный для следующей проверки:
 
-- Настройка окружения и доступа — [setup-and-access](../setup-and-access/SKILL.md).
+- Настройка окружения, доступ и обновление — [setup-and-access](../setup-and-access/SKILL.md).
 - Ход расследования — [investigate](../investigate/SKILL.md).
 - ТЖ и его сбор — [tech-log](../tech-log/SKILL.md), [logcfg](../logcfg/SKILL.md).
 - ЖР — [event-log](../event-log/SKILL.md).

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "family": "techexpert-local-state",
+  "schemas": {
+    "profiles": [1, 2],
+    "cases": [1],
+    "artifacts": [1, 2],
+    "comparisons": [1],
+    "investigations": [1, 2],
+    "custom-templates": [1],
+    "operations": [1],
+    "kernel-calls": [1]
+  }
+}
