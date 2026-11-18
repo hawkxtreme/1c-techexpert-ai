@@ -3,6 +3,8 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -17,6 +19,25 @@ class BlindPreparationTests(unittest.TestCase):
 
     def manifest(self, name):
         return ROOT/'tests/fixtures/order-load'/(name+'.json')
+
+    def test_prepared_toolkit_runs_its_own_catalogues_and_readiness_offline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run=Path(tmp)/'trial'
+            self.tool.prepare(ROOT,run,[self.manifest('baseline')],[self.manifest('cached')])
+            kit=run/'diagnosis';state=kit/'state';results={}
+            for command in ('templates','readiness','capabilities','knowledge'):
+                args=[command]+(['фоновое задание'] if command=='knowledge' else [])
+                child=subprocess.run([sys.executable,'-B','-X','utf8',str(kit/'techexpert.py'),'--state-dir',str(state),*args],
+                    cwd=kit,capture_output=True,timeout=20)
+                self.assertEqual(child.returncode,0,command+': '+(child.stdout+child.stderr).decode('utf-8','replace'))
+                results[command]=json.loads(child.stdout)
+            self.assertEqual(len(results['templates']['templates']),11)
+            self.assertTrue(results['readiness']['capabilities']['run_synthetic_demo'])
+            self.assertEqual(len(results['capabilities']['operations']),36)
+            self.assertTrue(results['knowledge']['matches'])
+            self.assertFalse(state.exists(),'Kit catalogue inspection started investigation state')
+            self.assertEqual(len(list((kit/'skills').glob('*/SKILL.md'))),18)
+            self.assertTrue((kit/'answer-schema.json').is_file(),'The prompt promises an absent response schema')
 
     def test_diagnosis_has_unmodified_observations_without_solution_or_future(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -57,20 +78,24 @@ class BlindPreparationTests(unittest.TestCase):
             answer.write_text('{}',encoding='utf-8')
             with self.assertRaises(ValueError):self.tool.release(run,answer)
             self.assertFalse((run/'verification').exists())
+            kit=run/'diagnosis';intake=json.loads((kit/'intake.json').read_text(encoding='utf-8'))
+            child=subprocess.run([sys.executable,'-B',str(kit/'techexpert.py'),'--state-dir',str(kit/'state'),
+                'analyze',str(kit/intake['cases'][0])],cwd=kit,capture_output=True,timeout=20)
+            self.assertEqual(child.returncode,0,child.stderr);case=json.loads(child.stdout)
             response=dict(status='hypothesis',cause_hypothesis='A supported mechanism',
-                evidence=[dict(case_id='a'*32,id='s4:1',observation='Measured interval')],
+                evidence=[dict(case_id=case['case_id'],id='s1:1',observation='Measured interval')],
                 proposed_change='A concrete intervention',limitations=['not yet verified'])
             answer.write_text(json.dumps(response),encoding='utf-8')
             released=self.tool.release(run,answer)
             self.assertEqual(released['frozen_diagnosis_sha256'],hashlib.sha256(answer.read_bytes()).hexdigest())
-            kit=run/'verification'
-            intake=json.loads((kit/'intake.json').read_text(encoding='utf-8'))
+            stage=kit/'verification'
+            intake=json.loads((stage/'intake.json').read_text(encoding='utf-8'))
             self.assertEqual((len(intake['before']),len(intake['after'])),(1,1))
             for name in intake['before']+intake['after']:
                 manifest=json.loads((kit/name).read_text(encoding='utf-8'))
                 self.assertIn('1c-source-text-v1',[s['format'] for s in manifest['sources']])
             answer.write_text('changed',encoding='utf-8')
-            self.assertEqual(json.loads((kit/'previous-answer.json').read_text())['proposed_change'],'A concrete intervention')
+            self.assertEqual(json.loads((stage/'previous-answer.json').read_text())['proposed_change'],'A concrete intervention')
             with self.assertRaises(ValueError):self.tool.release(run,answer)
 
     def test_reuse_or_changed_prepared_files_are_rejected(self):
@@ -81,7 +106,7 @@ class BlindPreparationTests(unittest.TestCase):
             (run/'diagnosis/skills/investigate/SKILL.md').write_text('changed',encoding='utf-8')
             with self.assertRaises(ValueError):self.tool.verify_prepared(run)
 
-    def test_later_inputs_cannot_be_changed_after_the_trial_is_prepared(self):
+    def test_later_original_change_cannot_replace_the_frozen_trial_inputs(self):
         with tempfile.TemporaryDirectory() as tmp:
             run=Path(tmp)/'trial'
             later=Path(tmp)/'later.json'
@@ -92,11 +117,11 @@ class BlindPreparationTests(unittest.TestCase):
             self.tool.prepare(ROOT,run,[self.manifest('baseline')],[later])
             later.write_text(json.dumps(source)+' ',encoding='utf-8')
             answer=Path(tmp)/'answer.json'
-            answer.write_text(json.dumps(dict(status='hypothesis',cause_hypothesis='Observed mechanism',
-                proposed_change='Concrete change',evidence=[dict(case_id='a'*32,id='s4:1',observation='Measured')],
-                limitations=[])),encoding='utf-8')
-            with self.assertRaisesRegex(ValueError,'input changed'):self.tool.release(run,answer)
-            self.assertFalse((run/'verification').exists())
+            answer.write_text(json.dumps(dict(status='insufficient_data',cause_hypothesis=None,proposed_change=None,evidence=[],
+                limitations=['Plumbing-only fixture'],next_steps=['Inspect the additional retained data'])),encoding='utf-8')
+            released=self.tool.release(run,answer)
+            self.assertFalse(released['original_inputs_read'])
+            self.assertTrue((run/'diagnosis/verification').is_dir())
 
 
 if __name__=='__main__':unittest.main()
