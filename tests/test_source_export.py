@@ -241,6 +241,32 @@ class SourceExportTests(unittest.TestCase):
         return state, plan, result
 
     @unittest.skipUnless(os.name == 'nt', 'verified file-export cleanup uses Windows handles')
+    def test_gui_selects_the_export_work_copy_by_its_verified_plan(self):
+        from src.techexpert import artifacts, investigations
+        from src.techexpert.gui_storage import Storage
+
+        with tempfile.TemporaryDirectory() as temp:
+            state, export, result = self.completed_for_cleanup(Path(temp))
+            target = Path(export['working_directory']) / '1Cv8.1CD'
+            original = Path(export['source_file'])
+            original_bytes = original.read_bytes()
+            selected = investigations.create(state, {'task': 'Материалы выгрузки'})['investigation_id']
+            investigations.revise(state, selected, {'attachments': [dict(id='A-1', kind='artifact',
+                                  target_id=result['artifact_id'])]}, expected_revision=1)
+            gui = Storage(state)
+            page = gui.request(selected, dict(action='materials', category='working_copies'))
+            row, = page['entries']
+            self.assertEqual(row['export_plan_id'], export['plan_id'])
+            preview = gui.request(selected, dict(action='preview', **row['cleanup_selection'], use_policy=False))
+            self.assertEqual(preview['path'], str(target))
+            self.assertEqual(preview['logical_bytes'], target.stat().st_size)
+            done = gui.request(selected, dict(action='apply', plan_sha256=preview['plan_sha256']))
+            self.assertEqual(done['status'], 'removed')
+            self.assertFalse(target.exists())
+            self.assertEqual(original.read_bytes(), original_bytes)
+            artifacts.load_artifact(state, result['source_artifact_id'])
+
+    @unittest.skipUnless(os.name == 'nt', 'verified file-export cleanup uses Windows handles')
     def test_reviewed_cleanup_removes_only_current_private_export_copy_once(self):
         from src.techexpert.investigations import create, revise
         with tempfile.TemporaryDirectory() as temp:

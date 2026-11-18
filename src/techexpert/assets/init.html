@@ -59,8 +59,19 @@
     #saved-list > div { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
     #saved-list dt { font-weight: 600; }
     #saved-list dd { margin: 4px 0 0; color: var(--muted); overflow-wrap: anywhere; }
-    @media(max-width:600px) { .grid { grid-template-columns: 1fr; } .box { padding: 13px; } main { padding: 18px 14px 30px; } h1 { font-size: 23px; } .inline > button { width: 100%; } footer > button { flex: 1 1 180px; } .steps { gap: 5px; } .steps button { flex-basis: 130px; padding-inline: 8px; } }
-    @media(pointer:coarse) { button, .check { min-height: 44px; } input[type="text"], select { font-size: 16px; } }
+    #storage-panel { margin: 14px 0 18px; }
+    #storage-message.error { color: var(--error); }
+    .storage-policy { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: end; gap: 8px; }
+    .storage-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; }
+    .storage-filters button { text-align: left; }
+    .storage-filters button[aria-pressed="true"] { border-color: var(--red); background: var(--soft); }
+    .storage-filters small { display: block; }
+    .storage-rows { margin: 0; padding: 0; list-style: none; }
+    .storage-rows li { padding-block: 9px; border-bottom: 1px solid var(--border); overflow-wrap: anywhere; }
+    .storage-rows button { margin-top: 7px; }
+    .storage-danger { color: var(--red); border-color: var(--red); font-weight: 600; }
+    @media(max-width:600px) { .grid { grid-template-columns: 1fr; } .box { padding: 13px; } main { padding: 18px 14px 30px; } h1 { font-size: 23px; } .inline > button { width: 100%; } footer > button { flex: 1 1 180px; } .steps { gap: 5px; } .steps button { flex-basis: 130px; padding-inline: 8px; } .storage-filters { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+    @media(pointer:coarse) { button, .check { min-height: 44px; } input[type="text"], input[type="number"], select { font-size: 16px; } }
   </style>
 </head>
 <body>
@@ -82,6 +93,36 @@
       </div>
     </details>
     <p class="note" id="investigation-task" hidden></p>
+    <details id="storage-panel" class="box">
+      <summary>Хранение и материалы</summary>
+      <div class="stack">
+        <div class="inline"><button type="button" id="storage-refresh">Обновить сведения</button></div>
+        <p id="storage-message" class="note" role="status" aria-live="polite" hidden></p>
+        <div id="storage-settings" class="stack" hidden>
+          <p id="storage-path" class="note"></p>
+          <h2>Сроки хранения</h2>
+          <p class="note">Срок задаётся в днях для этого локального хранилища. Пустое поле означает бессрочное хранение. Очистка начинается после подтверждения плана.</p>
+          <div id="storage-policies" class="grid"></div>
+        </div>
+        <div id="storage-materials" class="stack" hidden>
+          <h2>Материалы расследования</h2>
+          <p id="materials-location" class="note"></p>
+          <div id="material-filters" class="storage-filters" aria-label="Категории материалов"></div>
+          <label id="policy-for-cleanup" class="check"><input id="use-retention-policy" type="checkbox"><span>Учитывать сохранённый срок при предпросмотре</span></label>
+          <div id="report-actions"><button type="button" id="review-report-cleanup">Предпросмотр очистки истории отчётов</button></div>
+          <p id="materials-summary" class="note"></p>
+          <div class="box stack" id="cleanup-preview" tabindex="-1" hidden></div>
+          <details id="material-details" hidden>
+            <summary>Файлы и ссылки</summary>
+            <ul id="material-files" class="storage-rows"></ul>
+            <div class="inline" id="material-pages" hidden>
+              <button type="button" id="material-prev">Предыдущая страница</button>
+              <button type="button" id="material-next">Следующая страница</button>
+            </div>
+          </details>
+        </div>
+      </div>
+    </details>
     <section data-view="bases" class="stack">
       <div><h1>Базы окружения</h1><p class="sub">Добавьте нужные базы вручную или прочитайте свой список стартера 1С.</p></div>
       <label class="field"><span>Название окружения</span><input type="text" id="environment-name" maxlength="120" placeholder="Например, рабочее окружение" autocomplete="off"></label>
@@ -218,6 +259,171 @@
         syncDemoButton();
       }
       function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
+      const materialNames = {reports:'Отчёты',copies:'Копии данных',indexes:'Индексы ТЖ',working_copies:'Рабочие копии выгрузок',evidence:'Доказательства',metadata:'Служебные файлы'};
+      const policyNames = {'case-inputs':materialNames.copies,'case-indexes':materialNames.indexes,reports:materialNames.reports,'export-work-copies':materialNames.working_copies};
+      const statusNames = {present:'доступен',missing:'отсутствует',unavailable:'недоступен',size_mismatch:'размер изменился',unavailable_dependency:'источник недоступен',retired_dependency:'источник удалён',retired:'копия удалена',removed:'удалено',removal_unverified:'итог удаления не подтверждён',retirement_unverified:'итог удаления не подтверждён',outcome_unverified:'итог удаления не подтверждён',path_reoccupied:'путь занят другим файлом',already_absent:'файл уже отсутствует'};
+      const ruNumber = new Intl.NumberFormat('ru-RU');
+      const number = value => ruNumber.format(value);
+      const bytes = value => number(value) + ' байт';
+      const storageRequest = (action, data={}) => api('/api/storage', {action, ...data});
+      let storageOpened = false;
+      let materialCategory = 'reports';
+      let materials = null;
+
+      function storageMessage(text, error=false) {
+        const label = q('#storage-message');
+        label.textContent = text;
+        label.hidden = !text;
+        label.classList.toggle('error', error);
+      }
+      async function storageAction(task) {
+        await perform(async () => {
+          storageMessage('');
+          try { await task(); }
+          catch (error) { storageMessage(error.message, true); }
+        });
+        if (!busy && materials) syncMaterialPages();
+      }
+      function storageButton(label, task, className) {
+        const button = element('button', label, className);
+        button.type = 'button';
+        button.addEventListener('click', () => storageAction(task));
+        return button;
+      }
+      function renderStoragePolicy(category, policy) {
+        const label = element('label', undefined, 'field');
+        const input = element('input');
+        input.type = 'number'; input.min = '0'; input.max = '36500'; input.step = '1';
+        input.value = policy.days ?? ''; input.placeholder = 'Бессрочно';
+        label.append(element('span', policyNames[category]), input);
+        const button = storageButton('Сохранить', async () => {
+          const days = input.value === '' ? null : Number(input.value);
+          if (input.validity.badInput || (days !== null && (!Number.isInteger(days) || days < 0 || days > 36500))) {
+            throw new Error('Укажите целое число от 0 до 36 500 или оставьте поле пустым.');
+          }
+          policy = await storageRequest('save_policy', {category, revision:policy.revision, days});
+          clearCleanupPreview();
+          storageMessage('Срок сохранён.');
+        });
+        button.setAttribute('aria-label', 'Сохранить срок · ' + policyNames[category]);
+        const row = element('div', undefined, 'storage-policy');
+        row.append(label, button);
+        return row;
+      }
+      async function openStorage() {
+        const settings = await api('/api/storage');
+        storageOpened = true;
+        q('#storage-path').textContent = 'Локальное хранилище · ' + settings.state_dir;
+        q('#storage-policies').replaceChildren(...Object.entries(policyNames).map(([category]) => renderStoragePolicy(category, settings.policies[category])));
+        q('#storage-settings').hidden = false;
+        q('#storage-materials').hidden = !settings.investigation_id;
+        if (settings.investigation_id) await loadMaterials(materialCategory);
+      }
+      function clearCleanupPreview() {
+        const preview = q('#cleanup-preview');
+        preview.replaceChildren();
+        preview.hidden = true;
+      }
+      async function loadMaterials(category, offset=0, revision=null) {
+        clearCleanupPreview();
+        const view = await storageRequest('materials', {category, offset, revision});
+        materials = view;
+        materialCategory = view.categories ? category : 'reports';
+        renderMaterials();
+      }
+      function renderMaterials() {
+        const available = !!materials.categories;
+        const pending = materials.status === 'cleanup_pending';
+        q('#materials-location').textContent = available ? 'Папка отчётов · ' + materials.investigation_path : '';
+        const filters = q('#material-filters');
+        filters.replaceChildren();
+        if (available) for (const [category, title] of Object.entries(materialNames)) {
+          const summary = materials.categories[category];
+          const button = storageButton(title, () => loadMaterials(category));
+          const count = category === 'evidence' ? number(summary.references) + ' ссылок' : bytes(summary.observed_bytes);
+          button.setAttribute('aria-pressed', String(category === materialCategory));
+          button.append(element('small', count, 'note'));
+          filters.append(button);
+        }
+        q('#report-actions').hidden = !pending && !(available && materialCategory === 'reports');
+        q('#review-report-cleanup').textContent = pending ? 'Проверить план прерванной очистки' : 'Предпросмотр очистки истории отчётов';
+        q('#policy-for-cleanup').hidden = !available || !['reports','copies','indexes','working_copies'].includes(materialCategory);
+        q('#materials-summary').textContent = available
+          ? (materials.status === 'partial' ? 'Часть материалов недоступна. ' : '') + 'Ревизия ' + materials.head_revision + ' · ' + number(materials.entry_count) + ' записей в категории'
+          : pending ? 'Очистка отчётов прервана. Проверьте сохранённый план, чтобы продолжить.'
+            : 'История отчётов удалена · ' + bytes(materials.logical_bytes_removed);
+        const list = q('#material-files');
+        list.replaceChildren();
+        q('#material-details').hidden = !available || materials.entry_count === 0;
+        q('#material-details').open = materialCategory !== 'reports';
+        for (const item of materials.entries || []) {
+          const row = element('li');
+          if (item.category === 'evidence') {
+            row.append(element('strong', item.evidence_id + ' · запись ' + item.record));
+            row.append(element('p', 'Ревизия ' + item.revision + ' · использований ' + item.use_count + ' · ' + (statusNames[item.material_status] || 'состояние неизвестно'), 'note'));
+          } else {
+            row.append(element('code', item.path));
+            row.append(element('p', [item.bytes == null ? null : bytes(item.bytes), statusNames[item.status]].filter(Boolean).join(' · '), 'note'));
+            if (item.cleanup_selection) row.append(storageButton('Предпросмотр очистки', () => previewCleanup(item.cleanup_selection)));
+          }
+          list.append(row);
+        }
+        q('#material-pages').hidden = !available || (materials.previous_offset == null && materials.next_offset == null);
+        syncMaterialPages();
+      }
+      function syncMaterialPages() {
+        q('#material-prev').disabled = materials.previous_offset == null;
+        q('#material-next').disabled = materials.next_offset == null;
+      }
+      function showCopyImpact(box, impact) {
+        box.append(element('p', 'Проверка фактов по этой копии станет недоступна.'));
+        if (!impact.investigations.length && !impact.comparisons.length) return;
+        const links = element('details');
+        links.append(element('summary','Затронутые сравнения и ссылки в отчётах'));
+        const list = element('ul');
+        for (const row of impact.comparisons) list.append(element('li', 'Сравнение ' + row.id));
+        for (const row of impact.investigations) {
+          const records = row.evidence.map(item => item.evidence_id + ' · ' + item.record +
+            (item.used_by.length ? ' · ' + item.used_by.map(use => use.id || use.kind).join(', ') : ''));
+          list.append(element('li', 'Расследование ' + row.investigation_id + ' · ревизия ' + row.revision +
+            (records.length ? ' · ' + records.join(' / ') : ' · ' + row.attachments.join(', '))));
+        }
+        links.append(list); box.append(links);
+      }
+      async function previewCleanup(selection) {
+        clearCleanupPreview();
+        const usePolicy = !q('#policy-for-cleanup').hidden && q('#use-retention-policy').checked;
+        const review = await storageRequest('preview', {...selection, use_policy:usePolicy});
+        if (review.status !== 'ready') {
+          storageMessage(review.status === 'retained_by_policy' ? 'Срок хранения ещё действует. Материал сохраняется.' : 'Материал уже недоступен для очистки. Обновите сведения.');
+          return;
+        }
+        const box = q('#cleanup-preview');
+        box.append(element('h2', review.resuming ? 'Продолжение очистки отчётов' : 'К удалению · ' + materialNames[review.category]));
+        box.append(element('p', 'Объём плана · ' + bytes(review.logical_bytes)));
+        box.append(element('p', review.path, 'note'));
+        if (review.policy) box.append(element('p', 'Сохранённый срок · ' + number(review.policy.days) + ' дн.', 'note'));
+        if (review.category === 'reports') {
+          box.append(element('p', 'История этого расследования · ревизий ' + review.report_revisions + ' · файлов ' +
+            review.file_count + '. Связанных материалов сохранится ' + review.attached_products + '.'));
+          if (review.operations.length) box.append(element('p', 'Связанных сохранённых операций · ' + review.operations.length, 'note'));
+        }
+        if (review.category === 'indexes') box.append(element('p', 'Поиск продолжится по проверенным сохранённым данным. Индекс можно перестроить.'));
+        if (review.category === 'working_copies') box.append(element('p', 'Снимок исходников и отчёт о выгрузке сохраняются.'));
+        if (review.impact) showCopyImpact(box, review.impact);
+        const actions = element('div', undefined, 'inline');
+        const approval = storageButton(review.resuming ? 'Продолжить удаление' : 'Подтвердить удаление', async () => {
+          const result = await storageRequest('apply', {plan_sha256:review.plan_sha256});
+          const resultText = result.status === 'removed' ? 'Удалено · ' + bytes(result.logical_bytes_removed) : (statusNames[result.status] || 'Проверьте состояние материала.');
+          storageMessage(resultText);
+          try { await loadMaterials(materialCategory); }
+          catch (error) { storageMessage(resultText + '. Список требует обновления. ' + error.message, true); }
+        }, 'storage-danger');
+        const cancel = element('button', 'Отмена');
+        cancel.type = 'button'; cancel.addEventListener('click', clearCleanupPreview);
+        actions.append(approval, cancel); box.append(actions);
+        box.hidden = false; box.focus();
+      }
       function field(labelText, value, onInput, placeholder='') {
         const label = element('label', undefined, 'field'); label.append(element('span',labelText));
         const input = document.createElement('input'); input.type = 'text'; input.value = value || ''; input.maxLength = 1500; input.autocomplete = 'off'; input.spellcheck = false; input.placeholder = placeholder;
@@ -585,6 +791,17 @@
         await api('/api/demo',{});renderReadiness(await api('/api/readiness'));
         message('Синтетический пример сохранён. Вернитесь в текущий чат; агент прочитает результат проверки.');
       }));
+      q('#storage-panel').addEventListener('toggle', () => {
+        if (q('#storage-panel').open && !storageOpened) storageAction(openStorage);
+      });
+      q('#storage-refresh').addEventListener('click', () => storageAction(openStorage));
+      q('#use-retention-policy').addEventListener('change', clearCleanupPreview);
+      q('#review-report-cleanup').addEventListener('click', () => storageAction(() =>
+        previewCleanup({category:'reports', revision:materials.head_revision})));
+      q('#material-prev').addEventListener('click', () => storageAction(() =>
+        loadMaterials(materialCategory, materials.previous_offset, materials.head_revision)));
+      q('#material-next').addEventListener('click', () => storageAction(() =>
+        loadMaterials(materialCategory, materials.next_offset, materials.head_revision)));
       renderBases(); renderStep();
       perform(async () => {
         renderReadiness(await api('/api/readiness'));

@@ -10,6 +10,146 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def storage(self, action, **data):
+        status, _, body = self.request('POST', '/api/storage', dict(action=action, **data))
+        return status, json.loads(body)
+
+    def test_storage_defaults_are_passive_and_policies_are_independently_revisioned(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_materials, retention_policy
+
+        with patch.object(investigation_materials, 'view', side_effect=AssertionError('unsolicited material scan')):
+            status, _, raw = self.request('GET', '/api/storage')
+            self.assertEqual(status, 200, raw)
+            result = json.loads(raw)
+        self.assertIsNone(result['investigation_id'])
+        self.assertEqual(Path(result['state_dir']), self.state_dir)
+        self.assertEqual(set(result['policies']), set(retention_policy.CATEGORIES))
+        self.assertTrue(all(item == {'revision': 0, 'days': None} for item in result['policies'].values()))
+        self.assertFalse(self.state_dir.exists())
+        self.assertEqual(self.storage('materials')[0], 400)
+        policy = dict(action='save_policy', category='reports', revision=0, days=30)
+        self.assertEqual(self.request('POST', '/api/storage', policy, token=False)[0], 401)
+        self.assertEqual(self.request('POST', '/api/storage', policy, origin=False)[0], 403)
+        self.assertEqual(self.request('GET', '/api/storage', token=False)[0], 401)
+        self.assertEqual(self.storage('save_policy', category='reports', revision=0, days=True)[0], 400)
+        status, saved = self.storage('save_policy', category='reports', revision=0, days=30)
+        self.assertEqual((status, saved), (200, {'revision': 1, 'days': 30}))
+        self.assertEqual(self.storage('save_policy', category='reports', revision=0, days=2)[0], 409)
+        _, _, raw = self.request('GET', '/api/storage')
+        self.assertEqual(json.loads(raw)['policies']['case-inputs'], {'revision': 0, 'days': None})
+        self.assertFalse((self.state_dir / 'investigations').exists())
+
+    def test_gui_cleanup_uses_the_reviewed_report_and_can_resume_after_reopening(self):
+        from unittest.mock import patch
+        from src.techexpert import investigation_retention as retention, investigations
+
+        selected, other = [investigations.create(self.state_dir, {'task': 'Private investigation'})['investigation_id']
+                           for _ in range(2)]
+        self.server.investigation_id = selected
+        status, materials = self.storage('materials', category='reports')
+        self.assertEqual(status, 200, materials)
+        self.assertEqual((materials['investigation_id'], materials['head_revision']), (selected, 1))
+        self.assertEqual(materials['categories']['reports']['files'], 2)
+        self.assertNotIn(other, json.dumps(materials))
+        self.assertEqual(self.storage('preview', category='reports', revision=1, use_policy=True)[1]['status'],
+                         'retained_by_policy')
+        status, reviewed = self.storage('preview', category='reports', revision=1, use_policy=False)
+        self.assertEqual(status, 200, reviewed)
+        self.assertEqual(reviewed['file_count'], 4)
+        self.assertGreater(reviewed['logical_bytes'], 0)
+        digest = reviewed['plan_sha256']
+        flush = {'action': 'apply', 'plan_sha256': digest}
+        self.assertEqual(self.request('POST', '/api/storage', flush, origin=False)[0], 403)
+        self.assertEqual(self.storage('apply', plan_sha256='0'*64)[0], 409)
+        self.assertEqual(investigations.load(self.state_dir, selected)['revision'], 1)
+
+        with patch.object(retention, '_remove_file', side_effect=OSError('disposal interrupted')):
+            self.assertEqual(self.storage('apply', plan_sha256=digest)[0], 400)
+        self.assertEqual(self.storage('materials')[1]['status'], 'cleanup_pending')
+        server = self.gui.create_server(self.state_dir, ttl=10, investigation_id=selected)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(self.stop_server, server, thread)
+        self.server, self.origin = server, server.origin
+        self.assertEqual(self.storage('apply', plan_sha256=digest)[0], 409)
+        self.assertIsNone(json.loads(self.request('GET', '/api/context')[2]))
+        status, resumed = self.storage('preview', category='reports', revision=1, use_policy=False)
+        self.assertEqual((status, resumed['status'], resumed['plan_sha256']), (200, 'ready', digest))
+        self.assertTrue(resumed['resuming'])
+        status, removed = self.storage('apply', plan_sha256=digest)
+        self.assertEqual((status, removed['status'], removed['logical_bytes_removed']),
+                         (200, 'removed', reviewed['logical_bytes']))
+        self.assertEqual(self.storage('materials')[1]['status'], 'removed')
+        self.assertEqual(investigations.load(self.state_dir, other)['revision'], 1)
+
+    def test_gui_cleanup_fences_changed_revision_and_out_of_scope_material(self):
+        from src.techexpert import investigations, operation_state as fs, storage
+
+        selected = investigations.create(self.state_dir, {'task': 'Private investigation'})['investigation_id']
+        self.server.investigation_id = selected
+        manifest = storage.ROOT / 'examples/sc01/case.json'
+        attached, unrelated = [storage.investigate(manifest, self.state_dir)['case_id'] for _ in range(2)]
+        investigations.revise(self.state_dir, selected, {'attachments': [dict(id='A-1', kind='case', target_id=attached)]},
+                             expected_revision=1)
+        status, copies = self.storage('materials', category='copies')
+        self.assertEqual(status, 200, copies)
+        self.assertEqual([row['product_id'] for row in copies['entries']], [attached])
+        row = dict(copies['entries'][0])
+        cursor = row.pop('cleanup_selection', None)
+        if not cursor:  # The underlying raw-snapshot cleanup is Windows-specific.
+            import os
+            self.assertNotEqual(os.name, 'nt')
+        else:
+            forged = dict(cursor, row_sha256=fs.digest(dict(row, product_id=unrelated)))
+            self.assertEqual(self.storage('preview', **forged, use_policy=False)[0], 409)
+        status, report = self.storage('preview', category='reports', revision=2, use_policy=False)
+        self.assertEqual(status, 200, report)
+        investigations.revise(self.state_dir, selected, {'time_mode': 'past'}, expected_revision=2)
+        self.assertEqual(self.storage('materials', category='copies', revision=2, offset=0)[0], 409)
+        status, _ = self.storage('apply', plan_sha256=report['plan_sha256'])
+        self.assertEqual(status, 409)
+        self.assertTrue((self.state_dir / 'cases' / unrelated / 'sources' / 's1.bin').is_file())
+        self.assertEqual(investigations.load(self.state_dir, selected)['revision'], 3)
+        if cursor:
+            status, copies = self.storage('materials', category='copies')
+            self.assertEqual(status, 200, copies)
+            status, reviewed = self.storage('preview', **copies['entries'][0]['cleanup_selection'], use_policy=False)
+            self.assertEqual(status, 200, reviewed)
+            self.assertTrue(reviewed['impact']['case_reverification_lost'])
+            self.assertEqual({row['investigation_id'] for row in reviewed['impact']['investigations']}, {selected})
+            status, removed = self.storage('apply', plan_sha256=reviewed['plan_sha256'])
+            self.assertEqual((status, removed['status']), (200, 'removed'))
+            self.assertFalse((self.state_dir / 'cases' / attached / 'sources' / 's1.bin').exists())
+            self.assertTrue((self.state_dir / 'cases' / unrelated / 'sources' / 's1.bin').is_file())
+            self.assertEqual(json.loads(self.request('GET', '/api/context')[2])['revision'], 3)
+
+    def test_report_preview_blocks_on_damaged_related_operation_with_a_json_error(self):
+        import hashlib
+        from src.techexpert import investigation_retention, investigations, operation_state as fs
+
+        selected = investigations.create(self.state_dir, {'task': 'Private investigation'})['investigation_id']
+        self.server.investigation_id = selected
+        key = 'damaged-operation-state'
+        run_id = hashlib.sha256(key.encode()).hexdigest()
+        folder = fs.private(self.state_dir / 'operations' / run_id)
+        request = dict(operation_key=key, operation='investigation.sources', arguments=dict(investigation_id=selected, revision=1))
+        sealed = dict(schema_version=1, request=request)
+        fs.write(folder / 'plan.json', sealed)
+        fs.write(folder / 'plan-receipt.json', dict(sha256=fs.digest(sealed)))
+        for damaged in ([], dict(run_id=run_id, status=['succeeded'], stop_verified=True)):
+            with self.subTest(damaged=damaged):
+                fs.write(folder / 'status.json', damaged)
+                status, body = self.storage('preview', category='reports', revision=1, use_policy=False)
+                self.assertEqual(status, 400)
+                self.assertIn('related operation', body['error'])
+        fs.write(folder / 'plan-receipt.json', [])
+        status, body = self.storage('preview', category='reports', revision=1, use_policy=False)
+        self.assertEqual(status, 400)
+        self.assertIn('saved operation relationship cannot be verified', body['error'])
+        self.assertIsNone(investigation_retention.status(self.state_dir, selected))
+        self.assertEqual(investigations.load(self.state_dir, selected)['revision'], 1)
+
     def test_lost_private_template_head_does_not_block_retained_gui_context(self):
         from src.techexpert.incident_templates import save_custom
         from src.techexpert.investigations import create,load

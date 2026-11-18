@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import profiles
+from .gui_storage import Storage, StorageConflict, setup_context
 
 
 MAX_BODY = 64 * 1024
@@ -27,10 +28,9 @@ class InitServer(ThreadingHTTPServer):
         if isinstance(ttl, bool) or not isinstance(ttl, (int, float)) or not math.isfinite(ttl) or ttl <= 0:
             raise ValueError('TTL must be a positive finite number of seconds')
         self.state_dir = Path(state_dir)
-        if investigation_id is not None:
-            from .investigations import load
-            load(self.state_dir,investigation_id)
+        setup_context(self.state_dir, investigation_id)
         self.investigation_id=investigation_id
+        self.storage = Storage(self.state_dir)
         self.entrypoint_sha256=entrypoint_sha256
         self.demo_lock=threading.Lock()
         self.deadline = time.monotonic() + ttl
@@ -181,10 +181,12 @@ class InitHandler(BaseHTTPRequestHandler):
             elif self.path == '/api/profile':
                 with self.server.profile_lock:
                     if self.server.investigation_id:
-                        from .investigations import load
-                        result=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
+                        context = setup_context(self.server.state_dir, self.server.investigation_id)
+                        result = context['profile_snapshot'] if context else None
                     else:result = profiles.load_profile(self.server.state_dir)
                 self._json(200, result,etag=self._profile_etag(result))
+            elif self.path == '/api/storage':
+                self._json(200, self.server.storage.settings(self.server.investigation_id))
             elif self.path == '/api/doctor':
                 self._json(200, profiles.doctor(self.server.state_dir))
             elif self.path == '/api/readiness':
@@ -206,8 +208,8 @@ class InitHandler(BaseHTTPRequestHandler):
                 from .discovery import default_starter_path
                 path=default_starter_path();self._json(200,dict(path=str(path) if path is not None else None,checked=False))
             elif self.path == '/api/context':
-                from .investigations import load
-                self._json(200,self._context(load(self.server.state_dir,self.server.investigation_id)) if self.server.investigation_id else None)
+                context = setup_context(self.server.state_dir, self.server.investigation_id)
+                self._json(200, self._context(context) if context else None)
             else:
                 self._error(404, 'Неизвестное действие помощника.')
         except ValueError as error:
@@ -218,7 +220,7 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo','/api/profile-editor','/api/profile-compose'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo','/api/profile-editor','/api/profile-compose','/api/storage'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
@@ -234,6 +236,12 @@ class InitHandler(BaseHTTPRequestHandler):
                     previous=read_demo(self.server.state_dir)
                     if previous['status']!='completed':run_demo(self.server.state_dir)
                     result=read_demo(self.server.state_dir)
+            elif self.path=='/api/storage':
+                try:
+                    result = self.server.storage.request(self.server.investigation_id, data)
+                except (OSError, KeyError, TypeError, AttributeError, RecursionError):
+                    self._error(400, 'Не удалось проверить действие с хранилищем. Обновите материалы и проверьте состояние очистки.')
+                    return
             elif self.path=='/api/context':
                 from .investigations import revise
                 if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
@@ -295,6 +303,8 @@ class InitHandler(BaseHTTPRequestHandler):
                     result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
                     self.server.saved_profile_revision=result['revision']
             self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
+        except StorageConflict as error:
+            self._error(409, str(error))
         except profiles.ProfileRevisionConflict:
             self._error(409,'Профиль изменён агентом, в другом окне или относится к иной закреплённой ревизии. Настройки не сохранены. Вернитесь в текущий чат, чтобы сопоставить изменения; автоматической перезаписи нет.')
         except ValueError as error:

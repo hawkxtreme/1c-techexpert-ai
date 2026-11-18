@@ -90,7 +90,7 @@ def _related_operations(state, identifier):
                         raise InputError('invalid operation investigation dependencies')
                 else:
                     related = request_ids(state, request)
-            except (OSError, ValueError, KeyError, TypeError) as error:
+            except (OSError, ValueError, KeyError, TypeError, AttributeError) as error:
                 raise InputError('saved operation relationship cannot be verified') from error
             if identifier not in related:
                 continue
@@ -98,6 +98,10 @@ def _related_operations(state, identifier):
                 current = fs.read(folder / 'status.json', 64 * 1024)
             except FileNotFoundError as error:
                 raise InputError('related operation admission is incomplete') from error
+            except (OSError, ValueError, TypeError) as error:
+                raise InputError('related operation status cannot be verified') from error
+            if type(current) is not dict or type(current.get('status')) is not str:
+                raise InputError('related operation status cannot be verified')
             if (current.get('run_id') != folder.name
                     or current.get('status') not in TERMINAL or current.get('stop_verified') is not True):
                 raise InputError('related operation is active or its stop is unverified')
@@ -333,6 +337,18 @@ def preview(state, identifier, *, use_policy=False):
     plan, policy = _selected(state, identifier, use_policy=use_policy)
     if plan is None:
         return dict(status='retained_by_policy', investigation_id=identifier, policy=policy)
+    return _review(plan)
+
+
+def pending_review(state, identifier):
+    """Reopen only the exact approved plan once its intent has been saved."""
+    intent, _, _, _, done = _history(state, identifier)
+    if intent is None or done is not None:
+        return None
+    return dict(_review(intent['plan']), resuming=True)
+
+
+def _review(plan):
     return dict(status='ready', plan=plan, plan_sha256=fs.digest(plan), logical_bytes=_bytes(plan),
                 effects=dict(report_revisions=plan['head']['revision'], report_history_available_after=False,
                              attached_product_removal=False, harness_history_removal=False))

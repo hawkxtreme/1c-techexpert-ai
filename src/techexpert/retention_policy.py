@@ -14,6 +14,10 @@ CATEGORIES = {
 DEFAULT_CATEGORY = 'export-work-copies'
 
 
+class PolicyRevisionConflict(InputError):
+    """The requested policy revision no longer matches the saved choice."""
+
+
 def _policy_fields(category):
     if category not in CATEGORIES:
         raise InputError('unknown retention category')
@@ -51,7 +55,7 @@ def save(state, request, *, expected_revision, category=DEFAULT_CATEGORY):
     with fs.writer(folder):
         previous = load(state, category=category)
         if previous['revision'] != expected_revision:
-            raise InputError('retention policy revision changed; reload before saving')
+            raise PolicyRevisionConflict('retention policy revision changed; reload before saving')
         value = dict(request, revision=expected_revision + 1)
         fs.write(folder / filename, value)
         return value
