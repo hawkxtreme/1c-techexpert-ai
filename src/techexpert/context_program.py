@@ -175,3 +175,13 @@ def public_state(value):
         result['stop_reason'] = reason if reason in ('cancelled', 'timeout', 'output_limit', 'owned_disk_limit') else 'context_program_unavailable'
     result['limitations'] = ['The program uses selected, policy-filtered views of retained evidence.']
     return result
+
+
+def present(value):
+    result = public_state(value)
+    calls = (value.get('data') or {}).get('calls', ())
+    # Use the checked call journal so the note survives a filtered return value.
+    # Keep it out of the sealed program output for interrupted commit recovery.
+    if any(call['status'] == 'succeeded' and (call.get('view') or {}).get('view') == 'comparison' for call in calls):
+        result['limitations'].append(disclosure.COMPARISON_LIMITATION)
+    return result

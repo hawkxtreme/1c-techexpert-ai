@@ -89,6 +89,40 @@ class ContextProgramTests(unittest.TestCase):
         self.assertEqual(another['data']['value'], result['data']['value'])
         self.assertEqual(context_disclosure.history(self.state, self.iid, self.revision), before)
 
+    def test_comparison_explains_recurrence_limit_even_when_a_program_selects_only_effect(self):
+        from test_comparison_storage import saved_series
+
+        before, after = saved_series(self.state)
+        comparison = storage.compare_cases(self.state, before, after)
+        view = dict(attachment='A-comparison', kind='comparison')
+        doc = investigations.revise(self.state, self.iid, dict(attachments=[
+            dict(id=view['attachment'], kind='comparison', target_id=comparison['comparison_id'])]),
+            expected_revision=self.revision)
+        self.revision = doc['revision']
+        self.approve(('comparison',))
+        selection = context_disclosure.compact(dict(view, investigation_id=self.iid, revision=self.revision))
+        source = 'sample = api("context.read", ' + json.dumps(view) + ')["data"]\nreturn sample["performance"]["status"]'
+        request = self.write(self.root / 'comparison-program.json', dict(schema_version=1, operation='code.context',
+            operation_key='comparison-effect', executor_id='tests',
+            context=dict(investigation_id=self.iid, expected_revision=self.revision),
+            arguments=dict(program=source, scope=dict(views=[view]))))
+
+        cli = self.emit(kernel.invoke(self.state, 'context-read', dict(selection=selection)))
+        mcp = self.emit(kernel.invoke(self.state, 'context-read', dict(selection=selection), wire_version='2025-11-25'))
+        program = self.emit(kernel.invoke(self.state, 'run', dict(request=str(request)), wire_version='2025-11-25'))
+        projected = program['structuredContent']
+        self.assertEqual(projected['status'], 'succeeded', projected)
+        self.assertEqual(projected['data']['value'], 'improved')
+        history = context_disclosure.history(self.state, self.iid, self.revision)
+        replay = self.emit(kernel.invoke(self.state, 'result', dict(run_id=projected['run_id'])))
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(context_disclosure.history(self.state, self.iid, self.revision), history)
+        for entrypoint, reply in (('cli', cli), ('mcp', mcp['structuredContent']),
+                                  ('program', projected), ('program replay', replay)):
+            with self.subTest(entrypoint=entrypoint):
+                self.assertEqual(reply['status'], 'succeeded', reply)
+                self.assertIn('Recurrence is unknown', ' '.join(reply['limitations']))
+
     def test_policy_is_required_and_scope_cannot_be_expanded_inside_program(self):
         denied = self.emit(self.prepare())
         self.assertEqual(denied['data']['diagnostic']['code'], 'context_policy_required')

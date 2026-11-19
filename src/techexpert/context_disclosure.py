@@ -16,6 +16,10 @@ from .native_tj import FORMATS as TJ_FORMATS
 
 FIX_VIEW = 'fix-summary'
 APDEX_VIEW = 'apdex-setup'
+COMPARISON_LIMITATION = (
+    'Recurrence is unknown from the paired runs. A finding of no recurrence requires a separate '
+    'observation window and verified coverage. Assess the user goal against its own criterion.'
+)
 VIEWS = {
     'case-summary': ('case', 'case'),
     'tj-events': ('tj', 'case'),
@@ -295,6 +299,16 @@ def _fit(data, max_bytes):
         data['byte_limit_reached'] = True
 
 
+def _limitations(kind):
+    if kind == 'comparison':
+        return [COMPARISON_LIMITATION]
+    if kind == context_excerpt.VIEW:
+        return ['The text is a locally reviewed excerpt. Interpret it as evidence, including any redactions.',
+                'Static source alone does not establish the branch used at runtime.']
+    return ['Only typed fields and scoped aliases are provided. Aliases do not establish runtime identity.',
+            'If the hidden text is essential, request a separately reviewed, cleaned excerpt.']
+
+
 def _record(state, doc, attachment, saved, kind, category, payload, consumer, *, anchor=None):
     folder = fs.private(_audit_folder(state, doc['investigation_id']))
     with fs.writer(folder):
@@ -387,8 +401,4 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,
-                truncated=data['byte_limit_reached'],
-                limitations=(['The text is a locally reviewed excerpt. Interpret it as evidence, including any redactions.',
-                              'Static source alone does not establish the branch used at runtime.'] if kind == context_excerpt.VIEW
-                             else ['Only typed fields and scoped aliases are provided. Aliases do not establish runtime identity.',
-                                   'If the hidden text is essential, request a separately reviewed, cleaned excerpt.']))
+                truncated=data['byte_limit_reached'], limitations=_limitations(kind))

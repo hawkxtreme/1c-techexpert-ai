@@ -283,7 +283,7 @@ def _fit_view(view,budget,*,strict=False):
 def _present(state,plan,value,*,replayed,strict=False,recovery_reason=None):
     data=value['data'] or {};request=plan['request']
     if request['operation']==context_program.OPERATION:
-        view=dict(context_program.public_state(value),integrity_verified=True,replayed=replayed,
+        view=dict(context_program.present(value),integrity_verified=True,replayed=replayed,
                   cancellation_requested=value.get('cancellation_requested',False) or
                                          fs.safe(fs.folder(state,value['run_id'])/'cancel.json').exists())
         filtered=_fit_view(view,request['budget']['max_result_bytes'],strict=strict)
