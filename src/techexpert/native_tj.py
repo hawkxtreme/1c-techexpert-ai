@@ -21,6 +21,7 @@ MAX_RECORD_BYTES = 16 * 1024 * 1024
 BOM = b'\xef\xbb\xbf'
 OFFSET = re.compile(r'([+-])([0-9]{2}):([0-9]{2})\Z')
 HOUR = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00(?::00(?:\.0{1,6})?)?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z')
+HOUR_FILENAME = re.compile(r'(?:.+_[0-9]+_)?(?P<hour>[0-9]{8})\.log', re.IGNORECASE)
 HEAD_TAIL = r'-(?P<duration>[0-9]{1,20}),(?P<event>[A-Za-z_][A-Za-z0-9_.:-]{0,63}),(?P<depth>[0-9]{1,10})(?P<separator>,|$)'
 HEADERS = {
     'minute': re.compile(r'(?P<time>[0-9]{2}:[0-9]{2}\.[0-9]{6})' + HEAD_TAIL),
@@ -72,7 +73,7 @@ def validate_profile(spec, path):
             name = os.fspath(path).replace('\\', '/').rsplit('/', 1)[-1]
         except (TypeError, AttributeError) as error:
             raise ValueError('path must be a file path') from error
-        filename_hour = re.fullmatch(r'(?:.+_[0-9]+_)?(?P<hour>[0-9]{8})\.log', name, re.IGNORECASE)
+        filename_hour = HOUR_FILENAME.fullmatch(name)
         if filename_hour and filename_hour['hour'] != hour.strftime('%y%m%d%H'):
             raise ValueError('YYMMDDHH in the log filename disagrees with the explicitly declared file_hour')
         result.update(file_hour=hour.isoformat(), rotation_hours=1, time_basis='user_declared_hour_and_offset')

@@ -204,7 +204,7 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(set(output['data']), {'material'})
         self.assertEqual(output['attachment_status'], 'attached')
 
-    def configured_journals(self, *, offset='+03:00', window=True):
+    def configured_journals(self, *, offset='+03:00', window=True, tj_path=None, timestamp_format=None):
         from src.techexpert.profile_resources import upgrade_profile
 
         selected = self.root / (PRIVATE + '-jr')
@@ -212,10 +212,12 @@ class ContextIntakeTests(unittest.TestCase):
         self.source.write_text(
             '2026-11-15T09:10:00.000000-10,CALL,1,Usr=' + PRIVATE + '\n'
             '2026-11-15T09:11:00.000000-20,CALL,1,Usr=' + PRIVATE + '\n', encoding='utf-8')
-        sources = [dict(id='private-tj', type='tj', path=str(self.source), host='', base_ids=['file'],
+        sources = [dict(id='private-tj', type='tj', path=str(tj_path or self.source), host='', base_ids=['file'],
                         settings=dict(platform_version='8.3.27.1989', utc_offset=offset)),
                    dict(id='private-jr', type='jr', path=str(selected), host='', base_ids=['file'],
                         settings=dict(platform_version='8.3.27.1989', utc_offset='+03:00'))]
+        if timestamp_format is not None:
+            sources[0]['settings']['timestamp_format'] = timestamp_format
         saved = profiles.save_profile(self.state, upgrade_profile(dict(self.profile, sources=sources)), expected_revision=1)
         episode = dict(start='2026-11-15T09:10:00', end='2026-11-15T09:11:00', utc_offset='+03:00') if window else {}
         self.doc = investigations.create(self.state, dict(task=PRIVATE, episode=episode))
@@ -321,6 +323,92 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(code, 2, refusal)
         self.assertEqual(refusal['stop_reason'], 'journal_preview_changed')
         self.assertFalse((self.state / 'artifacts').exists())
+
+    def test_hourly_tj_selects_bounded_files_and_retains_half_open_window_across_new_year(self):
+        root = self.root / (PRIVATE + '-hours')
+        folder = root / '1cv8_123'
+        folder.mkdir(parents=True)
+        one, two = folder / '26123123.log', root / '1cv8_456_27010100.log'
+        one.write_bytes(b'59:58.999999-1,CALL,1\n59:59.000000-2,CALL,1\n')
+        two.write_bytes(b'00:00.000000-3,SCALL,1\n00:01.000000-4,CALL,1\n')
+        for hour in range(36):
+            (folder / f'2612{1 + hour // 24:02}{hour % 24:02}.log').write_bytes(b'outside the authorized window')
+        self.configured_journals(tj_path=root, timestamp_format='minute')
+        _, needs = self.configured_call('source.check', 'rotation-needed', source='j1')
+        self.assertEqual(needs['data']['journal_preview']['status'], 'hourly_rotation_required')
+        selection = dict(source='j1', timestamp_profile='hourly_minute',
+                         window=dict(start='2026-12-31T20:59:59Z', end='2026-12-31T21:00:01Z'))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check',
+            dict(profile_journal=selection), 'two-hour-files')))
+        self.assertEqual(code, 0, view)
+        preview = view['data']['journal_preview']
+        self.assertEqual(preview['timestamp_profile'], 'hourly_minute')
+        self.assertEqual(preview['file_count'], 2)
+        self.assertEqual(preview['files_outside_window'], 36)
+        self.assertEqual(preview['source_bytes'], one.stat().st_size + two.stat().st_size)
+        self.assertFalse(preview['source_bytes_read'])
+        arguments = dict(profile_journal=selection, preview_sha256=preview['preview_sha256'])
+        changed = root / '1cv8_789_27010100.log'
+        changed.write_bytes(b'00:00.000000-3,SCALL,1\n')
+        code, refused = self.cli('context-intake', self.write_request(self.request('case.analyze', arguments, 'changed-hour-files')))
+        self.assertEqual(code, 2, refused)
+        self.assertEqual(refused['stop_reason'], 'journal_preview_changed')
+        changed.unlink()
+        request = self.request('case.analyze', arguments, 'two-hour-window')
+        code, capture = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 0, capture)
+        case_id = capture['data']['material']['id']
+        report = storage.verified_case(self.state, case_id)
+        self.assertEqual(len(report['sources']), 2)
+        self.assertEqual({s['profile']['file_hour'] for s in report['sources']},
+                         {'2026-12-31T23:00:00+03:00', '2027-01-01T00:00:00+03:00'})
+        self.assertEqual([s['reference_capture']['selected_records'] for s in report['sources']], [1, 1])
+        windows = storage.list_native_events(self.state, case_id)
+        self.assertEqual({(r['timestamp_utc'], r['duration_us']) for r in windows['records']},
+                         {('2026-12-31T20:59:59.000000+00:00', 2), ('2026-12-31T21:00:00.000000+00:00', 3)})
+        one.unlink()
+        two.unlink()
+        code, replay = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], capture['attachment'])
+
+    def test_hourly_tj_rejects_unverified_names_and_distinguishes_a_window_without_files(self):
+        self.configured_journals(timestamp_format='minute')
+        args = dict(profile_journal=dict(source='j1', timestamp_profile='hourly_minute'))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check', args, 'bad-hour-name')))
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['journal_preview']['status'], 'hourly_filename_required')
+        self.assertNotIn('preview_sha256', view['data']['journal_preview'])
+
+        root = self.root / 'native-hour'
+        root.mkdir()
+        (root/'26111608.log').write_bytes(b'00:00.000000-1,CALL,1\n')
+        profile = profiles.load_profile(self.state)
+        profile['sources'][0]['path'] = str(root)
+        saved = profiles.save_profile(self.state, profile, expected_revision=profile['revision'])
+        revised = investigations.revise(self.state, self.iid, dict(profile_revision=saved['revision']), expected_revision=1)
+        selection = self.request('source.check', args, 'outside-file-hours')
+        selection['context']['expected_revision'] = revised['revision']
+        code, view = self.cli('context-intake', self.write_request(selection))
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['journal_preview']['status'], 'no_hour_files_in_window')
+        self.assertFalse(view['data']['journal_preview']['source_bytes_read'])
+
+    def test_hourly_tj_valid_name_does_not_make_other_record_grammar_usable(self):
+        path = self.root / '26111509.log'
+        path.write_bytes(b'2026-11-15T09:10:00.000000-10,CALL,1\n')
+        self.configured_journals(tj_path=path)
+        args = dict(profile_journal=dict(source='j1', timestamp_profile='hourly_minute'))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check', args, 'hour-profile-declared')))
+        self.assertEqual(code, 0, view)
+        args['preview_sha256'] = view['data']['journal_preview']['preview_sha256']
+        code, capture = self.cli('context-intake', self.write_request(self.request('case.analyze', args, 'other-record-grammar')))
+        self.assertEqual(code, 1, capture)
+        self.assertEqual(capture['stop_reason'], 'journal_parse_failed')
+        report = storage.verified_case(self.state, capture['data']['material']['id'])
+        self.assertEqual(report['sources'][0]['reference_capture']['original_parse_status'], 'invalid')
+        self.assertEqual(report['source_coverage']['status'], 'no_usable_tj_records_in_scope')
 
     def test_legacy_key_is_not_reused_as_a_protected_intake(self):
         original = operations.run(self.state, self.request())

@@ -49,8 +49,9 @@ def validate(request):
 
 
 def reader_capability(request):
-    if 'profile_journal' in request['arguments']:
-        return 4
+    selector = request['arguments'].get('profile_journal')
+    if selector is not None:
+        return 5 if 'timestamp_profile' in selector else 4
     return READER_CAPABILITIES.get(request['operation'], 1)
 
 

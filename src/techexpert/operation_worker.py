@@ -77,11 +77,9 @@ def main(folder):
         if operation in PROGRAM_EXECUTIONS:outcome=data['result_status']
         else:outcome,stop_reason=output_status(operation,data)
         if selected_journal:
-            preview = data.get('journal_preview')
-            if preview is not None and preview['status'] != 'ready':
-                outcome, stop_reason = 'partial', 'journal_preview_incomplete'
-            elif operation == 'case.analyze' and data['source_coverage']['status'] != 'observations_available':
-                outcome, stop_reason = 'partial', 'journal_coverage_limited'
+            reason = profile_journals.partial_reason(operation, args, data)
+            if reason is not None:
+                outcome, stop_reason = 'partial', reason
     except CommandStopped as exc:
         outcome='cancelled' if exc.reason=='cancelled' else 'failed';stop_reason=exc.reason
         message='Bounded command stopped: '+exc.reason+'. Private partial output retained; no source artifact created.'

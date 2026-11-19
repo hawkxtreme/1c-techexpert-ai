@@ -1,6 +1,6 @@
 """Select bounded local journals from the exact saved investigation profile."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import stat
 
@@ -15,7 +15,9 @@ from .source_coverage import validate_request
 PREVIEW = 'source.check'
 CAPTURES = {'case.analyze': 'tj', 'jr.import': 'jr'}
 OPERATIONS = {PREVIEW, *CAPTURES}
-REASONS = ('journal_preview_changed', 'journal_preview_incomplete', 'journal_coverage_limited')
+HOURLY_MINUTE = 'hourly_minute'
+REASONS = ('journal_preview_changed', 'journal_preview_incomplete', 'journal_coverage_limited',
+           'journal_parse_failed')
 MAX_MEMBERS = 32
 
 
@@ -25,8 +27,11 @@ class PreviewChanged(InputError):
 
 def schema(cap, operation):
     preview = operation == PREVIEW
-    fields = dict(profile_journal=cap.obj(dict(source=cap.string(4, pattern='j[1-9][0-9]{0,2}'),
-                                              window=cap.WINDOW), () if preview else ('source',)))
+    selector = dict(source=cap.string(4, pattern='j[1-9][0-9]{0,2}'), window=cap.WINDOW)
+    if operation != 'jr.import':
+        selector['timestamp_profile'] = cap.string(16, enum=[HOURLY_MINUTE],
+            description='Declare short timestamps and one-hour rotation verified for this source and window.')
+    fields = dict(profile_journal=cap.obj(selector, () if preview else ('source',)))
     if not preview:
         fields['preview_sha256'] = cap.SHA256
     return cap.obj(fields, tuple(fields))
@@ -35,9 +40,9 @@ def schema(cap, operation):
 def normalize(cap, operation, arguments):
     result = cap.validate(arguments, schema(cap, operation))
     selected = result['profile_journal']
+    if selected and 'source' not in selected:
+        raise InputError('select a journal before giving a window or timestamp profile')
     if 'window' in selected:
-        if 'source' not in selected:
-            raise InputError('select a journal before giving a collection window')
         selected['window'] = validate_request(window=selected['window'])['window']
     return result
 
@@ -67,7 +72,7 @@ def _window(doc, explicit):
         return None, None
 
 
-def _configuration_status(source):
+def _configuration_status(source, timestamp_profile=None):
     settings = source['settings']
     if settings.get('transport', 'local') != 'local':
         return 'separate_access_required'
@@ -81,8 +86,16 @@ def _configuration_status(source):
         native_tj._offset(settings.get('utc_offset'))
     except ValueError:
         return 'offset_required'
-    if source['type'] == 'tj' and settings.get('timestamp_format') not in (None, '', 'iso'):
-        return 'timestamp_profile_unsupported'
+    kind = source['type']
+    declared = settings.get('timestamp_format')
+    if timestamp_profile == HOURLY_MINUTE:
+        if kind != 'tj' or declared not in (None, '', 'minute'):
+            return 'timestamp_profile_conflict'
+    elif kind == 'tj':
+        if declared == 'minute':
+            return 'hourly_rotation_required'
+        if declared not in (None, '', 'iso'):
+            return 'timestamp_profile_unsupported'
     return 'configured'
 
 
@@ -111,7 +124,7 @@ def _files(root, kind, *, directory):
                 if linked or not stat.S_ISREG(info.st_mode):
                     raise InputError('linked_or_special_journal')
                 chosen.append(path)
-                if len(chosen) > MAX_MEMBERS:
+                if kind == 'jr' and len(chosen) > MAX_MEMBERS:
                     raise InputError('journal_scan_limit')
             elif kind == 'tj':
                 if linked:
@@ -124,7 +137,40 @@ def _files(root, kind, *, directory):
 
 
 INVENTORY_STATES = frozenset(('journal_layout_unsupported', 'journal_scan_limit', 'journal_inventory_changed',
-                              'linked_or_special_journal', 'no_journal_files', 'journal_byte_limit'))
+    'linked_or_special_journal', 'no_journal_files', 'journal_byte_limit', 'hourly_filename_required',
+    'hourly_window_unsupported', 'no_hour_files_in_window'))
+
+
+def _hourly_members(files, window, offset):
+    zone = native_tj._offset(offset)
+    try:
+        start = datetime.fromisoformat(window['start']).astimezone(zone)
+        last = (datetime.fromisoformat(window['end']) - timedelta(microseconds=1)).astimezone(zone)
+    except (ValueError, OverflowError) as error:
+        raise InputError('hourly_window_unsupported') from error
+    if last.year - start.year >= 100:
+        raise InputError('hourly_window_unsupported')
+    first_hour = start.replace(minute=0, second=0, microsecond=0)
+    chosen = {}
+    for file in files:
+        match = native_tj.HOUR_FILENAME.fullmatch(file.name)
+        if match is None:
+            raise InputError('hourly_filename_required')
+        stamp = match['hour']
+        yy, month, day, hour = (int(stamp[index:index + 2]) for index in range(0, 8, 2))
+        year = start.year + (yy - start.year) % 100
+        try:
+            if year > last.year:
+                # Check whether the name contains a valid date in some century.
+                # A date outside the requested years supplies no absolute year.
+                datetime(2000 + yy, month, day, hour)
+                continue
+            candidate = datetime(year, month, day, hour, tzinfo=zone)
+        except ValueError as error:
+            raise InputError('hourly_filename_required') from error
+        if first_hour <= candidate <= last:
+            chosen[file] = dict(timestamp_format='minute', file_hour=candidate.isoformat(), rotation_hours=1)
+    return chosen
 
 
 def _jr_inventory(files):
@@ -140,13 +186,13 @@ def _jr_inventory(files):
     return items, count
 
 
-def _tj_review(root, files, selection, settings, window, state, manifest_path):
-    retained = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES // len(files))
-    nested = any(path != root and path.parent != root for path in files)
+def _tj_review(root, profiles, selection, settings, window, state, manifest_path):
+    retained = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES // len(profiles))
+    nested = any(path != root and path.parent != root for path in profiles)
     placement = settings.get('placement') or ('folders' if nested else 'plain')
     specs = [dict(path=str(path), format=native_tj.FORMAT, platform_version=settings['platform_version'],
-                  encoding='utf-8', timestamp_format='iso', placement=placement, utc_offset=settings['utc_offset'],
-                  external_window=dict(window, max_retained_bytes=retained)) for path in files]
+                  encoding='utf-8', placement=placement, external_window=dict(window, max_retained_bytes=retained),
+                  **profile) for path, profile in profiles.items()]
     manifest = dict(schema=2, origin='provided', sources=specs, incident_window=window)
     for spec in specs:
         native_tj.validate_profile(spec, spec['path'])
@@ -158,7 +204,7 @@ def _tj_review(root, files, selection, settings, window, state, manifest_path):
     return raw, review
 
 
-def _plan(state, output, binding, source, public, window):
+def _plan(state, output, binding, source, public, window, timestamp_profile):
     kind = source['type']
     root = profile_files._ordinary_path(source['path'])
     profile_files._chain(root)
@@ -173,9 +219,22 @@ def _plan(state, output, binding, source, public, window):
     manifest_path = output / 'profile-journal-manifest.json'
     raw = review = None
     if kind == 'tj':
+        settings = source['settings']
+        offset = settings['utc_offset']
+        if timestamp_profile == HOURLY_MINUTE:
+            profiles = _hourly_members(files, window, offset)
+            public.update(timestamp_profile=HOURLY_MINUTE, files_outside_window=len(files) - len(profiles),
+                          hour_basis='filename_and_requested_year_with_declared_offset')
+            if not profiles:
+                raise InputError('no_hour_files_in_window')
+        else:
+            profiles = dict.fromkeys(files, dict(timestamp_format='iso', utc_offset=offset))
+        files = list(profiles)
+        if len(files) > MAX_MEMBERS:
+            raise InputError('journal_scan_limit')
         if sum(file.lstat().st_size for file in files) > native_tj.MAX_REFERENCE_SCAN_BYTES:
             raise InputError('journal_byte_limit')
-        raw, review = _tj_review(root, files, plan, source['settings'], window, state, manifest_path)
+        raw, review = _tj_review(root, profiles, plan, settings, window, state, manifest_path)
         public.update(capture_scope='recorded_time_window', source_bytes=review['external_bytes'],
                       expected_read_bytes=review['expected_read_bytes'], max_retained_bytes=review['max_retained_bytes'])
     else:
@@ -221,7 +280,8 @@ def execute(operation, args, state, output, binding, *, stop):
                                          bases=[bases[base] for base in source['base_ids']])
                                      for key, source in journals.items()]), []
     source = journals.get(ref)
-    status = _configuration_status(source) if source else 'source_not_configured'
+    timestamp_profile = selection.get('timestamp_profile')
+    status = _configuration_status(source, timestamp_profile) if source else 'source_not_configured'
     window, basis = _window(doc, selection.get('window'))
     if status == 'configured' and window is None:
         status = 'window_required'
@@ -229,7 +289,7 @@ def execute(operation, args, state, output, binding, *, stop):
                   window_basis=basis, source_bytes_read=False)
     if status == 'configured':
         try:
-            plan, path, raw, review = _plan(state, output, binding, source, public, window)
+            plan, path, raw, review = _plan(state, output, binding, source, public, window, timestamp_profile)
         except profile_files._ObservationError as error:
             public['status'] = {'separate_access_required': 'separate_access_required',
                                 'absolute_path_required': 'absolute_path_required', 'linked_path': 'linked_or_special_journal',
@@ -254,3 +314,16 @@ def execute(operation, args, state, output, binding, *, stop):
         return report, [dict(kind='cases', id=report['case_id'])]
     report = _capture_jr(output, plan, source['settings'], stop)
     return report, [dict(kind='artifacts', id=report['artifact_id'])]
+
+
+def partial_reason(operation, args, data):
+    preview = data.get('journal_preview')
+    if preview is not None and preview['status'] != 'ready':
+        return 'journal_preview_incomplete'
+    if operation != 'case.analyze' or data['source_coverage']['status'] == 'observations_available':
+        return None
+    if args['profile_journal'].get('timestamp_profile') == HOURLY_MINUTE:
+        parse_states = {source['reference_capture']['original_parse_status'] for source in data['sources']}
+        if 'invalid' in parse_states and parse_states <= {'invalid', 'empty'}:
+            return 'journal_parse_failed'
+    return 'journal_coverage_limited'
