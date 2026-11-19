@@ -51,7 +51,10 @@ def validate(request):
 def reader_capability(request):
     selector = request['arguments'].get('profile_journal')
     if selector is not None:
+        from .logcfg_observation import FILE_LOOKUP_CAPABILITY
         from .native_tj import JSON_ISO
+        if 'logcfg_base' in selector:
+            return FILE_LOOKUP_CAPABILITY
         if 'logcfg_process_pid' in selector:
             return 9
         if selector.get('timestamp_profile') == JSON_ISO:

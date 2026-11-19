@@ -320,10 +320,8 @@ def _source(path, directory, row, source_kind):
     return 'scan_limit' if limited else 'no_supported_files_seen'
 
 
-def _observe(item, row):
-    kind = item['kind']
-    value = item['path']
-    if kind == 'file_jr' and re.match(r'(?i)^file\s*=', value):
+def file_base_path(value):
+    if re.match(r'(?i)^file\s*=', value):
         from .discovery import describe_connection
 
         try:
@@ -331,11 +329,17 @@ def _observe(item, row):
         except InputError as error:
             raise _ObservationError('invalid_file_connection') from error
         if connection['mode'] != 'file':
-            return 'invalid_file_connection'
+            raise _ObservationError('invalid_file_connection')
         value = connection['connection']
-    path = _ordinary_path(value)
+    return _ordinary_path(value)
+
+
+def _observe(item, row):
+    kind = item['kind']
     if kind == 'file_jr':
-        path = _file_journal(path)
+        path = _file_journal(file_base_path(item['path']))
+    else:
+        path = _ordinary_path(item['path'])
     _chain(path)
     mode = path.lstat().st_mode
     directory = stat.S_ISDIR(mode)

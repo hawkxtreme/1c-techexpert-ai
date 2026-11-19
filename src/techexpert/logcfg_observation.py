@@ -10,7 +10,9 @@ from .inputs import InputError
 
 
 KIND = 'logcfg_observation'
-INSPECTION_SELECTORS = {'logcfg_file', 'logcfg_process_pid'}
+PROCESS_SELECTORS = {'logcfg_process_pid', 'logcfg_base'}
+INSPECTION_SELECTORS = {'logcfg_file', *PROCESS_SELECTORS}
+FILE_LOOKUP_CAPABILITY = 10
 HOURLY_MINUTE = 'hourly_minute'
 TIMESTAMP_FORMATS = {HOURLY_MINUTE: 'minute', native_tj.JSON_ISO: 'iso'}
 NS = logcfg_xml.NS + '}'
@@ -183,19 +185,34 @@ def inspect_copy(output, binding, reference, source, supplied, *, stop):
     return dict(logcfg=info), []
 
 
-def inspect_process(output, binding, reference, source, pid, *, file_base, stop):
-    info = _initial(reference, logcfg_discovery.BASIS)
+def inspect_process(output, binding, selection, source, bases, *, stop):
+    info = _initial(selection['source'], logcfg_discovery.BASIS)
     unavailable = _source_status(source, require_path=False)
     if unavailable is not None:
         return dict(logcfg=dict(info, status=unavailable)), []
-    if not file_base:
+    linked = {alias: base for alias, base in bases.items() if base['id'] in source['base_ids']}
+    alias = selection.get('logcfg_base')
+    if alias is not None:
+        info['base'] = alias
+        if alias not in linked:
+            return dict(logcfg=dict(info, status='file_base_not_linked')), []
+        if linked[alias]['mode'] != 'file':
+            return dict(logcfg=dict(info, status='file_base_required')), []
+    elif not any(base['mode'] == 'file' for base in linked.values()):
         return dict(logcfg=dict(info, status='file_base_required')), []
     try:
         target = profile_files._ordinary_path(source['path']) if source['path'] else None
     except profile_files._ObservationError:
         return dict(logcfg=dict(info, status='journal_path_unsupported')), []
-    found, snapshot = logcfg_discovery.observe(pid, stop=stop)
-    info.update(found, process_base_association='caller_selected')
+    if alias is None:
+        pid = selection['logcfg_process_pid']
+        found, snapshot = logcfg_discovery.observe(pid, stop=stop)
+        info['process_base_association'] = 'caller_selected'
+        request = dict(process_pid=pid)
+    else:
+        found, snapshot = logcfg_discovery.observe_file(linked[alias]['connection'], stop=stop)
+        request = dict(base=alias)
+    info.update(found)
     if snapshot is None:
         return dict(logcfg=info), []
     raw = snapshot['raw']
@@ -216,7 +233,9 @@ def inspect_process(output, binding, reference, source, pid, *, file_base, stop)
         if settings.get('platform_version') not in (None, '', observed):
             info.update(timestamp_profile=None, reader_status='logcfg_platform_conflict')
     search = dict(client=snapshot['process'], conf_locator=snapshot['locator'])
-    return _retain(output, binding, info, dict(process_pid=pid), snapshot['path'], raw, location,
+    if 'file_binding' in snapshot:
+        search['file_binding'] = snapshot['file_binding']
+    return _retain(output, binding, info, request, snapshot['path'], raw, location,
                    stop=stop, process_search=search)
 
 

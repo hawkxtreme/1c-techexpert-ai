@@ -46,6 +46,9 @@ def schema(cap, operation):
         selector['logcfg_process_pid'] = dict(type='integer', minimum=1, maximum=0xFFFFFFFF,
             description='Locate logcfg.xml for this selected local Windows 1C client in a file-base investigation. '
                         'Use without a window or other reader/configuration options.')
+        selector['logcfg_base'] = cap.string(4, pattern='b[1-9][0-9]{0,2}',
+            description='Locate logcfg.xml using an open Windows 1C client of this linked file-base alias. '
+                        'Use with source only.')
     fields = dict(profile_journal=cap.obj(selector, () if preview else ('source',)))
     if not preview:
         fields['preview_sha256'] = cap.SHA256
@@ -391,21 +394,21 @@ def execute(operation, args, state, output, binding, *, stop):
     profile = effective_profile(doc['profile_snapshot']) if doc['profile_snapshot'] else {'sources': [], 'bases': []}
     journals = {f'j{number}': source for number, source in enumerate(
         (source for source in profile['sources'] if source['type'] in ('tj', 'jr')), 1)}
+    bases = {f'b{number}': base for number, base in enumerate(profile['bases'], 1)}
     selection = args['profile_journal']
     ref = selection.get('source')
     if ref is None:
-        bases = {base['id']: f'b{number}' for number, base in enumerate(profile['bases'], 1)}
+        aliases = {base['id']: alias for alias, base in bases.items()}
+        file_bases = {base['id'] for base in bases.values() if base['mode'] == 'file'}
         return dict(journal_sources=[dict(source=key, kind=source['type'], status=_configuration_status(source),
-                                         bases=[bases[base] for base in source['base_ids']])
+                                         bases=[aliases[base] for base in source['base_ids']],
+                                         file_bases=[aliases[base] for base in source['base_ids'] if base in file_bases])
                                      for key, source in journals.items()]), []
     source = journals.get(ref)
     if 'logcfg_file' in selection:
         return logcfg_observation.inspect_copy(output, binding, ref, source, selection['logcfg_file'], stop=stop)
-    if 'logcfg_process_pid' in selection:
-        linked = source['base_ids'] if source else ()
-        file_base = any(base['mode'] == 'file' and base['id'] in linked for base in profile['bases'])
-        return logcfg_observation.inspect_process(output, binding, ref, source, selection['logcfg_process_pid'],
-                                                  file_base=file_base, stop=stop)
+    if logcfg_observation.PROCESS_SELECTORS & selection.keys():
+        return logcfg_observation.inspect_process(output, binding, selection, source, bases, stop=stop)
     timestamp_profile = selection.get('timestamp_profile')
     logcfg_reference = log_location = None
     logcfg_id = selection.get('logcfg_id')

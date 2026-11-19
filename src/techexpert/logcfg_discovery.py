@@ -1,4 +1,4 @@
-"""Read the first observable configuration for an explicitly selected Windows client."""
+"""Read the first observable configuration for a Windows client in a file-base case."""
 
 import os
 from pathlib import Path
@@ -9,6 +9,7 @@ from .inputs import InputError
 
 
 BASIS = 'windows_client_search_order'
+FILE_ASSOCIATION = 'windows_observed_file_holder'
 TIERS = ('version', 'user', 'shared', 'all_users')
 CLIENTS = {'1cv8.exe': 'thick_client', '1cv8c.exe': 'thin_client'}
 MAX_LOCATOR_BYTES = 64 * 1024
@@ -161,3 +162,69 @@ def observe(pid, *, stop):
     if not stable:
         return dict(info, status='configuration_search_changed'), None
     return dict(info, status='found'), dict(path=found['file'], raw=raw, process=client, locator=found['locator'])
+
+
+def _base_file_identity(path):
+    seen = input_files.observe(path)
+    # The active infobase can be written during discovery. Track replacement,
+    # including replacement of a parent directory, independently of writes.
+    return {key: seen[key] for key in ('device', 'inode', 'chain_sha256')}
+
+
+def _file_client(path):
+    before = _base_file_identity(path)
+    clients = set()
+    try:
+        for pid, lifetime in windows_native.file_open_processes(path):
+            identity = fs.process_identity(pid)
+            if identity['state'] != 'running' or identity['lifetime'] != lifetime:
+                raise DiscoveryError('client_observation_unresolved')
+            image = windows_native.process_image(pid)
+            if fs.process_identity(pid) != identity:
+                raise DiscoveryError('client_observation_unresolved')
+            if image.name.casefold() in CLIENTS:
+                clients.add((pid, lifetime))
+    except (OSError, ValueError) as error:
+        raise DiscoveryError('client_observation_unresolved') from error
+    if _base_file_identity(path) != before:
+        raise DiscoveryError('file_client_association_changed')
+    if len(clients) > 1:
+        raise DiscoveryError('client_ambiguous')
+    if not clients:
+        raise DiscoveryError('client_not_found')
+    pid, lifetime = clients.pop()
+    return dict(path=str(path), identity=before, pid=pid, lifetime=lifetime)
+
+
+def observe_file(connection, *, stop):
+    """Select one observed client for the exact local 1Cv8.1CD and verify it again."""
+    info = dict(location_basis=BASIS, checked_locations=[])
+    if stop():
+        raise InputError('configuration inspection stopped')
+    if os.name != 'nt':
+        return dict(info, status='process_platform_unsupported'), None
+    if not connection.strip():
+        return dict(info, status='base_path_required'), None
+    try:
+        path = profile_files.file_base_path(connection)
+        if path.name.casefold() != '1cv8.1cd':
+            path /= '1Cv8.1CD'
+        first = _file_client(path)
+    except DiscoveryError as error:
+        return dict(info, status=str(error)), None
+    except FileNotFoundError:
+        return dict(info, status='base_file_not_found'), None
+    except (OSError, ValueError):
+        return dict(info, status='base_path_unavailable'), None
+    info, snapshot = observe(first['pid'], stop=stop)
+    if snapshot is None:
+        return info, None
+    if stop():
+        raise InputError('configuration inspection stopped')
+    try:
+        stable = (snapshot['process']['process']['lifetime'] == first['lifetime'] and _file_client(path) == first)
+    except (OSError, ValueError):
+        stable = False
+    if not stable:
+        return dict(info, status='file_client_association_changed'), None
+    return dict(info, process_base_association=FILE_ASSOCIATION), dict(snapshot, file_binding=first)

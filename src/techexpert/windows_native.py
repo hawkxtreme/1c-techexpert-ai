@@ -59,6 +59,15 @@ class _FileId(c.Structure):
     _fields_=[('volume',c.c_ulonglong),('identifier',c.c_ubyte*16)]
 
 
+class _RmUniqueProcess(c.Structure):
+    _fields_ = [('pid', w.DWORD), ('started', w.FILETIME)]
+
+
+class _RmProcessInfo(c.Structure):
+    _fields_ = [('process', _RmUniqueProcess), ('name', w.WCHAR * 256), ('service', w.WCHAR * 64),
+                ('kind', c.c_int), ('status', w.ULONG), ('session', w.DWORD), ('restartable', w.BOOL)]
+
+
 _SPAWN_LOCK=threading.Lock()
 
 
@@ -132,6 +141,44 @@ def _image_path(kernel, handle):
 def process_image(pid):
     with _query_process(pid) as (kernel, handle):
         return _image_path(kernel, handle)
+
+
+def file_open_processes(path):
+    """Ask Restart Manager about one local file and return only PID/lifetime pairs."""
+    manager = c.WinDLL('rstrtmgr', winmode=0x800)  # LOAD_LIBRARY_SEARCH_SYSTEM32
+    signatures = {
+        'RmStartSession': [c.POINTER(w.DWORD), w.DWORD, w.LPWSTR],
+        'RmRegisterResources': [w.DWORD, w.UINT, c.POINTER(w.LPCWSTR), w.UINT,
+                                c.POINTER(_RmUniqueProcess), w.UINT, c.POINTER(w.LPCWSTR)],
+        'RmGetList': [w.DWORD, c.POINTER(w.UINT), c.POINTER(w.UINT), c.POINTER(_RmProcessInfo), c.POINTER(w.DWORD)],
+        'RmEndSession': [w.DWORD],
+    }
+    for name, args in signatures.items():
+        function = getattr(manager, name)
+        function.argtypes, function.restype = args, w.DWORD
+    session = w.DWORD()
+    key = c.create_unicode_buffer(33)
+    result = manager.RmStartSession(c.byref(session), 0, key)
+    if result:
+        raise c.WinError(result)
+    try:
+        resource = (w.LPCWSTR * 1)(str(path))
+        result = manager.RmRegisterResources(session, 1, resource, 0, None, 0, None)
+        if result:
+            raise c.WinError(result)
+        entries = (_RmProcessInfo * 64)()
+        needed, count, reasons = w.UINT(), w.UINT(len(entries)), w.DWORD()
+        result = manager.RmGetList(session, c.byref(needed), c.byref(count), entries, c.byref(reasons))
+        if result:
+            raise c.WinError(result)
+        if not needed.value == count.value <= len(entries):
+            raise InputError('incomplete Restart Manager process list')
+        return tuple((row.process.pid, str((row.process.started.dwHighDateTime << 32) | row.process.started.dwLowDateTime))
+                     for row in entries[:count.value])
+    finally:
+        result = manager.RmEndSession(session)
+        if result:
+            raise c.WinError(result)
 
 
 def _token_user(advapi, kernel, process):

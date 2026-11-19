@@ -535,6 +535,23 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(view['snapshots'], [])
         self.assertNotIn('id', observed)
 
+    def test_logcfg_base_lookup_only_accepts_a_file_base_linked_to_the_saved_journal(self):
+        self.profile['bases'].append(dict(id='other', name='Other', mode='file', connection=str(self.root / 'other')))
+        self.configured_journals()
+        code, listing = self.configured_call('source.check', 'list-file-base-aliases')
+        self.assertEqual(code, 0, listing)
+        self.assertEqual(listing['data']['journal_sources'][0]['file_bases'], ['b1'])
+        expected = 'base_file_not_found' if os.name == 'nt' else 'process_platform_unsupported'
+        for base, status in (('b2', 'file_base_not_linked'), ('b1', expected)):
+            with self.subTest(base=base):
+                args = dict(profile_journal=dict(source='j1', logcfg_base=base))
+                request = self.request('source.check', args, 'logcfg-base-' + base)
+                code, view = self.cli('context-intake', self.write_request(request))
+                self.assertEqual(code, 1, view)
+                self.assertEqual(view['data']['logcfg']['status'], status)
+                self.assertFalse(view['data']['logcfg']['journal_bytes_read'])
+                self.assertNotIn('id', view['data']['logcfg'])
+
     def test_logcfg_preview_requires_one_explicit_matching_and_supported_rule(self):
         destination = self.root / (PRIVATE + '-tj')
         path = destination / '1cv8_123' / '26111509.log'

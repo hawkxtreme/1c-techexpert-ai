@@ -1,5 +1,6 @@
 """Check local source paths and native format hints from an explicit selection."""
 import json
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -15,6 +16,17 @@ ROOT = FIXTURES.parents[1]
 
 
 class ProfileFileTests(unittest.TestCase):
+    def test_file_journal_discovery_preserves_a_literal_directory_name(self):
+        from src.techexpert import profile_files
+
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / 'Orders'
+            base.mkdir()
+            (base / '1Cv8.1CD').touch()
+            request = dict(items=[dict(id='selected', kind='file_jr', path=str(base) + ' ')])
+            row, = profile_files.inspect(request)['items']
+            self.assertEqual(row['status'], 'unsupported_path' if os.name == 'nt' else 'not_found')
+
     def test_file_infobase_suggests_only_a_checked_journal_under_its_root(self):
         from src.techexpert import profile_files
 

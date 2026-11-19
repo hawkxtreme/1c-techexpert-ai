@@ -260,3 +260,44 @@ class LogcfgDiscoveryTests(unittest.TestCase):
         with patch.dict(os.environ, ProgramFiles=str(self.root)):
             observed = self.find()
         self.assertEqual((observed['tier'], observed['file']), ('shared', expected))
+
+    def test_file_lookup_requires_one_observable_client_using_the_exact_file(self):
+        from unittest.mock import patch
+        from src.techexpert import logcfg_discovery as discovery
+
+        path = self.place(self.root, '1Cv8.1CD', b'disposable file')
+        clients = {10: self.image, 20: self.image.with_name('1cv8c.exe'), 30: self.root / 'indexer.exe'}
+        def identity(pid):
+            return dict(state='running', lifetime=str(pid + 100))
+        with patch.object(discovery.fs, 'process_identity', side_effect=identity), \
+                patch.object(discovery.windows_native, 'process_image', side_effect=clients.__getitem__), \
+                patch.object(discovery.windows_native, 'file_open_processes') as holders:
+            holders.return_value = [(10, '110'), (30, '130')]
+            first = discovery._file_client(path)
+            holders.assert_called_once_with(path)
+            self.assertEqual((first['pid'], first['lifetime']), (10, '110'))
+            self.assertEqual(first['path'], str(path))
+            path.write_bytes(b'ordinary database writes can change its size')
+            self.assertEqual(discovery._file_client(path), first)
+            for rows, status in (([(10, '110'), (20, '120')], 'client_ambiguous'),
+                                 ([(10, '110'), (20, '119')], 'client_observation_unresolved'),
+                                 ([(30, '130')], 'client_not_found')):
+                with self.subTest(status=status):
+                    holders.return_value = rows
+                    with self.assertRaisesRegex(discovery.DiscoveryError, status):
+                        discovery._file_client(path)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows file-base process lookup')
+    def test_file_lookup_rechecks_the_holder_after_reading_configuration(self):
+        from unittest.mock import patch
+        from src.techexpert import logcfg_discovery as discovery
+
+        database = self.place(self.root, '1Cv8.1CD', b'disposable file')
+        first = dict(pid=10, lifetime='110')
+        snapshot = dict(process=dict(process=dict(pid=10, lifetime='110')))
+        with patch.object(discovery, '_file_client', side_effect=[first, dict(first, pid=20, lifetime='120')]) as holder, \
+                patch.object(discovery, 'observe', return_value=(dict(status='found'), snapshot)):
+            info, result = discovery.observe_file(f'File="{self.root}";', stop=lambda: False)
+        self.assertEqual([call.args for call in holder.call_args_list], [(database,), (database,)])
+        self.assertEqual(info['status'], 'file_client_association_changed')
+        self.assertIsNone(result)

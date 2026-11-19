@@ -26,6 +26,19 @@ class WindowsNativeTests(unittest.TestCase):
         self.assertEqual(path, Path(self.api.current_executable()))
         self.assertIs(same_account, True)
 
+    def test_restart_manager_observes_only_the_selected_open_file(self):
+        from src.techexpert.operation_state import process_identity
+
+        current = process_identity(os.getpid())
+        holder = current['pid'], current['lifetime']
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            selected = root / '1Cv8.1CD'
+            with (root / 'unrelated.1CD').open('wb'):
+                with selected.open('wb'):
+                    self.assertIn(holder, self.api.file_open_processes(selected))
+                self.assertNotIn(holder, self.api.file_open_processes(selected))
+
     def test_managed_start_records_identity_before_resume_and_has_a_job_memory_bound(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);started=[]

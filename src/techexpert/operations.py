@@ -231,11 +231,11 @@ def _snapshots(state,operation,args,data,*,output=None):
         intake=data.get('input_intake') if operation=='case.analyze' else data.get('result',{}).get('input_intake')
         if (type(intake) is not dict or intake.get('artifact_id')!=args['input_plan']
             or intake.get('plan_report_digest')!=fs.digest(parent)):raise InputError('captured input catalogue identity mismatch')
-    from . import profile_journals
+    from . import logcfg_observation, profile_journals
     selector = args.get('profile_journal', {})
     if selector.get('read_mode') == profile_journals.FIXED_PREFIX:
         profile_journals.pin_prefix(operation, args, data, add)
-    if {'logcfg_file', 'logcfg_process_pid', 'logcfg_id'} & selector.keys():
+    if 'logcfg_id' in selector or logcfg_observation.INSPECTION_SELECTORS & selector.keys():
         profile_journals.pin_logcfg(operation, selector, data, add)
     return references
 
