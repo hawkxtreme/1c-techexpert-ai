@@ -144,6 +144,10 @@
       <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
       <p class="hint" id="source-context"></p>
       <div id="source-suggestions" class="stack"></div>
+      <div id="file-jr-panel" class="box stack" hidden>
+        <div><button type="button" id="find-file-jr">Найти ЖР файловых баз</button></div>
+        <div id="file-jr-results" class="stack" role="status" aria-live="polite"></div>
+      </div>
       <div class="inline"><label class="field"><span>Добавить источник</span><select id="new-source-type"><option value="tj">Технологический журнал</option><option value="jr">Нативный журнал регистрации</option><option value="source">Исходники 1С · каталог или Git</option><option value="sql">SQL Server / PostgreSQL</option><option value="rac">Кластер 1С · RAS/RAC</option><option value="os">Метрики узлов Windows / Linux</option></select></label><button type="button" id="add-source">Добавить</button></div>
       <details class="box" id="source-export-help" hidden><summary>Помочь получить исходники</summary><div id="source-export-help-body" class="stack"></div></details>
       <div id="shared-connections" class="stack"></div>
@@ -156,7 +160,7 @@
       <div><h1 id="review-title">Сохранить настройки</h1><p class="sub" id="review-sub">Проверьте состав профиля. Исходные данные останутся по указанным адресам.</p></div>
       <dl id="saved-list"></dl>
       <div id="resource-impact" class="box stack" hidden></div>
-      <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Проверяются поля и связи настроек. Доступность источников агент проверяет отдельным действием. Чтение журналов и сбор не запускаются.</p><div id="preflight-results" role="status" aria-live="polite"></div></div>
+      <div id="preflight-box" class="box stack"><div><button type="button" id="check-profile">Проверить локальную готовность</button></div><p class="note">Помощник проверит настройки и прочитает заголовки доступных локальных файлов. Период журналов и удалённые подключения проверяются отдельно.</p><div id="preflight-results" class="stack" role="status" aria-live="polite"></div></div>
       <p class="hint" id="save-status">Сохранение не подтверждает доступность источников и не запускает расследование.</p>
       <footer><button type="button" data-back="sources">Вернуться к источникам</button><button type="button" class="primary" id="save-profile">Сохранить и вернуться к агенту</button><button type="button" class="primary" id="close-helper" hidden>Закрыть помощник</button></footer>
     </section>
@@ -185,6 +189,8 @@
       let discoveryResources = {nodes:[],clusters:[],connections:[]};
       let matches = [];
       let sourceSuggestions = [];
+      let fileJournalResults = [];
+      let previousFileChecks = new Map();
       let connectionEdits = {};
       let bindingOverrides = {};
       const journalDrafts = {};
@@ -208,7 +214,11 @@
       function message(text, error=false) {
         const box = q('#notice'); box.hidden = !text; box.textContent = text || ''; box.classList.toggle('error', error); box.setAttribute('role', error ? 'alert' : 'status');
       }
-      function markChanged() { saved = null; preparedProfile = null; preparedImpact = null; matches=[];sourceSuggestions=[];q('#registration-panel').hidden=true;q('#source-suggestions').replaceChildren();message(''); }
+      function markChanged() {
+        saved=null;preparedProfile=null;preparedImpact=null;matches=[];sourceSuggestions=[];
+        fileJournalResults=[];previousFileChecks.clear();q('#file-jr-results').replaceChildren();q('#preflight-results').replaceChildren();
+        q('#registration-panel').hidden=true;q('#source-suggestions').replaceChildren();message('');
+      }
       function showChatTask() {
         const task = q('#investigation-task');
         task.hidden = !investigation;
@@ -607,7 +617,66 @@
         if (source.type === 'rac') return 'Текущие списки кластера, процессов и сеансов. Снимок не восстанавливает состояние прошлого инцидента. Для файловой базы этот источник не требуется.';
         return 'По умолчанию один сбор длится 300 секунд с шагом 1 секунда. Значения можно изменить. SSH и WinRM должны быть настроены заранее; на узле требуется Python 3.10+. Службы и сбор при сохранении не запускаются.';
       }
+      const fileCheckLabels = {
+        header_seen:'Заголовки читаются', partial_headers:'Распознана часть заголовков ТЖ. Проверьте состав файлов.',
+        header_unrecognized:'Заголовок не распознан. Проверьте формат файла.',
+        not_found:'Путь не найден. Проверьте адрес.', access_denied:'Нет доступа к пути. Проверьте права чтения.',
+        file_busy:'Файл занят. Выберите доступный снимок.', changed_during_check:'Файлы менялись во время проверки. Повторите проверку или укажите стабильный снимок.',
+        separate_access_required:'Сетевой адрес требует отдельной проверки доступа.', absolute_path_required:'Укажите полный путь на этом компьютере.',
+        linked_path:'Укажите прямой путь к данным.', unsupported_path:'Тип пути не поддерживается. Выберите обычный файл или каталог.',
+        infobase_file_not_found:'Укажите каталог с файлом 1Cv8.1CD.', journal_location_unknown:'Стандартный каталог 1Cv8Log не найден. Укажите ЖР вручную.',
+        invalid_file_connection:'Укажите каталог файловой базы или строку File с одним адресом.',
+        journal_files_missing:'Нужен каталог LGF/LGP или файл LGD.', journal_group_incomplete:'Нужен словарь 1Cv8.lgf и хотя бы одна часть LGP.',
+        journal_group_ambiguous:'Найдены разные комплекты ЖР. Выберите нужный комплект или отдельный LGD.',
+        select_journal_parts:'Выберите части ЖР за нужный период.', snapshot_required:'Подготовьте отдельную копию LGD после завершения записи.',
+        archive_selection_required:'Найден заголовок ZIP. Попросите агента выбрать файлы из его состава.',
+        mixed_tj_headers:'В выборке разные заголовки ТЖ. Разделите источники по формату.',
+        no_supported_files_seen:'Подходящие файлы в проверенной области не найдены.', scan_limit:'Достигнут предел просмотра. Укажите более узкий каталог.',
+        directory_required:'Укажите каталог с исходниками или локальным репозиторием.',
+        repository_marker_seen:'Найден признак репозитория. Ревизию проверит агент.', source_files_seen:'Найдены файлы исходников XML/BSL',
+        check_unavailable:'Проверка не завершилась. Проверьте адрес и доступ.'
+      };
+      function describeFileCheck(row) {
+        const formats={tj_minute:'ТЖ с минутным временем',tj_iso:'ТЖ с датой и временем',jr_sequential:'LGF/LGP',jr_sqlite:'LGD · заголовок SQLite'};
+        const details=[fileCheckLabels[row.status] || fileCheckLabels.check_unavailable];
+        if(formats[row.format])details.push(formats[row.format]);
+        if(row.status==='partial_headers')details.push('распознано '+row.recognized_headers+' из '+row.headers_checked);
+        if(row.sampling_limited)details.push('проверена часть файлов');
+        if(row.format==='jr_sequential' && row.version_status==='unknown')details.push('уточните версию платформы');
+        if(row.version_status==='declared_unsupported')details.push('указанная версия не проверена для этого формата');
+        if(row.time_status==='offset_unknown')details.push('смещение времени ещё неизвестно');
+        if(row.time_status==='invalid_offset')details.push('проверьте смещение в формате +03:00');
+        if(row.time_status==='offset_conflicts_with_utc')details.push('для LGD очистите локальное смещение');
+        if(row.snapshot_confirmation_required && row.status==='header_seen')details.push('перед импортом подтвердите, что это самостоятельный снимок');
+        return details.join(' · ');
+      }
+      function fileJournalBases() {
+        return selectedBases().filter(base=>base.mode==='file' && base.connection.trim() &&
+          !state.sources.some(source=>source.type==='jr' && source.base_ids.includes(base.id)));
+      }
+      function renderFileJournals() {
+        const eligible=new Set(fileJournalBases().map(base=>base.id));
+        const box=q('#file-jr-results');box.replaceChildren();q('#file-jr-panel').hidden=!eligible.size;
+        for(const result of fileJournalResults.filter(item=>eligible.has(item.id))){
+          const card=element('div',undefined,'stack');
+          card.append(element('strong',baseName(result.id)),element('p',describeFileCheck(result),'note'));
+          if(result.candidate_path){
+            card.append(element('p',result.candidate_path,'note'));
+            const add=element('button','Добавить найденный ЖР');add.type='button';add.dataset.journalBase=result.id;
+            add.addEventListener('click',()=>{
+              if(!fileJournalBases().some(base=>base.id===result.id))return;
+              const other=fileJournalResults.filter(item=>item.id!==result.id);
+              markChanged();fileJournalResults=other;
+              const source={id:nextId('source'),type:'jr',path:result.candidate_path,host:'',base_ids:[result.id],settings:defaults('jr')};
+              state.sources.push(source);renderSources(source.id);
+            });
+            card.append(add);
+          }
+          box.append(card);
+        }
+      }
       function renderSources(openId) {
+        renderFileJournals();
         const exportHelp=sourceHelp?.sources.source.export_help;const exportPanel=q('#source-export-help');exportPanel.hidden=!exportHelp;
         const exportBody=q('#source-export-help-body');exportBody.replaceChildren();
         if(exportHelp){
@@ -713,7 +782,7 @@
         const data = payload(); const box = q('#saved-list'); box.replaceChildren();
         const add = (title,text) => { const row = element('div'); row.append(element('dt',title),element('dd',text)); box.append(row); };
         add('Окружение',data.name); add('Базы',data.bases.map(base => base.name + ' · ' + modeNames[base.mode]).join('; '));
-        data.sources.forEach(source => add(typeNames[source.type],[source.base_ids.map(baseName).join(', '),...([source.path,source.host].filter(Boolean)),source.type==='os' && source.settings.transport==='local' ? 'На этом компьютере' : '', 'Доступ и данные не подтверждены'].filter(Boolean).join(' · ')));
+        data.sources.forEach(source => add(typeNames[source.type],[source.base_ids.map(baseName).join(', '),...([source.path,source.host].filter(Boolean)),source.type==='os' && source.settings.transport==='local' ? 'На этом компьютере' : ''].filter(Boolean).join(' · ')));
         data.sources.filter(source=>source.type==='os').forEach(source=>add('План сборщика',source.settings.duration_seconds+' с · шаг '+source.settings.interval_seconds+' с · '+({local:'На этом компьютере',ssh:'SSH',winrm:'WinRM'}[source.settings.transport])+' · один запуск, ещё не начат'));
         if (!data.sources.length) add('Источники','Пока не указаны. Подготовку данных продолжит агент.');
         if (saved) add('Ревизия профиля',String(saved.revision));
@@ -755,11 +824,31 @@
       q('#read-clusters').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',rasRequest());const select=q('#ras-cluster');select.replaceChildren();response.clusters.forEach(row=>{const option=element('option',(row.name || row.host || 'Кластер')+' · '+row.cluster);option.value=row.cluster;select.append(option);});q('#ras-cluster-choice').hidden=!response.clusters.length;message('Получено кластеров: '+response.clusters.length+'. Настройки не изменены.');}));
       q('#read-ras-bases').addEventListener('click',()=>perform(async()=>{const response=await api('/api/ras',{...rasRequest(),cluster:q('#ras-cluster').value});markChanged();acceptDiscovery(response);await prepareProfile({selectionOnly:true});message('Из RAS прочитано серверных баз: '+response.bases.length+'. Рабочие узлы: '+(response.node_observations===null?'недоступны':response.node_observations.length)+'. Доступ к журналам и SQL требует отдельной проверки.');}));
       q('#match-bases').addEventListener('click',()=>perform(async()=>{if(!selected.size)throw new Error('Сначала выберите базы.');await prepareProfile({selectionOnly:true});message(matches.length?'Выберите действие для похожих записей.':'Совпадающих настроек выбранных баз не найдено.');}));
+      q('#find-file-jr').addEventListener('click',()=>perform(async()=>{
+        const bases=fileJournalBases().map(({id,mode,connection})=>({id,mode,connection}));
+        if(!bases.length)return;
+        const found=await api('/api/file-check',{bases});fileJournalResults=found.items;renderFileJournals();
+      }));
       q('#check-profile').addEventListener('click',()=>perform(async()=>{
         validateSources();if(!preparedProfile)await prepareProfile();const result=await api('/api/check',preparedProfile);const box=q('#preflight-results');box.replaceChildren();
         const labels={requires_explicit_path_check:'Путь указан; доступ и формат проверяются отдельным действием',local_collector_available:'План локального сборщика доступен; сбор не запущен',remote_prerequisites_not_checked:'Удалённые доступы ещё не проверены',client_configured_not_checked:'Параметры СУБД указаны; инструмент и доступ проверяются отдельно',configured_not_connected:'Адрес указан; подключения не было',requires_explicit_git_snapshot:'Для Git нужен отдельный снимок выбранной ревизии'};
-        result.sources.forEach(item=>box.append(element('p',typeNames[item.type]+': '+(labels[item.status] || item.status),'note')));
         if(!result.sources.length)box.append(element('p','Источники пока не указаны. Продолжите подготовку с агентом.','note'));
+        const entries=new Map();
+        result.sources.forEach(item=>{
+          const source=state.sources.find(row=>row.id===item.source_id);
+          const label=[typeNames[item.type],...(source?.base_ids || []).map(baseName)].join(' · ');
+          const details=element('p',labels[item.status] || item.status,'note');
+          const card=element('div',undefined,'box');card.append(element('strong',label),details);box.append(card);
+          entries.set(item.source_id,details);
+        });
+        if(!result.sources.length)return;
+        const checked=await api('/api/file-check',{profile:preparedProfile});
+        for(const row of checked.items){
+          const text=describeFileCheck(row), previous=previousFileChecks.get(row.id);
+          const entry=entries.get(row.id);
+          if(entry)entry.textContent=text+(previous!==undefined && previous!==text?' · результат изменился':'');
+          previousFileChecks.set(row.id,text);
+        }
       }));
       q('#add-source').addEventListener('click', () => perform(async () => {
         q('#add-source').disabled=true;

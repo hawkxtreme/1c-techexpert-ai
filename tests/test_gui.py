@@ -10,6 +10,22 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_explicit_local_check_shows_a_missing_path_without_saving_the_profile(self):
+        root = self.state_dir.parent
+        profile = dict(schema_version=1, name='File infobase', bases=[
+            dict(id='ib', name='Orders', mode='file', connection=str(root / 'orders'))], sources=[
+            dict(id='tj', type='tj', path=str(root / 'missing-tj'), host='', base_ids=['ib'], settings={})])
+        self.assertEqual(self.request('GET', '/api/file-check')[0], 404)
+        self.assertEqual(self.request('POST', '/api/file-check', dict(profile=profile), token=False)[0], 401)
+        self.assertFalse(self.state_dir.exists())
+        status, _, raw = self.request('POST', '/api/file-check', dict(profile=profile))
+        self.assertEqual(status, 200, raw)
+        data = json.loads(raw)
+        self.assertEqual(data['items'][0]['status'], 'not_found')
+        self.assertFalse(data['collection_started'])
+        self.assertFalse((self.state_dir / 'profiles').exists())
+        self.assertFalse((self.state_dir / 'cases').exists())
+
     def storage(self, action, **data):
         status, _, body = self.request('POST', '/api/storage', dict(action=action, **data))
         return status, json.loads(body)

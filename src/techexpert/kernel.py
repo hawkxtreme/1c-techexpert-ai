@@ -20,9 +20,9 @@ DEFAULT_LIMITS=dict(admission_seconds=10,query_seconds=30,memory_bytes=1024**3)
 _ACTIONS={'run':{'request'},'status':{'run_id'},'result':{'run_id'},'reconcile':{'run_id'},
     'cancel':{'run_id','executor_id'},'inspect':{'call_id'},'context-read':{'selection'},
     'context-intake':{'request'},'context-attach':{'run_id','revision'},'context-task':{'request'},
-    'investigation-progress':{'investigation_id'},'os-observation':{'request'}}
+    'investigation-progress':{'investigation_id'},'os-observation':{'request'},'profile-files':{'request'}}
 _RUN_ACTIONS=('run','context-intake')
-_REQUEST_ACTIONS=(*_RUN_ACTIONS,'context-task','os-observation')
+_REQUEST_ACTIONS=(*_RUN_ACTIONS,'context-task','os-observation','profile-files')
 
 
 def _limits(value):
@@ -185,6 +185,8 @@ def invoke(state,action,arguments,*,limits=None,wire_version=None,request_docume
             from .investigation_task import normalize
         elif action=='os-observation':
             from .os_observation import normalize
+        elif action == 'profile-files':
+            from .profile_files import normalize
         else:
             from .capabilities import normalize_request as normalize
         request_document=normalize(request_document)

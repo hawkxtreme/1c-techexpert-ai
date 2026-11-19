@@ -41,14 +41,14 @@ def main(folder,memory_bytes):
         time.sleep(.01)
     permit=fs.read(directory/'start-permit.json',8192)
     if permit.get('plan_sha256')!=fs.digest(plan) or permit.get('child')!=fs.process_identity(os.getpid()):raise InputError('kernel permit process identity mismatch')
-    from . import capabilities,operations,kernel,context_intake,investigation_task,os_observation
+    from . import capabilities,operations,kernel,context_intake,investigation_task,os_observation,profile_files
     started=time.monotonic();admitted_at=started;response_limit=kernel.MAX_RESPONSE;run_id=None
     request=None;operation=None
     try:
         action=plan['action'];args=kernel._arguments(action,plan['arguments']);request=None;run_id=args.get('run_id')
         timeout=plan['limits']['query_seconds']
         if action in kernel._REQUEST_ACTIONS:
-            control={'context-task':investigation_task,'os-observation':os_observation}.get(action)
+            control={'context-task':investigation_task,'os-observation':os_observation,'profile-files':profile_files}.get(action)
             limit=control.MAX_REQUEST if control else 128*1024
             path=fs.safe(args['request']) if control else args['request']
             raw=json_value(read_snapshot(path,limit).decode('utf-8-sig'),reject_duplicates=True)
@@ -69,6 +69,7 @@ def main(folder,memory_bytes):
         if action=='run':value=operations.run(state,request)
         elif action=='context-task':value=investigation_task.record(state,request)
         elif action=='os-observation':value=os_observation.control(state,request)
+        elif action=='profile-files':value=dict(status='succeeded', data=profile_files.inspect(request))
         elif action=='context-intake':value=context_intake.acquire(state,request)
         elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':

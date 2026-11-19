@@ -1,5 +1,6 @@
 """Short-lived, loopback-only source configuration for the current AI harness."""
 
+import io
 import json
 import math
 import re
@@ -33,6 +34,7 @@ class InitServer(ThreadingHTTPServer):
         self.storage = Storage(self.state_dir)
         self.entrypoint_sha256=entrypoint_sha256
         self.demo_lock=threading.Lock()
+        self.file_check_lock = threading.Lock()
         self.deadline = time.monotonic() + ttl
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
@@ -220,7 +222,7 @@ class InitHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._guard(write=True, api=True):
             return
-        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/context','/api/demo','/api/profile-editor','/api/profile-compose','/api/storage'):
+        if self.path not in ('/api/profile', '/api/starter','/api/ras','/api/check','/api/file-check','/api/context','/api/demo','/api/profile-editor','/api/profile-compose','/api/storage'):
             self._error(404, 'Неизвестное действие помощника.')
             return
         data = self._read_json()
@@ -283,6 +285,32 @@ class InitHandler(BaseHTTPRequestHandler):
                     result['impact']=resource_impact(current,result['profile'])
             elif self.path=='/api/check':
                 result=profiles.check_profile(data)
+            elif self.path == '/api/file-check':
+                from . import kernel, profile_files
+
+                if set(data) == {'profile'}:
+                    request = profile_files.from_profile(data['profile'])
+                elif set(data) == {'bases'}:
+                    request = profile_files.from_bases(data['bases'])
+                else:
+                    raise ValueError('Выберите профиль или файловые базы для локальной проверки.')
+                if not self.server.file_check_lock.acquire(blocking=False):
+                    self._error(409, 'Локальная проверка уже выполняется.')
+                    return
+                try:
+                    if request['items']:
+                        output = io.StringIO()
+                        call = kernel.invoke(self.server.state_dir, profile_files.ACTION,
+                            dict(request='inline-request.json'), limits=dict(query_seconds=20), request_document=request)
+                        kernel.emit(call, output)
+                        answer = json.loads(output.getvalue())
+                        if call['exit_code'] != 0 or answer.get('status') != 'succeeded':
+                            raise ValueError('Локальная проверка не завершилась. Проверьте доступность пути или выберите один источник.')
+                        result = dict(answer['data'], kernel_call_id=answer['kernel_call_id'])
+                    else:
+                        result = profile_files.inspect(request)
+                finally:
+                    self.server.file_check_lock.release()
             elif self.path == '/api/starter':
                 if set(data)-{'path','include_registrations'} or type(data.get('include_registrations',False)) is not bool:raise ValueError('Недопустимое поле чтения списка.')
                 path = data.get('path')

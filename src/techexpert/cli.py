@@ -44,6 +44,9 @@ def main(argv=None):
     update_plan.add_argument('--codex-profile',type=Path);update_plan.add_argument('--maintenance-window',action='store_true')
     commands.add_parser('update-status')
     profile_command=commands.add_parser('profile');profile_command.add_argument('--resolved',action='store_true')
+    profile_files_command = commands.add_parser('profile-files', help='check selected local paths or look for a file infobase journal')
+    profile_files_command.add_argument('document', nargs='?', type=Path, help='explicit profile JSON, or the current saved profile')
+    profile_files_command.add_argument('--find-journals', action='store_true')
     for name in ('profile-upgrade','profile-resolve'):
         commands.add_parser(name).add_argument('document',type=Path)
     profile_impact=commands.add_parser('profile-impact');profile_impact.add_argument('before',type=Path);profile_impact.add_argument('after',type=Path)
@@ -378,6 +381,19 @@ def main(argv=None):
             if args.resolved and result.get('schema_version'):
                 from .profile_resources import effective_profile
                 result=dict(canonical_schema_version=result['schema_version'],view=effective_profile(result),scope='ephemeral_adapter_configuration_not_runtime_ownership',saved=False,connected=False)
+        elif args.command == 'profile-files':
+            from . import kernel, profile_files
+            from .inputs import json_value, read_snapshot
+
+            profile = (load_profile(args.state_dir) if args.document is None else
+                       json_value(read_snapshot(args.document, 1024 * 1024).decode('utf-8-sig'), reject_duplicates=True))
+            if profile is None:
+                raise InputError('select a profile before checking local paths')
+            request = profile_files.from_profile(profile, find_journals=args.find_journals)
+            call = kernel.invoke(args.state_dir, profile_files.ACTION, dict(request='inline-request.json'),
+                                 limits=dict(query_seconds=20), request_document=request)
+            kernel.emit(call, sys.stdout)
+            return call['exit_code']
         elif args.command in ('profile-upgrade','profile-resolve','profile-impact'):
             from .inputs import read_snapshot,json_value
             from .profile_resources import upgrade_profile,effective_profile,resource_impact
