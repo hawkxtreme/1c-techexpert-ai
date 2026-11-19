@@ -13,6 +13,7 @@ CATEGORIES = {
     'tj': 'Technological journal timestamps, durations, event types, evidence coordinates and scoped aliases.',
     'jr': 'Registration journal timestamps, severity, evidence coordinates and scoped aliases.',
     'comparison': 'Measured comparison statistics, pairing and outcome states.',
+    'apdex': 'APDEX sample statistics and target values, and recognized configuration metadata markers. No source text or paths.',
 }
 DEFAULT_BYTES = 16384
 MIN_BYTES = 4096

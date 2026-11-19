@@ -12,6 +12,7 @@ from .inputs import InputError
 
 
 FIX_VIEW = 'fix-summary'
+APDEX_VIEW = 'apdex-setup'
 VIEWS = {
     'case-summary': ('case', 'case'),
     'tj-events': ('tj', 'case'),
@@ -20,11 +21,13 @@ VIEWS = {
     'jr-evidence': ('jr', 'artifact'),
     'comparison': ('comparison', 'comparison'),
     FIX_VIEW: ('comparison', 'artifact'),
+    APDEX_VIEW: ('apdex', 'artifact'),
     context_excerpt.VIEW: (context_excerpt.CATEGORY, 'artifact'),
     **context_coverage.VIEWS,
 }
 VIEW_READER_CAPABILITIES = dict.fromkeys(context_coverage.VIEWS, context_coverage.READER_CAPABILITY)
 VIEW_READER_CAPABILITIES[FIX_VIEW] = 4
+VIEW_READER_CAPABILITIES[APDEX_VIEW] = 5
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
@@ -195,6 +198,11 @@ def _project(state, attachment, args, aliases):
         if report.get('kind') != KIND:
             raise InputError('selected artifact is not a saved fix verification')
         return fields.fix_summary(report['result'])
+    if kind == APDEX_VIEW:
+        from .apdex_preparation import KIND
+        if report['kind'] != KIND:
+            raise InputError('selected artifact is not an APDEX preparation')
+        return fields.apdex_setup(report['result'])
     if kind == 'tj-events':
         if not any(s['format'] == '1c-tj-text-v1' for s in report['sources']):
             raise InputError('no supported native TJ is present')
@@ -297,6 +305,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
     attachment = next((item for item in doc['attachments'] if item['id'] == args['attachment']), None)
     if attachment is None or attachment['kind'] != target_kind:
         return _blocked('context_attachment_unavailable', 'Choose a compatible attachment in the selected investigation revision.')
+    if kind == APDEX_VIEW and attachment.get('scope') != 'apdex_preparation':
+        return _blocked('context_attachment_unavailable', 'Choose a saved APDEX preparation in the selected investigation revision.')
     try:
         if kind == context_excerpt.VIEW:
             data = context_excerpt.read_view(state, doc, attachment, saved)

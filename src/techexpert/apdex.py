@@ -2,6 +2,8 @@
 from datetime import datetime,timezone
 import math
 
+from .inputs import InputError
+
 
 def instant(value):
     if not isinstance(value,str) or len(value)>80:raise ValueError('bounded timestamp with timezone required')
@@ -14,6 +16,16 @@ def number(value,name,positive=False):
     if type(value) not in (int,float) or type(value) is float and not math.isfinite(value) or value<0 or (positive and not value):
         raise ValueError(name+' must be a finite '+('positive' if positive else 'nonnegative')+' number')
     return value
+
+
+def validate_target_selection(target_seconds, inventory_only):
+    if inventory_only:
+        if target_seconds is not None:
+            raise InputError('APDEX inventory does not accept a target')
+    elif target_seconds is None:
+        raise InputError('select an explicit APDEX target or inventory_only')
+    else:
+        number(target_seconds, 'target_seconds', True)
 
 
 def validated_records(records):
@@ -46,21 +58,42 @@ def measurement_category(success, duration, target_seconds):
     return 'tolerating' if duration<=4*target_seconds else 'frustrated'
 
 
-def calculate(records,target_seconds,*,operation=None,start=None,end=None):
-    target=number(target_seconds,'target_seconds',True)
-    if target>365*86400:raise ValueError('target_seconds exceeds one year')
+def _selection(records, operation, start, end, *, require_one):
     lower=instant(start) if start is not None else None
     upper=instant(end) if end is not None else None
     if lower is not None and upper is not None and lower>=upper:raise ValueError('start must precede end')
     valid, operations = validated_records(records)
-    if operation is None:
+    if operation is None and require_one:
         if len(operations)>1:raise ValueError('select one operation before calculating APDEX')
         operation=next(iter(operations),None)
-    elif not isinstance(operation,str) or not 1<=len(operation)<=256:raise ValueError('invalid operation')
+    elif operation is not None and (not isinstance(operation,str) or not 1<=len(operation)<=256):
+        raise ValueError('invalid operation')
+    selected = ((row, duration) for row, timestamp, duration in valid
+                if (operation is None or row['operation'] == operation)
+                and (lower is None or timestamp >= lower) and (upper is None or timestamp < upper))
+    return operation, selected
+
+
+def inventory(records, *, operation=None, start=None, end=None):
+    operation, selected = _selection(records, operation, start, end, require_one=False)
+    operations = set()
+    total = 0
+    for row, _ in selected:
+        operations.add(row['operation'])
+        total += 1
+    return dict(schema_version=1, profile='apdex-measurements-v1', operation=operation, operation_count=len(operations),
+        target_seconds=None, unit='seconds', window=dict(start=start, end=end, bounds='start_inclusive_end_exclusive'),
+        total=total, excluded=len(records) - total, score=None, status='inventory' if total else 'empty',
+        limitations=['Inventory of normalized measurements. A target is required to calculate APDEX.'])
+
+
+def calculate(records,target_seconds,*,operation=None,start=None,end=None):
+    target=number(target_seconds,'target_seconds',True)
+    if target>365*86400:raise ValueError('target_seconds exceeds one year')
+    operation, selection = _selection(records, operation, start, end, require_one=True)
     counts=dict(satisfied=0,tolerating=0,frustrated=0,unknown=0)
     selected=[]
-    for row,timestamp,duration in valid:
-        if row['operation']!=operation or (lower is not None and timestamp<lower) or (upper is not None and timestamp>=upper):continue
+    for row, duration in selection:
         selected.append(row['id'])
         counts[measurement_category(row['success'],duration,target)]+=1
     total=len(selected)

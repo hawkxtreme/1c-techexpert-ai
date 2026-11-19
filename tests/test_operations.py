@@ -138,6 +138,9 @@ class ManagedOperationTests(unittest.TestCase):
         from src.techexpert.investigations import create
         doc=create(self.state,dict(task='Read exact saved source context'))
         call('investigation.sources',investigation_id=doc['investigation_id'],revision=1)
+        apdex = call('apdex.prepare', investigation_id=doc['investigation_id'], revision=1, operation='read')
+        self.assertEqual(apdex['result']['measurements']['status'], 'not_selected')
+        self.assertIn('choose_target', apdex['result']['next_actions'])
         call('input.inspect',inputs=[dict(path=str(ROOT/'tests/fixtures/order-load/baseline-native.txt'),kind='file')])
         config=self.folder/'supplied-logcfg.xml'
         config.write_bytes(b'<config xmlns="http://v8.1c.ru/v8/tech-log"><dump create="false"/></config>')

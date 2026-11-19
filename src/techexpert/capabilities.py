@@ -120,6 +120,8 @@ from . import remote_api as _remote
 ROUTES.update(_remote.routes(_sys.modules[__name__]))
 from . import fix_verification as _fix
 ROUTES[_fix.OPERATION]=_fix.route(_sys.modules[__name__])
+from . import apdex_preparation as _apdex
+ROUTES[_apdex.OPERATION]=_apdex.route(_sys.modules[__name__])
 CODE_API=tuple(ROUTES)
 PROGRAM_EXECUTIONS=('code.execute','code.context')
 from .code_policy import schemas as _code_schemas
@@ -238,6 +240,11 @@ def normalize_request(value):
         context=result.get('context')
         if context is not None and (context['investigation_id'],context['expected_revision'])!=(args['investigation_id'],args['revision']):
             raise InputError('fix verification requires the exact investigation revision in its invocation context')
+    if operation == _apdex.OPERATION:
+        args = _apdex.normalize(args)
+        context = result.get('context')
+        if context is not None and (context['investigation_id'], context['expected_revision']) != (args['investigation_id'], args['revision']):
+            raise InputError('APDEX preparation requires the exact investigation revision in its invocation context')
     if operation in _logcfg.OPERATIONS:args=_logcfg.normalize(operation,args)
     if operation in _remote.OPERATIONS:args=_remote.normalize(operation,args)
     if operation=='os.import':
@@ -306,6 +313,9 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
     elif operation==_fix.OPERATION:
         data=_fix.evaluate(state,output,args)
         targets=[dict(kind='artifacts',id=data['artifact_id'])]
+    elif operation == _apdex.OPERATION:
+        data = _apdex.evaluate(state, output, args)
+        targets = [dict(kind='artifacts', id=data['artifact_id'])]
     elif operation in _logcfg.OPERATIONS:data,targets=_logcfg.execute(operation,args,state,output)
     elif operation in _remote.OPERATIONS:data,targets=_remote.execute(operation,args,state,output,stop)
     elif operation=='case.events':data=storage.list_native_events(state,**args,index_memory_bytes=memory_bytes)

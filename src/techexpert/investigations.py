@@ -29,6 +29,7 @@ EDITABLE={'episode','attachments','evidence','facts','hypotheses','contradiction
           'source_bindings','source_links','stage_decision'}
 CAUSES=('confirmed','hypothesis','insufficient_data')
 EXECUTIONS=('completed','partial','error','cancelled')
+SUPPLEMENTAL_SCOPES = ('fix_verification', 'apdex_preparation')
 STAGES=('initial_analysis','prepare_observation','awaiting_occurrence','analyze_episode','verify_fix','closed')
 COLLECTION_STATES=('unknown','not_started','launch_reported','receiving_data','stopped_reported')
 
@@ -99,6 +100,12 @@ def _verify_attachment(state_dir, doc, item):
         if item.get('scope','fix_verification')!='fix_verification':
             raise InputError('invalid fix verification attachment scope')
         item['scope'] = 'fix_verification'
+    elif target.get('kind') == 'apdex_preparation' and item['kind'] == 'artifact':
+        from .apdex_preparation import require_parent
+        require_parent(target, doc)
+        if item.get('scope', 'apdex_preparation') != 'apdex_preparation':
+            raise InputError('invalid APDEX preparation attachment scope')
+        item['scope'] = 'apdex_preparation'
     elif 'scope' in item:
         raise InputError('unexpected investigation attachment scope')
     origin = target.get('origin',target.get('result',{}).get('origin','not_established'))
@@ -325,18 +332,19 @@ def _validate(state_dir,doc):
 
 def _basis(doc):
     value={k:doc.get(k) for k in ('episode','attachments','evidence','facts','hypotheses','contradictions','template','variant','time_mode','scale','profile_sha256','occurrence')}
-    verification={item['id'] for item in doc['attachments'] if item.get('scope')=='fix_verification'}
-    if verification:
-        value['attachments']=[item for item in doc['attachments'] if item['id'] not in verification]
-        value['evidence']=[item for item in doc['evidence'] if item['attachment'] not in verification]
+    independent = {item['id'] for item in doc['attachments']
+                   if item.get('scope') in SUPPLEMENTAL_SCOPES}
+    if independent:
+        value['attachments'] = [item for item in doc['attachments'] if item['id'] not in independent]
+        value['evidence'] = [item for item in doc['evidence'] if item['attachment'] not in independent]
     for key in ('source_bindings','source_links'):
         if doc.get(key):value[key]=doc[key]
     clarifications=[item['text'] for item in investigation_task.saved(doc) if item['revision']>1]
     if clarifications:value['task_clarifications']=clarifications
     return _digest(value)
 
-def _verification_rebound(previous, current):
-    attachments = {item['id']:item for item in previous['attachments'] if item.get('scope')=='fix_verification'}
+def _supplement_rebound(previous, current):
+    attachments = {item['id']: item for item in previous['attachments'] if item.get('scope') in SUPPLEMENTAL_SCOPES}
     if not attachments:
         return False
     selected = {item['id']:item for item in current['attachments']}
@@ -615,7 +623,7 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
         decision=doc.pop('stage_decision',None)
         old_assessment=doc['assessment'];doc['assessment']=None;_validate(state_dir,doc)
         basis=_basis(doc)
-        basis_changed=basis!=previous['analysis_basis_sha256'] or _verification_rebound(previous,doc)
+        basis_changed=basis!=previous['analysis_basis_sha256'] or _supplement_rebound(previous,doc)
         if 'assessment' in patch:
             doc['assessment']=old_assessment;doc['assessment_status']='provided_by_harness' if old_assessment else 'not_provided'
             doc['assessment_harness']=deepcopy(doc['harness']) if old_assessment else None

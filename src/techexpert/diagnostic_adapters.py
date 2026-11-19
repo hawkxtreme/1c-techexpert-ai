@@ -69,8 +69,10 @@ def routes(cap):
             ['verified saved artifact'],'read bounded private evidence; never publish',
             ['artifact_id','source_id','sha256','text','truncated'],dict(source_id=dict(type='string'),text=dict(type='string'),file_path=dict(type='string'))),
         'apdex.import':route(dict(measurements=cap.FILE,target_seconds=dict(type='number',minimum=0,maximum=31536000),
-            operation=cap.string(256),start=cap.string(80),end=cap.string(80),**input_fields(cap,single=True)),['measurements','target_seconds'],
-            ['explicit normalized APDEX measurements and target'],'save measured APDEX; no BSP/native export compatibility claim',outputs),
+            inventory_only=dict(type='boolean',description='Inventory normalized measurements ahead of target selection.'),
+            operation=cap.string(256),start=cap.string(80),end=cap.string(80),**input_fields(cap,single=True)),['measurements'],
+            ['explicit normalized measurements and either a target or inventory_only'],
+            'retain measurements or calculate APDEX using a selected target; no native export conversion',outputs),
         'jr.import':route(dict(journal_schema(cap)['properties'],**input_fields(cap)),['path'],['selected LGF/LGP group or verified standalone LGD snapshot'],
             'save bounded native journal snapshot; no database/run identity inference',outputs),
         'jr.events':route(dict(**artifact,event=cap.string(2000),window=cap.WINDOW,offset=cap.integer(0,100000,0),limit=cap.integer(1,100,20)),['artifact_id'],
@@ -93,6 +95,11 @@ def routes(cap):
             ['explicit existing local Windows thin TestClient and separately installed Testpilot environment'],
             'read active client and session counters or perform one explicitly selected local list navigation; no application readiness or cause inference',outputs,timeout=50),
     }
+    result['apdex.import']['input_schema']['oneOf'] = [
+        dict(required=['target_seconds'], properties=dict(inventory_only=dict(const=False))),
+        dict(required=['inventory_only'], properties=dict(inventory_only=dict(const=True)),
+             **{'not': dict(required=['target_seconds'])}),
+    ]
     for kind,queries in [('rac',RAC_QUERIES),('postgresql',PG_QUERIES),('sqlserver',SQL_QUERIES)]:
         settings=connection_schema(cap,kind);args=dict(settings['properties'],query=cap.string(32,enum=list(queries)))
         if kind=='rac':args.update(cluster=cap.string(36),infobase=cap.string(36))
@@ -174,8 +181,8 @@ def normalize(operation,args):
     elif operation=='apdex.import':
         from .input_adapters import normalize as normalize_intake
         result=normalize_intake(result,single=True)
-        from .apdex import number,instant
-        number(result['target_seconds'],'target_seconds',True)
+        from .apdex import validate_target_selection, instant
+        validate_target_selection(result.get('target_seconds'), result.get('inventory_only', False))
         lower=instant(result['start']) if 'start' in result else None
         upper=instant(result['end']) if 'end' in result else None
         if lower is not None and upper is not None and lower>=upper:raise InputError('APDEX start must precede end')
@@ -203,7 +210,7 @@ def execute(operation,args,state,output,*,stop=None):
         return artifact_evidence(state,**args),[]
     if operation=='apdex.import':
         from .artifacts import import_apdex
-        data=import_apdex(output,args['measurements'],args['target_seconds'],**{k:v for k,v in args.items() if k not in ('measurements','target_seconds')})
+        data=import_apdex(output,args['measurements'],**{k:v for k,v in args.items() if k!='measurements'})
     elif operation=='jr.import':
         from .native_jr import read_journal
         data=read_journal(output,**args)

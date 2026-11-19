@@ -5,7 +5,8 @@ import re
 import stat
 
 from . import check_history, context_excerpt, context_intake, context_program, fix_verification, investigation_progress, investigation_task, native_jr_sqlite, operation_state as fs, operations, os_observation, report_references
-from .context_disclosure import VIEW_READER_CAPABILITIES
+from . import apdex_preparation
+from .context_disclosure import APDEX_VIEW, VIEW_READER_CAPABILITIES
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -23,7 +24,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
              tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
              context_program_schemas=(), report_reference_schemas=(), investigation_progress_schemas=(),
              check_history_schemas=(), investigation_task_schemas=(), os_observation_schemas=(), jr_lgd_schemas=(),
-             fix_verification_schemas=()):
+             fix_verification_schemas=(), apdex_preparation_schemas=()):
     contract = metadata['state_contract']
     if contract is None and metadata['version'] in ('0.34.0','0.35.0'):
         contract = STATE_CONTRACT
@@ -47,6 +48,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             and set(observed.get('os-observation', ())) <= set(os_observation_schemas)
             and set(observed.get('jr-lgd', ())) <= set(jr_lgd_schemas)
             and set(observed.get('fix-verification', ())) <= set(fix_verification_schemas)
+            and set(observed.get('apdex-preparation', ())) <= set(apdex_preparation_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
             and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
             and set(observed.get('context-intake', ())) <= set(context_intake_schemas)
@@ -74,6 +76,7 @@ def inspect_state(state):
     schemas['os-observation'] = set()
     schemas['jr-lgd'] = set()
     schemas['fix-verification'] = set()
+    schemas['apdex-preparation'] = set()
     schemas['tj-reference-windows'] = set()
     schemas['context-disclosure'] = set()
     schemas['context-intake'] = set()
@@ -229,6 +232,9 @@ def inspect_state(state):
                         schemas['jr-lgd'].add(native_jr_sqlite.READER_FORMAT)
                     if kind=='artifacts' and report.get('kind')==fix_verification.KIND:
                         schemas['fix-verification'].add(fix_verification.READER_FORMAT)
+                    if kind == 'artifacts' and (report.get('kind') == apdex_preparation.KIND
+                        or report.get('kind') == 'apdex' and report['result'].get('target_seconds') is None):
+                        schemas['apdex-preparation'].add(apdex_preparation.READER_FORMAT)
                     if kind == 'artifacts' and report.get('kind') == context_excerpt.KIND:
                         schemas['context-disclosure'].add(context_excerpt.READER_CAPABILITY)
                         if fs.writer_active(folder):
@@ -282,6 +288,8 @@ def inspect_state(state):
             policy = stored_policy(folder, folder.name, read=document)
             if policy is not None:
                 schema('context-disclosure', policy)
+                if 'apdex' in policy['categories']:
+                    schemas['context-disclosure'].add(VIEW_READER_CAPABILITIES[APDEX_VIEW])
         marker(state/'incident-drafts/write.lock','incident-drafts')
         for folder in children(state/'incident-drafts'):
             if _ID.fullmatch(folder.name):

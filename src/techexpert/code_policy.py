@@ -127,7 +127,7 @@ class Scope:
             selected=next((i for i,p in enumerate(self.value['intakes']) if p['settings']==arguments and self.intake_runs[i]<p['max_runs']),None)
             if selected is None:raise CodeError('scope_denied','Input inspection is outside the exact approved paths, limits or repeat count.')
             self.intake_runs[selected]+=1
-        elif operation in ('investigation.sources','fix.verify'):
+        elif operation in ('investigation.sources','fix.verify','apdex.prepare'):
             if (arguments['investigation_id'],arguments['revision']) not in self.investigations:raise CodeError('scope_denied','Investigation revision is outside the approved source context.')
         elif operation=='source.compare':
             for ref in (arguments['before'],arguments['after']):target({'case':'cases','artifact':'artifacts'}[ref['kind']],ref['id'])
@@ -203,7 +203,7 @@ class Scope:
             field,kind=('case_id','cases') if 'case_id' in data else ('artifact_id','artifacts')
         else:
             field,kind={'case.analyze':('case_id','cases'),'case.compare':('comparison_id','comparisons'),
-                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe','client.observe','client.import','fix.verify')}}.get(operation,(None,None))
+                **{op:('artifact_id','artifacts') for op in ('remote.plan','remote.profile_plan','remote.inspect','remote.capture','logcfg.prepare','logcfg.rollback_plan','input.inspect','os.collect','os.import','apdex.import','jr.import','source.snapshot','rac.observe','postgresql.observe','sqlserver.observe','client.observe','client.import','fix.verify','apdex.prepare')}}.get(operation,(None,None))
         if not field:return
         identifier=data.get(field)
         if not isinstance(identifier,str) or len(identifier)!=32 or any(c not in 'abcdef0123456789' for c in identifier):

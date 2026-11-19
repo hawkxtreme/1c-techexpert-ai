@@ -4,13 +4,16 @@ import json
 from pathlib import PurePosixPath
 
 from . import context_policy, investigations, kernel_context, operation_state as fs
+from .apdex_preparation import OPERATION as APDEX_PREPARE
 from .fix_verification import OPERATION as FIX_OPERATION, PROFILE as FIX_PROFILE
 from .inputs import InputError
 
 
 PRESENTATION = 'context-intake-v1'
-OPERATIONS = ('input.inspect', 'source.check', 'case.analyze', 'jr.import', FIX_OPERATION)
-MATERIALS = {'case.analyze': 'case', 'jr.import': 'artifact', FIX_OPERATION: 'artifact'}
+APDEX_INTAKE = ('source.snapshot', 'apdex.import', APDEX_PREPARE)
+OPERATIONS = ('input.inspect', 'source.check', 'case.analyze', 'jr.import', FIX_OPERATION, *APDEX_INTAKE)
+MATERIALS = {'case.analyze': 'case', **dict.fromkeys(('jr.import', FIX_OPERATION, *APDEX_INTAKE), 'artifact')}
+READER_CAPABILITIES = {FIX_OPERATION: 2, **dict.fromkeys(APDEX_INTAKE, 3)}
 SEALED_FIELDS = (
     'schema_version', 'run_id', 'operation', 'status', 'snapshots', 'evidence',
     'limits', 'stop_verified', 'cancellation_requested', 'execution_status', 'result_availability',
@@ -20,7 +23,7 @@ REASONS = (
     'cancelled', 'timeout', 'output_limit', 'owned_disk_limit', 'kernel_timeout', 'kernel_admission_timeout',
     'kernel_process_failure', 'kernel_launcher_failure', 'kernel_receipt_commit_failed',
     'kernel_memory_limit', 'worker_failed_before_sealed_result', 'kernel_admission_integrity',
-    'context_intake_incomplete', fs.PROMOTION_BLOCKED,
+    'context_intake_incomplete', 'apdex_empty', 'apdex_incomplete', fs.PROMOTION_BLOCKED,
 )
 SUFFIXES = ('.log', '.lgf', '.lgp', '.lgd', '.json', '.jsonl', '.txt', '.csv')
 AVAILABILITY = ('captured', 'not_found', 'access_denied', 'read_error', 'changed_during_read', 'byte_limit')
@@ -45,7 +48,7 @@ def validate(request):
 
 
 def reader_capability(request):
-    return 2 if request['operation'] == FIX_OPERATION else 1
+    return READER_CAPABILITIES.get(request['operation'], 1)
 
 
 def safe_reason(reason):

@@ -209,7 +209,8 @@ def _snapshots(state,operation,args,data,*,output=None):
     elif operation in ('case.compare','comparison.show'):
         report=add('comparisons',data['comparison_id'])
         for item in report['input_reports']:add('cases',item['case_id'])
-    elif operation in ('input.inspect','os.collect','os.import','artifact.show',capabilities._fix.OPERATION):add('artifacts',data['artifact_id'])
+    elif operation in ('input.inspect','os.collect','os.import','artifact.show',capabilities._fix.OPERATION,
+                       capabilities._apdex.OPERATION):add('artifacts',data['artifact_id'])
     elif operation in capabilities._diagnostics.CREATORS|capabilities._diagnostics.ARTIFACT_READS:
         add('artifacts',data['artifact_id'])
     elif operation=='investigation.sources':

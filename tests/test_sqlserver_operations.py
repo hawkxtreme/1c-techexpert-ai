@@ -17,7 +17,7 @@ class SQLServerOperationTests(unittest.TestCase):
         self.n+=1;return dict(schema_version=1,operation_key='sqlserver-'+str(self.n),executor_id='tests',operation=op,arguments=args)
     def test_passive_catalogue_uses_one_api_and_shared_schemas(self):
         self.assertIn('sqlserver.observe',cap.ROUTES)
-        self.assertEqual(len(mcp_tools.tools()),52)
+        self.assertEqual(len(mcp_tools.tools()),53)
         self.assertIn('query_store',cap.ROUTES['sqlserver.observe']['input_schema']['properties']['query']['enum'])
         with patch('src.techexpert.sqlserver.run_bounded',side_effect=AssertionError('schema must be passive')):
             value=cap.normalize_request(self.request('sqlserver.observe',dict(self.settings,query='query_store',window=WINDOW)))

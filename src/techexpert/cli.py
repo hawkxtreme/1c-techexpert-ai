@@ -131,7 +131,9 @@ def main(argv=None):
     review=commands.add_parser('knowledge-review');review.add_argument('target_id');review.add_argument('--kind',choices=('artifact','investigation'),default='investigation');review.add_argument('--revision',type=int);review.add_argument('--environment',type=Path)
     apdex = commands.add_parser('apdex')
     apdex.add_argument('measurements',type=Path)
-    apdex.add_argument('--target',type=float,required=True)
+    apdex_mode = apdex.add_mutually_exclusive_group(required=True)
+    apdex_mode.add_argument('--target', type=float)
+    apdex_mode.add_argument('--inventory', action='store_true', help='retain normalized measurements before choosing a target')
     apdex.add_argument('--operation')
     apdex.add_argument('--start')
     apdex.add_argument('--end')
@@ -429,7 +431,8 @@ def main(argv=None):
             return 0
         elif args.command == 'apdex':
             from .artifacts import import_apdex
-            result=import_apdex(args.state_dir,args.measurements,args.target,operation=args.operation,start=args.start,end=args.end)
+            result=import_apdex(args.state_dir,args.measurements,args.target,inventory_only=args.inventory,
+                                operation=args.operation,start=args.start,end=args.end)
         elif args.command == 'artifact':
             from .artifacts import load_artifact, artifact_evidence
             result=(artifact_evidence(args.state_dir,args.artifact_id,args.source) if args.source

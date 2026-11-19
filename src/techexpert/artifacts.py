@@ -125,6 +125,9 @@ def load_artifact(state_dir,artifact_id,*,input_state_dir=None):
     if report['kind']=='fix_verification':
         from .fix_verification import verify_inputs
         verify_inputs(state_dir if input_state_dir is None else input_state_dir,report)
+    elif report['kind'] == 'apdex_preparation':
+        from .apdex_preparation import verify_inputs
+        verify_inputs(state_dir if input_state_dir is None else input_state_dir, report)
     return report
 
 
@@ -145,10 +148,14 @@ def artifact_evidence(state_dir,artifact_id,source_id):
                 text=data[:8192].decode('utf-8-sig',errors='replace'),truncated=len(data)>8192)
 
 
-def import_apdex(state_dir,path,target_seconds,*,intake=None,**selection):
-    from .apdex import calculate
+def import_apdex(state_dir,path,target_seconds=None,*,intake=None,inventory_only=False,**selection):
+    from .apdex import calculate, inventory, validate_target_selection
+    validate_target_selection(target_seconds, inventory_only)
     data=read_snapshot(path)
     records=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
-    result=calculate(records,target_seconds,**selection)
-    return save_artifact(state_dir,'apdex',dict(path=str(Path(path).resolve()),target_seconds=target_seconds,**selection),
+    result = inventory(records, **selection) if inventory_only else calculate(records, target_seconds, **selection)
+    request = dict(path=str(Path(path).resolve()), target_seconds=target_seconds, **selection)
+    if inventory_only:
+        request['inventory_only'] = True
+    return save_artifact(state_dir,'apdex',request,
                          [(str(Path(path).resolve()),data)],result,input_intake=intake)

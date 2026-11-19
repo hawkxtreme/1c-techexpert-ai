@@ -217,3 +217,29 @@ def fix_summary(result):
         verification_scope=enum(result['verification_scope'], ('selected_reported_measurements', 'retained_comparison',
             'synthetic_calculations_only', 'provided_evidence_only', 'mixed_or_unknown_evidence_only')),
         requires_ai_interpretation=True)
+
+
+def apdex_setup(result):
+    from .apdex_preparation import ACTIONS, BSP_MARKERS, CONFIG_STATES, SAMPLE_STATES
+
+    config = result['configuration']
+    sample = result['measurements']
+    goal = result['goal']
+    return dict(
+        configuration=dict(status=enum(config['status'], CONFIG_STATES), runtime_availability='unknown',
+                           declared_markers=[key for key in BSP_MARKERS.values() if key in config['declared_markers']]),
+        measurements=dict(status=enum(sample['status'], SAMPLE_STATES),
+                          **measurements(sample, ('selected', 'failed', 'unknown_duration', 'score_at_target')),
+                          duration_seconds=measurements(sample['duration_seconds'], ('median', 'p90', 'known')),
+                          apdex=measurements(sample['apdex'], ('satisfied', 'tolerating', 'frustrated', 'unknown'))
+                          if sample['apdex'] is not None else None),
+        goal=dict(**measurements(goal, ('target_seconds', 'target_score')),
+                  threshold_origin=enum(goal['threshold_origin'], ('caller_selected', 'not_selected'))),
+        priority=enum(result['priority'], ('low', 'normal', 'high')),
+        windows=dict(baseline_selected=result['windows']['baseline'] is not None,
+                     verification_selected=result['windows']['verification'] is not None,
+                     relation=enum(result['windows']['relation'], ('unselected', 'after_baseline', 'before_baseline', 'overlap'))),
+        configuration_responsibility=enum(result['configuration_responsibility'],
+                                          ('reported_operator', 'administrator', 'confirm_administrator')),
+        next_actions=[name for name in ACTIONS if name in result['next_actions']],
+        requires_ai_interpretation=True)
