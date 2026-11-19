@@ -16,8 +16,12 @@ PREVIEW = 'source.check'
 CAPTURES = {'case.analyze': 'tj', 'jr.import': 'jr'}
 OPERATIONS = {PREVIEW, *CAPTURES}
 HOURLY_MINUTE = 'hourly_minute'
+FIXED_PREFIX = 'fixed_prefix'
+PREFIX_PLAN = 'tj_prefix_plan'
+PREFIX_FAILURES = dict(source_truncated='journal_prefix_truncated', source_replaced='journal_prefix_replaced',
+                       prefix_changed='journal_prefix_changed')
 REASONS = ('journal_preview_changed', 'journal_preview_incomplete', 'journal_coverage_limited',
-           'journal_parse_failed')
+           'journal_parse_failed', 'journal_prefix_bounded', *PREFIX_FAILURES.values())
 MAX_MEMBERS = 32
 
 
@@ -31,10 +35,15 @@ def schema(cap, operation):
     if operation != 'jr.import':
         selector['timestamp_profile'] = cap.string(16, enum=[HOURLY_MINUTE],
             description='Declare short timestamps and one-hour rotation verified for this source and window.')
+        selector['read_mode'] = cap.string(16, enum=[FIXED_PREFIX],
+            description='Use a fixed byte boundary per selected TJ file, allowing append-only growth.')
     fields = dict(profile_journal=cap.obj(selector, () if preview else ('source',)))
     if not preview:
         fields['preview_sha256'] = cap.SHA256
-    return cap.obj(fields, tuple(fields))
+    required = tuple(fields)
+    if operation == 'case.analyze':
+        fields['preview_id'] = dict(cap.CASE, description='Required for fixed_prefix. Use the ID returned by source.check.')
+    return cap.obj(fields, required)
 
 
 def normalize(cap, operation, arguments):
@@ -42,6 +51,8 @@ def normalize(cap, operation, arguments):
     selected = result['profile_journal']
     if selected and 'source' not in selected:
         raise InputError('select a journal before giving a window or timestamp profile')
+    if operation == 'case.analyze' and ('preview_id' in result) != (selected.get('read_mode') == FIXED_PREFIX):
+        raise InputError('fixed-prefix capture requires the retained preview ID')
     if 'window' in selected:
         selected['window'] = validate_request(window=selected['window'])['window']
     return result
@@ -204,7 +215,7 @@ def _tj_review(root, profiles, selection, settings, window, state, manifest_path
     return raw, review
 
 
-def _plan(state, output, binding, source, public, window, timestamp_profile):
+def _plan(state, output, binding, source, public, window, selection):
     kind = source['type']
     root = profile_files._ordinary_path(source['path'])
     profile_files._chain(root)
@@ -221,7 +232,7 @@ def _plan(state, output, binding, source, public, window, timestamp_profile):
     if kind == 'tj':
         settings = source['settings']
         offset = settings['utc_offset']
-        if timestamp_profile == HOURLY_MINUTE:
+        if selection.get('timestamp_profile') == HOURLY_MINUTE:
             profiles = _hourly_members(files, window, offset)
             public.update(timestamp_profile=HOURLY_MINUTE, files_outside_window=len(files) - len(profiles),
                           hour_basis='filename_and_requested_year_with_declared_offset')
@@ -237,6 +248,10 @@ def _plan(state, output, binding, source, public, window, timestamp_profile):
         raw, review = _tj_review(root, profiles, plan, settings, window, state, manifest_path)
         public.update(capture_scope='recorded_time_window', source_bytes=review['external_bytes'],
                       expected_read_bytes=review['expected_read_bytes'], max_retained_bytes=review['max_retained_bytes'])
+        if selection.get('read_mode') == FIXED_PREFIX:
+            plan['selector'] = selection
+            plan['tj']['method'] = tj_reference.PREFIX_METHOD
+            public['capture_scope'] = 'reviewed_prefix_window'
     else:
         plan['jr'], count = _jr_inventory(files)
         public.update(capture_scope='selected_jr_group', source_bytes=count,
@@ -265,6 +280,69 @@ def _capture_jr(output, plan, settings, stop):
     return native_jr._save_snapshot(output, request, sources, result)
 
 
+def _save_prefix_plan(output, plan, raw, preview):
+    from .artifacts import save_artifact
+
+    result = dict(schema_version=1, plan=plan, manifest=raw.decode('utf-8'), preview=preview)
+    report = save_artifact(output, PREFIX_PLAN, plan['selector'], [], result)
+    return report, [dict(kind='artifacts', id=report['artifact_id'])]
+
+
+def _checked_prefix_plan(report, identifier, args):
+    saved = report.get('result')
+    if (report.get('artifact_id') != identifier or report.get('kind') != PREFIX_PLAN or report.get('sources') != []
+            or type(saved) is not dict or saved.get('schema_version') != 1 or type(saved.get('plan')) is not dict
+            or type(saved.get('manifest')) is not str or type(saved.get('preview')) is not dict):
+        raise PreviewChanged('a verified fixed-prefix preview is required')
+    plan, preview = saved['plan'], saved['preview']
+    if (plan.get('selector') != args['profile_journal'] or preview.get('status') != 'ready'
+            or preview.get('capture_scope') != 'reviewed_prefix_window'
+            or preview.get('source_bytes_read') is not False or preview.get('preview_sha256') != fs.digest(plan)
+            or ('preview_sha256' in args and preview['preview_sha256'] != args['preview_sha256'])):
+        raise PreviewChanged('fixed-prefix preview differs from the approved selection')
+    return saved
+
+
+def _capture_prefix(state, output, binding, source, window, args, stop):
+    from .artifacts import artifact_folder, load_artifact
+
+    identifier = args['preview_id']
+    try:
+        fs.inventory(fs.safe(artifact_folder(state, identifier)))
+        saved = _checked_prefix_plan(load_artifact(state, identifier), identifier, args)
+    except (OSError, ValueError, KeyError, TypeError, RecursionError) as error:
+        raise PreviewChanged('fixed-prefix preview is unavailable or changed') from error
+    plan = saved['plan']
+    if plan['binding'] != binding or plan['window'] != window or plan['root'] != str(profile_files._ordinary_path(source['path'])):
+        raise PreviewChanged('fixed-prefix preview binds another investigation revision, source or window')
+    if stop():
+        raise InputError('journal capture stopped')
+    path = output / 'profile-journal-manifest.json'
+    with path.open('xb') as stream:
+        stream.write(saved['manifest'].encode('utf-8'))
+    return storage.investigate(path, output, reference_state=state, reference_sha256=fs.digest(plan['tj']),
+        prefix_review=plan['tj'], should_stop=stop)
+
+
+def pin_prefix(operation, args, data, add):
+    if operation == PREVIEW:
+        if data.get('kind') == PREFIX_PLAN:
+            identifier = data['artifact_id']
+            _checked_prefix_plan(add('artifacts', identifier), identifier, args)
+        return
+    identifier = args['preview_id']
+    saved = _checked_prefix_plan(add('artifacts', identifier), identifier, args)
+    review = saved['plan']['tj']
+    if data.get('reference_plan_sha256') != fs.digest(review) or len(data['sources']) != len(review['sources']):
+        raise InputError('fixed-prefix snapshot differs from the retained plan')
+    for actual, planned in zip(data['sources'], review['sources']):
+        capture = actual.get('reference_capture', {})
+        if (actual['id'] != planned['id'] or actual['path'] != planned['path'] or capture.get('method') != tj_reference.PREFIX_METHOD
+                or capture.get('original_bytes') != planned['observation']['bytes']
+                or capture.get('file_identity') != planned['observation']['identity'] or capture.get('window') != planned['window']):
+            raise InputError('captured TJ files differ from the reviewed prefixes')
+
+
 def execute(operation, args, state, output, binding, *, stop):
     doc = context_policy.selected_investigation(state, binding['investigation_id'], binding['expected_revision'])
     if fs.digest(doc) != binding['report_sha256'] or doc['profile_sha256'] != binding['profile_sha256']:
@@ -282,14 +360,22 @@ def execute(operation, args, state, output, binding, *, stop):
     source = journals.get(ref)
     timestamp_profile = selection.get('timestamp_profile')
     status = _configuration_status(source, timestamp_profile) if source else 'source_not_configured'
+    fixed_prefix = selection.get('read_mode') == FIXED_PREFIX
+    if fixed_prefix and status == 'configured' and source['type'] != 'tj':
+        status = 'journal_read_mode_unsupported'
     window, basis = _window(doc, selection.get('window'))
     if status == 'configured' and window is None:
         status = 'window_required'
     public = dict(source=ref, kind=source['type'] if source else None, status=status, window=window,
                   window_basis=basis, source_bytes_read=False)
+    if fixed_prefix and operation == 'case.analyze':
+        if status != 'configured':
+            raise PreviewChanged('configured TJ selection is unavailable')
+        report = _capture_prefix(state, output, binding, source, window, args, stop)
+        return report, [dict(kind='cases', id=report['case_id'])]
     if status == 'configured':
         try:
-            plan, path, raw, review = _plan(state, output, binding, source, public, window, timestamp_profile)
+            plan, path, raw, review = _plan(state, output, binding, source, public, window, selection)
         except profile_files._ObservationError as error:
             public['status'] = {'separate_access_required': 'separate_access_required',
                                 'absolute_path_required': 'absolute_path_required', 'linked_path': 'linked_or_special_journal',
@@ -300,6 +386,8 @@ def execute(operation, args, state, output, binding, *, stop):
             reason = str(error)
             public['status'] = reason if reason in INVENTORY_STATES else 'journal_layout_unsupported'
     if operation == PREVIEW:
+        if fixed_prefix and public['status'] == 'ready':
+            return _save_prefix_plan(output, plan, raw, public)
         return dict(journal_preview=public), []
     if (public['status'] != 'ready' or args['preview_sha256'] != public['preview_sha256']
             or CAPTURES[operation] != public['kind']):
@@ -320,7 +408,13 @@ def partial_reason(operation, args, data):
     preview = data.get('journal_preview')
     if preview is not None and preview['status'] != 'ready':
         return 'journal_preview_incomplete'
-    if operation != 'case.analyze' or data['source_coverage']['status'] == 'observations_available':
+    if operation != 'case.analyze':
+        return None
+    if args['profile_journal'].get('read_mode') == FIXED_PREFIX:
+        if any(capture['unread_appended_bytes'] or capture['incomplete_tail_bytes']
+               for capture in (tj_reference.prefix_summary(source) for source in data['sources'])):
+            return 'journal_prefix_bounded'
+    if data['source_coverage']['status'] == 'observations_available':
         return None
     if args['profile_journal'].get('timestamp_profile') == HOURLY_MINUTE:
         parse_states = {source['reference_capture']['original_parse_status'] for source in data['sources']}

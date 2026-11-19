@@ -9,6 +9,7 @@ from .case_retention import SnapshotRetirement
 from .inputs import InputError, MAX_EVENTS, MAX_FILE_BYTES, MAX_RECORD_BYTES, MAX_TOTAL_BYTES, open_verified_snapshot
 from .investigation_progress import _occurrence_window
 from .source_coverage import validate_collection
+from .tj_reference import prefix_summary
 
 
 VIEWS = {'tj-coverage': ('tj', 'case'), 'jr-coverage': ('jr', 'artifact')}
@@ -115,7 +116,9 @@ def _tj_source(state, case_id, source, bounds, wanted, remaining_records):
     assessment = ('observations_available' if selected_count else
                   'no_recorded_timestamps_in_window' if first is not None else 'insufficient_data')
     reference = source.get('reference_capture', {})
-    if selected_count and (parse['status'] != 'parsed' or reference.get('original_parse_status', 'parsed') != 'parsed'):
+    prefix = prefix_summary(source)
+    incomplete = prefix and (prefix['unread_appended_bytes'] or prefix['incomplete_tail_bytes'])
+    if selected_count and (parse['status'] != 'parsed' or reference.get('original_parse_status', 'parsed') != 'parsed' or incomplete):
         assessment = 'partial_observations'
     result = dict(availability='captured', assessment=assessment, snapshot_verified=True,
         profile={key: profile[key] for key in ('platform_version', 'encoding', 'placement', 'timestamp_format', 'time_basis')},
@@ -127,6 +130,8 @@ def _tj_source(state, case_id, source, bounds, wanted, remaining_records):
         observed_event_counts=dict(events), other_event_records=other_count, observed_field_counts=dict(present),
         usable_field_counts=dict(usable), field_event_scope=wanted,
         collection_basis=collection.get('status', 'unknown'), collection_window=declared_start_end)
+    if prefix is not None:
+        result.update(snapshot_scope='saved_prefix_window', prefix_capture=prefix)
     if wanted:
         status = ('declaration_conflicts_with_observed' if contradicting_declaration else
                   'observed_in_requested_scope' if events[wanted] else

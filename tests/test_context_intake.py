@@ -410,6 +410,74 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(report['sources'][0]['reference_capture']['original_parse_status'], 'invalid')
         self.assertEqual(report['source_coverage']['status'], 'no_usable_tj_records_in_scope')
 
+    def test_reviewed_tj_prefix_retains_only_complete_window_records_after_append(self):
+        path = self.root / '26111509.log'
+        complete = b'09:59.999999-1,CALL,1\n10:00.000000-2,SCALL,1\n'
+        tail = b'10:10.000000-3,CALL,1,Note="partial'
+        path.write_bytes(complete + tail)
+        self.configured_journals(tj_path=path)
+
+        selector = dict(source='j1', timestamp_profile='hourly_minute', read_mode='fixed_prefix')
+        args = dict(profile_journal=selector)
+        code, preview = self.cli('context-intake', self.write_request(self.request('source.check', args, 'prefix-preview')))
+        self.assertEqual(code, 0, preview)
+        proposed = preview['data']['journal_preview']
+        self.assertFalse(proposed['source_bytes_read'])
+        self.assertEqual(proposed['capture_scope'], 'reviewed_prefix_window')
+        self.assertEqual(proposed['source_bytes'], len(complete + tail))
+        self.assertEqual(proposed['expected_read_bytes'], 2 * len(complete + tail))
+        self.assertEqual(preview['snapshots'][0]['id'], proposed['preview_id'])
+
+        extra = b' completed"\n10:12.000000-4,CALL,1\n'
+        with path.open('ab') as stream:
+            stream.write(extra)
+        capture_args = dict(args, preview_id=proposed['preview_id'], preview_sha256=proposed['preview_sha256'])
+        capture_request = self.request('case.analyze', capture_args, 'prefix-window')
+        code, result = self.cli('context-intake', self.write_request(capture_request))
+        self.assertEqual(code, 1, result)
+        self.assertEqual(result['attachment_status'], 'attached')
+        self.assertEqual(result['data']['prefix_captures'], [dict(source='s1', reviewed_bytes=len(complete + tail),
+            unread_appended_bytes=len(extra), incomplete_tail_bytes=len(tail))])
+        case_id = result['data']['material']['id']
+        report = storage.verified_case(self.state, case_id)
+        reference = report['sources'][0]['reference_capture']
+        self.assertEqual(reference['original_sha256'], sha256(complete + tail).hexdigest())
+        self.assertEqual(reference['selected_records'], 1)
+        self.assertEqual(reference['incomplete_tail'], dict(byte_start=len(complete), byte_end=len(complete + tail), open_quote=True))
+        self.assertEqual(storage.case_source_path(self.state, case_id, 's1').read_bytes(), b'10:00.000000-2,SCALL,1\n')
+        evidence = storage.read_evidence(self.state, case_id, 's1:1')
+        self.assertEqual(evidence['original_location']['basis'], 'observed_external_prefix_at_capture')
+        self.assertEqual(evidence['original_location']['byte_start'], complete.index(b'10:00'))
+        path.unlink()
+        code, replay = self.cli('context-intake', self.write_request(capture_request))
+        self.assertEqual(code, 1, replay)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], result['attachment'])
+
+    def test_reviewed_tj_prefix_rejects_changed_window_truncation_and_replacement(self):
+        self.configured_journals()
+        original = self.source.read_bytes()
+        args = dict(profile_journal=dict(source='j1', read_mode='fixed_prefix'))
+        code, preview = self.cli('context-intake', self.write_request(self.request('source.check', args, 'ready-prefix')))
+        self.assertEqual(code, 0, preview)
+        proposed = preview['data']['journal_preview']
+        capture = dict(args, preview_id=proposed['preview_id'], preview_sha256=proposed['preview_sha256'])
+        changed = dict(capture, profile_journal=dict(args['profile_journal'], window=dict(
+            start='2026-11-15T06:10:01Z', end='2026-11-15T06:11:00Z')))
+        code, denied = self.cli('context-intake', self.write_request(self.request('case.analyze', changed, 'new-window')))
+        self.assertEqual(code, 2, denied)
+        self.assertEqual(denied['stop_reason'], 'journal_preview_changed')
+        self.source.write_bytes(original[:len(original)//2])
+        code, denied = self.cli('context-intake', self.write_request(self.request('case.analyze', capture, 'truncated-prefix')))
+        self.assertEqual(code, 2, denied)
+        self.assertEqual(denied['stop_reason'], 'journal_prefix_truncated')
+        self.source.rename(self.root / 'rotated-original.log')
+        self.source.write_bytes(original + b'\n')
+        code, denied = self.cli('context-intake', self.write_request(self.request('case.analyze', capture, 'replaced-prefix')))
+        self.assertEqual(code, 2, denied)
+        self.assertEqual(denied['stop_reason'], 'journal_prefix_replaced')
+        self.assertFalse((self.state / 'cases').exists())
+
     def test_legacy_key_is_not_reused_as_a_protected_intake(self):
         original = operations.run(self.state, self.request())
         self.assertEqual(original['status'], 'succeeded')

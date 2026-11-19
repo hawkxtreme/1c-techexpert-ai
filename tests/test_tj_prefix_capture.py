@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from src.techexpert.inputs import InputError, SnapshotReadError, load_manifest
-from src.techexpert import storage, source_coverage
+from src.techexpert import storage, source_coverage, tj_reference
 
 ROW = '04:05.123456-7,NEW_EVENT,0,Context="Начало,\r\nконец"\r\n'.encode()
 PROFILE = dict(format='1c-tj-text-v1', platform_version='8.3.27.1989', encoding='utf-8', placement='folders',
@@ -119,6 +119,49 @@ class TJPrefixCaptureTests(unittest.TestCase):
         self.assertTrue(sizes and max(sizes) <= 65536)
         self.assertEqual(acquired['byte_end'], len(initial))
         self.assertGreater(acquired['excluded_appended_bytes'], 0)
+
+    def reviewed_window(self):
+        return dict(observation=tj_reference._path_state(self.log), max_retained_bytes=1024**2,
+                    window=dict(start='2026-11-16T06:00:00+00:00', end='2026-11-16T06:05:00+00:00'))
+
+    def test_fixed_window_reads_the_same_bound_twice_while_the_file_grows(self):
+        initial = ROW * 2000
+        self.log.write_bytes(initial)
+        review = self.reviewed_window()
+        lengths = []
+        original = tj_reference._open
+
+        class Appending(ChangingReader):
+            def read(reader, count):
+                with self.log.open('ab') as writer:
+                    writer.write(ROW)
+                data = reader.stream.read(count)
+                lengths.append(len(data))
+                return data
+
+        with patch.object(tj_reference, '_open', side_effect=lambda path: Appending(original(path), lambda: None)):
+            data, captured = tj_reference.capture(self.log, review, PROFILE, max_retained=1024**2,
+                                                 max_records=3000, fixed_prefix=True)
+        self.assertEqual(data, initial)
+        self.assertEqual(captured['original_sha256'], hashlib.sha256(initial).hexdigest())
+        self.assertEqual(sum(lengths), len(initial) * 2)
+        self.assertLessEqual(max(lengths), 65536)
+        self.assertGreater(captured['observed_sizes'][-1], len(initial))
+
+    def test_fixed_window_rejects_a_prefix_rewrite_even_when_the_file_grows(self):
+        review = self.reviewed_window()
+        original = tj_reference._open
+
+        def rewrite():
+            with self.log.open('r+b') as writer:
+                writer.write(b'1')
+                writer.seek(0, os.SEEK_END)
+                writer.write(ROW)
+
+        with patch.object(tj_reference, '_open', side_effect=lambda path: ChangingReader(original(path), rewrite, 'seek')):
+            with self.assertRaises(SnapshotReadError) as failure:
+                tj_reference.capture(self.log, review, PROFILE, max_retained=1024**2, max_records=20, fixed_prefix=True)
+        self.assertEqual(failure.exception.code, 'prefix_changed')
 
     @unittest.skipIf(os.name == 'nt', 'POSIX FIFO fixture')
     def test_fifo_is_rejected_before_a_blocking_open(self):

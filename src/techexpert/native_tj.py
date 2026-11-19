@@ -163,7 +163,7 @@ class _TJScan:
         self.profile=validate_profile(profile,'');self.max_records=max_records;self.max_record_bytes=max_record_bytes
         self.frames=Frames(stream,chunk_size=chunk_size,max_input_bytes=max_input_bytes,max_record_bytes=max_record_bytes)
         self.records_seen=0;self.accepted=0;self.limitations=[];self.omitted=0;self.omitted_by_code={}
-        self.raw_record=None;self._summary=None;self._iterator=self._scan()
+        self.raw_record=None;self.incomplete_frame=None;self._summary=None;self._iterator=self._scan()
 
     def __iter__(self):return self
     def __next__(self):return next(self._iterator)
@@ -185,6 +185,8 @@ class _TJScan:
                 except StopIteration:break
                 cursor=frame['byte_end'];self.records_seen+=1;self.raw_record=None
                 location={key:frame[key] for key in ('line','end_line','byte_start','byte_end')}
+                if not frame['terminated']:
+                    self.incomplete_frame = {key: frame[key] for key in ('byte_start', 'byte_end', 'open_quote')}
                 if frame['raw'] is None:
                     self.limited('record_too_large','Record exceeded the byte limit and was not decoded.',**location)
                     if frame['open_quote']:self.limited('ambiguous_record_boundary','An open quote prevents safe recovery before the end of input.',**location)

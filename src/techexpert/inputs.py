@@ -176,7 +176,8 @@ def read_manifest(path, *, tolerant_sources=False):
     return path, raw, manifest
 
 
-def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, reference_state=None, should_stop=None):
+def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, reference_state=None,
+                  prefix_review=None, should_stop=None):
     path, raw, manifest = read_manifest(path, tolerant_sources=tolerant_sources)
     from .source_coverage import validate_collection
     selection = manifest.get('selection')
@@ -204,11 +205,15 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
         from .operation_state import digest as plan_digest
         if not isinstance(reference_sha256, str) or not re.fullmatch('[a-f0-9]{64}', reference_sha256) or reference_state is None:
             raise InputError('external TJ requires an approved reference preview before capture')
-        reference_review = tj_reference.build_review(path, raw, manifest, reference_state)
+        if prefix_review is None:
+            reference_review = tj_reference.build_review(path, raw, manifest, reference_state)
+        else:
+            tj_reference.validate_prefix_review(prefix_review, raw, manifest, reference_state)
+            reference_review = prefix_review
         if plan_digest(reference_review) != reference_sha256:
             raise InputError('reference preview changed; inspect the current file and storage plan')
         references = {item['id']: item for item in reference_review['sources']}
-    elif reference_sha256 is not None:
+    elif reference_sha256 is not None or prefix_review is not None:
         raise InputError('reference preview can only be used with an external TJ capture')
     events, native_events, sources, limits, seen, total = [], [], [], [], {}, 0
     lifecycle_documents=[]
@@ -291,7 +296,7 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
             maximum=min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total)
             if reference:
                 data, reference_capture = tj_reference.capture(source_path, reference, profile, max_retained=maximum,
-                                                                max_records=MAX_EVENTS - records_seen, should_stop=should_stop)
+                    max_records=MAX_EVENTS - records_seen, should_stop=should_stop, fixed_prefix=prefix_review is not None)
             elif read_mode=='tj-prefix-v1':
                 from .tj_capture import read_prefix
                 data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen))

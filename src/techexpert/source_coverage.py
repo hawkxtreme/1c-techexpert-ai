@@ -91,9 +91,12 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
         if not source or attempt['availability']!='captured':results.append(result);continue
         result.update(sha256=source['sha256'],bytes=source['size'],parse_status=source.get('parse_status','unknown'))
         if 'acquisition' in source:result['acquisition']=source['acquisition']
+        incomplete_prefix = False
         if 'reference_capture' in source:
-            from .tj_reference import view
+            from .tj_reference import prefix_summary, view
             result['reference_window'] = view(source)
+            prefix = prefix_summary(source)
+            incomplete_prefix = prefix and (prefix['unread_appended_bytes'] or prefix['incomplete_tail_bytes'])
         if not native:results.append(result);continue
         observed=records[attempt['id']]
         period,selected=_period(observed,request['window'])
@@ -139,7 +142,7 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
         result['requirements']=dict(events=event_checks,fields=field_checks)
         result['assessment']='observations_available' if selected else 'insufficient_data'
         original_parse = source.get('reference_capture', {}).get('original_parse_status', 'parsed')
-        if selected and (source.get('parse_status')!='parsed' or original_parse!='parsed'):
+        if selected and (source.get('parse_status')!='parsed' or original_parse!='parsed' or incomplete_prefix):
             result['assessment']='partial_observations'
         results.append(result)
     usable=[s for s in results if s['assessment'] in ('observations_available','partial_observations')]

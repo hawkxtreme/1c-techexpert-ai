@@ -194,7 +194,7 @@ def inspect_state(state):
             if path.name=='current.json' or re.fullmatch(r'[0-9]+\.json',path.name):
                 schema('profiles',document(path))
 
-        from .tj_reference import has_saved_reference
+        from .tj_reference import saved_reference_formats
         for kind in ('cases','artifacts','comparisons','investigations','custom-templates'):
             for folder in children(state/kind):
                 if kind=='custom-templates' and folder.name=='writer.lock':
@@ -225,8 +225,8 @@ def inspect_state(state):
                 else:
                     report = document(folder/'report.json')
                     schema(kind,report)
-                    if kind == 'cases' and has_saved_reference(report):
-                        schemas['tj-reference-windows'].add(1)
+                    if kind == 'cases':
+                        schemas['tj-reference-windows'].update(saved_reference_formats(report))
                     if (kind=='artifacts' and report.get('kind')=='native-jr'
                             and report['result'].get('profile')==native_jr_sqlite.PROFILE):
                         schemas['jr-lgd'].add(native_jr_sqlite.READER_FORMAT)

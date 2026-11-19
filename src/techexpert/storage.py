@@ -97,10 +97,11 @@ def job_report(bundle):
                             'Проверить причины задержки по дополнительным свидетельствам; очередь пока неизвестна.'])
 
 
-def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None, should_stop=None):
+def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None,
+                prefix_review=None, should_stop=None):
     bundle = load_manifest(manifest_path, reference_sha256=reference_sha256,
                            reference_state=state_dir if reference_state is None else reference_state,
-                           should_stop=should_stop)
+                           prefix_review=prefix_review, should_stop=should_stop)
     if intake is not None:
         selected=intake['selected']
         if len(selected)!=len(bundle['sources']):raise InputError('selected input capture is incomplete')

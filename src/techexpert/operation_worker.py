@@ -13,7 +13,7 @@ if __package__ in (None,''):
 from . import operation_state as state
 from . import __version__,kernel_context
 from .capabilities import execute,outcome as output_status,PROGRAM_EXECUTIONS
-from .inputs import InputError
+from .inputs import InputError, SnapshotReadError
 from .processes import CommandStopped
 from .storage import ROOT,knowledge_revision
 
@@ -95,6 +95,9 @@ def main(folder):
         outcome='invalid_input' if isinstance(exc,(InputError,ValueError)) else 'failed';message=str(exc)[:2048]
         if isinstance(exc, profile_journals.PreviewChanged):
             stop_reason = 'journal_preview_changed'
+        elif (isinstance(exc, SnapshotReadError)
+              and request['arguments'].get('profile_journal', {}).get('read_mode') == profile_journals.FIXED_PREFIX):
+            stop_reason = profile_journals.PREFIX_FAILURES.get(exc.code)
     metrics=dict(elapsed_seconds=time.monotonic()-started,model_tokens=None,harness_memory_bytes=None)
     if command_stop is not None:metrics['command_stop']=command_stop
     if os.name!='nt':
