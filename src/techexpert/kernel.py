@@ -38,7 +38,11 @@ def _limits(value):
 
 
 def _arguments(action,value):
-    if action not in _ACTIONS or not isinstance(value,dict) or set(value)!=_ACTIONS[action]:raise InputError('unsupported kernel action or arguments')
+    required = _ACTIONS.get(action)
+    optional = {'comparison'} if action == 'investigation-progress' else set()
+    if (required is None or not isinstance(value,dict) or not required<=value.keys()
+            or value.keys()-required-optional):
+        raise InputError('unsupported kernel action or arguments')
     if any(not isinstance(v,str) or not 1<=len(v)<=2048 or any(ord(c)<32 for c in v) for v in value.values()):raise InputError('invalid kernel argument')
     if 'run_id' in value and not re.fullmatch('[a-f0-9]{64}',value['run_id']):raise InputError('invalid operation run ID')
     if 'call_id' in value and not re.fullmatch('[a-f0-9]{32}',value['call_id']):raise InputError('invalid kernel call ID')
@@ -50,6 +54,11 @@ def _arguments(action,value):
         from .context_disclosure import compact,validate_request
         from .inputs import json_value
         return dict(selection=compact(validate_request(json_value(value['selection'],reject_duplicates=True))))
+    if action=='investigation-progress' and 'comparison' in value:
+        from .investigation_changes import normalize
+        from .inputs import json_value
+        selected = normalize(json_value(value['comparison'], reject_duplicates=True))
+        return dict(value,comparison=json.dumps(selected, separators=(',', ':')))
     return dict(value,request=str(Path(value['request']).absolute())) if action in _REQUEST_ACTIONS else dict(value)
 
 

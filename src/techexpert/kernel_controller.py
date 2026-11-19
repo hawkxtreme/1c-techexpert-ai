@@ -77,7 +77,8 @@ def main(folder,memory_bytes):
             value=read(state,json_value(args['selection'],reject_duplicates=True))
         elif action=='investigation-progress':
             from .investigation_progress import view
-            progress=view(state,args['investigation_id'])
+            comparison = json_value(args['comparison'], reject_duplicates=True) if 'comparison' in args else None
+            progress=view(state,args['investigation_id'],comparison=comparison)
             value=dict(status='partial' if progress['operation_inventory']=='incomplete' else 'succeeded',
                        operation='investigation.progress',data=progress)
         elif action=='cancel':value=operations.cancel(state,args['run_id'],executor_id=args['executor_id'])

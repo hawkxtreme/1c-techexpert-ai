@@ -146,7 +146,9 @@ class OccurrenceResumeTests(unittest.TestCase):
             *resumed['attachments'],self.old['attachments'][1]]),expected_revision=3)
         self.assertEqual(linked.get('source_gaps',[]),[])
         self.assertEqual(linked['evidence'],resumed['evidence'])
-        self.assertEqual(linked['assessment_status'],'not_provided')
+        self.assertEqual(linked['assessment_status'],'stale_due_to_revision')
+        self.assertIsNone(linked['assessment'])
+        self.assertEqual(investigations.load(self.state,self.iid,revision=2)['assessment'],self.old['assessment'])
 
     def test_changed_material_with_a_historical_id_cannot_close_the_gap(self):
         from hashlib import sha256

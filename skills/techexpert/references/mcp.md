@@ -35,6 +35,12 @@ python scripts/mcp_sc01_smoke.py --state-dir D:/private/techexpert-mcp-test --pr
 
 source.compare доступен как techexpert_source_compare. Это read-only инструмент с двумя точными ссылками на сохранённые источники; форма before/after одинакова в CLI, MCP и CodeMode. Он не запускает сбор и не требует background-job профиля. Пользовательские снимки и версии отчётов сохраняются; результат требует интерпретации текущим harness.
 
+## Ход и продолжение расследования
+
+`investigation-progress ID` возвращает текущую ревизию, статус оценки и метки сохранённых материалов. Для сравнения добавь `--from-revision N`. В MCP передай `comparison={"before_revision":N}` в `techexpert_investigation_progress`. Если нужен следующий фрагмент, укажи `--to-revision` и `--offset` из `after_revision` и `next_offset` ответа. Поля MCP — `after_revision` и `offset`.
+
+Используй `comparison` для изменений во вложениях, основаниях, фактах и статусах выводов. При `linked_basis_changed` пересмотри вывод по относящимся к нему доказательствам. Значения измерений запрашивай у разрешённого представления. `reprocessed_input_bytes` показывает объём пересчитанных сохранённых входов.
+
 ## Первичный приём ТЖ и ЖР
 
 `context-intake REQUEST.json` использует поля управляемого запроса. Укажи `context.investigation_id` и `context.expected_revision`, полученные через `investigation --handle` или `investigation-create --handle`. В MCP используй `techexpert_context_intake` с теми же полями запроса, кроме `schema_version`. Агент готовит запрос из выбранных пользователем источников.

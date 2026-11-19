@@ -67,6 +67,73 @@ class InvestigationProgressTests(unittest.TestCase):
         self.assertEqual(self.view()['state'], 'awaiting_agent')
         self.assertEqual(investigations.load(self.state,self.iid,revision=2), doc)
 
+    def test_revision_comparison_pages_changed_materials_facts_and_assessment(self):
+        original = storage.investigate(storage.ROOT/'examples/sc01/case.json', self.state)
+        new_case = storage.investigate(storage.ROOT/'tests/fixtures/order-load/cached.json', self.state)
+        original_ref = dict(id='A-1', kind='case', target_id=original['case_id'])
+        new_ref = dict(id='A-2', kind='case', target_id=new_case['case_id'])
+        old_ref = dict(id='E-1', attachment='A-1', record='s1:2')
+        new_evidence = dict(id='E-2', attachment='A-2', record='s1:1')
+
+        def facts(ref, evidence):
+            return [dict(id='F-1', text='Закрытый факт', evidence=[evidence], measurement=dict(
+                         attachment=ref, pointer='/durations_seconds/execution'))]
+
+        old = investigations.revise(self.state, self.iid, dict(attachments=[original_ref], evidence=[old_ref],
+            facts=facts('A-1', 'E-1'), hypotheses=[dict(id='H-1',text='Закрытая гипотеза',status='testing',evidence=[])],
+            execution_status='completed',stage_decision=dict(reason='sufficient_answer',detail='Закрытая причина остановки'),
+            assessment=dict(summary='Закрытая прежняя оценка',cause_state='insufficient_data',
+                            evidence=[],limitations=[],recommendations=[],references=[]),
+            improvement=dict(applied='reported',comparability='unknown',effect='unknown',goal='unknown',
+                             recurrence='unknown',window=None,evidence=[])),expected_revision=1)
+        investigations.revise(self.state, self.iid, dict(attachments=[original_ref,new_ref],
+            evidence=[old_ref,new_evidence], facts=facts('A-2','E-2'),
+            hypotheses=[dict(id='H-1',text='Закрытая гипотеза',status='supported',evidence=['E-2'])]),
+            expected_revision=2)
+        latest = investigations.revise(self.state,self.iid,dict(
+            episode=dict(description='Закрытое уточнение')),expected_revision=3)
+        status = self.cli('investigation-progress',self.iid)['data']
+        self.assertEqual((status['state'],status['reason']),('awaiting_agent','assessment_stale'))
+        self.assertEqual(status['resume']['assessment_status'],'stale_due_to_revision')
+        self.assertEqual(status['resume']['last_saved_assessment_revision'],2)
+        self.assertEqual([item['id'] for item in status['resume']['attachments']],['A-1','A-2'])
+        first = self.cli('investigation-progress',self.iid,'--from-revision',2,'--limit',2)['data']
+        diff = first['comparison']
+        self.assertEqual((diff['before_revision'],diff['after_revision']),(2,4))
+        self.assertTrue(diff['analysis_basis_changed'])
+        self.assertEqual(diff['assessment']['after']['status'],'stale_due_to_revision')
+        self.assertEqual(diff['improvement']['before']['applied'],'reported')
+        self.assertIsNone(diff['improvement']['after'])
+        self.assertEqual([(row['kind'],row['id'],row['change']) for row in diff['items']],
+                         [('attachment','A-2','added'),('evidence','E-2','added')])
+        self.assertEqual(diff['next_offset'],2)
+        self.assertNotIn('Закрыт',json.dumps(first,ensure_ascii=False))
+        self.cli('investigation-progress', self.iid, '--from-revision', 2, '--offset', 2, expected=2)
+
+        investigations.revise(self.state,self.iid,dict(open_questions=['Проверить эффект']),expected_revision=4)
+        second = self.cli('investigation-progress',self.iid,'--from-revision',2,'--to-revision',4,'--offset',2)['data']
+        self.assertEqual(second['revision'],5)
+        self.assertEqual(second['comparison']['after_revision'],4)
+        fact,hypothesis = second['comparison']['items']
+        self.assertEqual(fact['id'],'F-1')
+        self.assertNotEqual(old['facts'][0]['measurement']['value'], latest['facts'][0]['measurement']['value'])
+        self.assertEqual(fact['before']['measurement']['attachment'], 'A-1')
+        self.assertEqual(fact['after']['measurement']['attachment'], 'A-2')
+        self.assertTrue(fact['measurement_value_changed'])
+        self.assertEqual((hypothesis['before']['status'],hypothesis['after']['status']),('testing','supported'))
+        self.assertIsNone(second['comparison']['next_offset'])
+        self.assertEqual(investigations.load(self.state,self.iid,revision=2),old)
+        replacement = storage.investigate(storage.ROOT/'tests/fixtures/order-load/cached.json', self.state)
+        investigations.revise(self.state,self.iid,dict(
+            attachments=[original_ref,dict(new_ref,target_id=replacement['case_id'])],
+            evidence=[old_ref,new_evidence]),expected_revision=5)
+        changed = self.cli('investigation-progress',self.iid,'--from-revision',5)['data']['comparison']
+        by_id = {row['id']:row for row in changed['items']}
+        self.assertTrue(by_id['F-1']['linked_basis_changed'])
+        self.assertFalse(by_id['F-1']['measurement_value_changed'])
+        self.assertTrue(by_id['F-1']['measurement_basis_changed'])
+        self.assertTrue(by_id['H-1']['linked_basis_changed'])
+
     def test_confirmed_live_previous_revision_and_own_cancel_request_have_distinct_states(self):
         active, record = self.controlled_run('active')
         other = investigations.create(self.state, dict(task='Другая задача'))

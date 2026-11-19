@@ -106,11 +106,12 @@ def _record(folder, operation, revision):
     return row
 
 
-def _case_volume(state, result, remaining):
+def _case_volume(state, result, remaining, *, selected=None):
     from .operations import _snapshot_folder
 
     try:
-        case, = [item for item in result['snapshots'] if item['kind'] == 'cases']
+        case, = [item for item in result['snapshots']
+                 if item['kind'] == 'cases' and (selected is None or item['id'] == selected)]
         folder = _snapshot_folder(state, 'cases', case['id'])
         path = fs.safe(folder/'report.json')
         info = path.lstat()
@@ -151,7 +152,13 @@ def _result_metadata(state, row, remaining):
                 raise InputError('result manifest identity mismatch')
             row['result_receipt'] = 'checked'
             if result['snapshots']:
-                row['captured_input_bytes'], remaining = _case_volume(state, result, remaining)
+                data = result['data'] or {}
+                if 'time_correction' in data:
+                    derived = data.get('material', {}).get('id')
+                    if derived is not None:
+                        row['reprocessed_input_bytes'], remaining = _case_volume(state, result, remaining, selected=derived)
+                else:
+                    row['captured_input_bytes'], remaining = _case_volume(state, result, remaining)
     except ERRORS:
         if row['state'] in ('succeeded','partial') or row['result_receipt'] != 'not_observed':
             row.update(result_receipt='unverified', saved_result_bytes=None, captured_input_bytes=None)
@@ -199,22 +206,39 @@ def _phase(doc, rows, complete):
         _, state, message = DECISIONS[reason]
         return state, reason, 'harness_reported', message
     execution = doc['execution_status']
+    if doc.get('assessment_status') == 'stale_due_to_revision' and execution in ('completed', 'partial'):
+        return 'awaiting_agent', 'assessment_stale', 'saved_report', 'После изменения данных оценку нужно пересмотреть.'
     if execution in ('completed','cancelled','error'):
         state = {'completed':'completed','cancelled':'stopped','error':'error'}[execution]
         return state, None, 'harness_reported', 'Сохранён итог этапа. Причина остановки не записана.'
     return 'awaiting_agent', None, 'saved_report', 'Этап можно продолжить в текущем чате.'
 
 
-def view(state, investigation_id):
-    from . import context_policy, investigations, occurrence_resume
+def view(state, investigation_id, *, comparison=None):
+    from . import context_policy, investigation_changes, investigations, occurrence_resume
 
     state = fs.safe(state)
     head = investigations._read_head(state, investigation_id)
+    selected = set()
+    if comparison is not None:
+        comparison = investigation_changes.normalize(comparison)
+        before = comparison['before_revision']
+        after = comparison.get('after_revision', head['revision'])
+        if not before <= after <= head['revision']:
+            raise InputError('comparison requires two committed revisions in order')
+        selected = {before, after}
     chain = context_policy.verified_revisions(state, investigation_id, head['revision'])
     doc = next(chain)
     revisions = {doc['revision']: (fs.digest(doc), doc['profile_sha256'])}
+    endpoints = {doc['revision']: doc} if doc['revision'] in selected else {}
+    last_assessment = doc['revision'] if doc['assessment'] is not None else None
     for previous in chain:
-        revisions[previous['revision']] = fs.digest(previous), previous['profile_sha256']
+        number = previous['revision']
+        revisions[number] = fs.digest(previous), previous['profile_sha256']
+        if number in selected:
+            endpoints[number] = previous
+        if last_assessment is None and previous['assessment'] is not None:
+            last_assessment = number
     validate_decision(doc)
     stage = doc.get('workflow_stage','initial_analysis')
     collection = (doc.get('observation_plan') or {}).get('collection_state','unknown')
@@ -235,10 +259,8 @@ def view(state, investigation_id):
     for row in recent:
         remaining = _result_metadata(state, row, remaining)
     phase, reason, basis, message = _phase(doc, rows, complete)
-    if investigations._read_head(state, investigation_id) != head:
-        raise InputError('investigation changed during the observation; repeat the status read')
     unknown = not complete or any(row['state'] in ('unverified','stop_requested') for row in rows)
-    return dict(schema_version=FORMAT, investigation_id=investigation_id, revision=doc['revision'],
+    result = dict(schema_version=FORMAT, investigation_id=investigation_id, revision=doc['revision'],
                 workflow_stage=stage, state=phase, reason=reason,
                 basis=basis, message=message, saved_execution_status=doc['execution_status'],
                 saved_stage_reason=(doc.get('stage_decision') or {}).get('reason'), cause_state=doc['cause_state'],
@@ -250,6 +272,13 @@ def view(state, investigation_id):
                 source_gaps=occurrence_resume.public_gaps(doc),
                 available_facts=dict(saved=len(doc['facts']), with_tool_measurement=sum('measurement' in row for row in doc['facts']),
                                      evidence_references=len(doc['evidence'])),
+                resume=investigation_changes.resume(doc, last_assessment),
                 scope='context-bound local operations and saved report metadata',
                 collection_observation='saved_plan_only', bytes_scope='saved result file size and source lengths recorded at capture',
                 collector_stop_verified=None, evidence_content_revalidated=False)
+    if comparison is not None:
+        result['comparison'] = investigation_changes.compare(endpoints[before], endpoints[after],
+            offset=comparison['offset'], limit=comparison['limit'])
+    if investigations._read_head(state, investigation_id) != head:
+        raise InputError('investigation changed during the observation; repeat the status read')
+    return result

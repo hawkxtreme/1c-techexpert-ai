@@ -4,6 +4,7 @@ import json
 
 from . import __version__,capabilities as cap,check_history,investigation_task,os_observation,responses
 from .inputs import InputError
+from .investigation_changes import schema as comparison_schema
 
 MODERN='2026-07-28'
 LEGACY='2025-11-25'
@@ -13,8 +14,8 @@ IDENTITY=cap.string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
 RUN=cap.string(64,pattern='[a-f0-9]{64}')
 CALL=cap.string(32,pattern='[a-f0-9]{32}')
 CONTROLS={
-    'investigation_progress':('investigation-progress',cap.obj(dict(investigation_id=CALL),['investigation_id']),
-        'Observe one investigation and its context-bound local checks. Returns saved and live status metadata only.'),
+    'investigation_progress':('investigation-progress',cap.obj(dict(investigation_id=CALL,comparison=comparison_schema(cap)),['investigation_id']),
+        'Resume one investigation, observe bound local checks or compare two committed revisions. Returns status and evidence references.'),
     'operation_status':('status',cap.obj(dict(run_id=RUN),['run_id']),'Inspect run and live ownership. Unknown is not stopped; never take over by age.'),
     'operation_result':('result',cap.obj(dict(run_id=RUN),['run_id']),'Verify and replay a retained result without accessing original sources or repeating work.'),
     'operation_reconcile':('reconcile',cap.obj(dict(run_id=RUN),['run_id']),'Recover sealed work only after verified stop; no worker restart or overwriting a product.'),
@@ -162,7 +163,10 @@ def prepare(name,arguments,profile='full'):
     suffix=name.removeprefix('techexpert_')
     if name.startswith('techexpert_') and suffix in CONTROLS:
         action,schema,_=CONTROLS[suffix]
-        return action,cap.validate(arguments,schema),None
+        selected = cap.validate(arguments,schema)
+        if action == 'investigation-progress' and 'comparison' in selected:
+            selected['comparison'] = json.dumps(selected['comparison'], separators=(',', ':'))
+        return action,selected,None
     raise InputError('Unknown tool; inspect tools/list.')
 
 

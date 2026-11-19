@@ -144,6 +144,10 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(replay['attachment'], corrected['attachment'])
         self.assertEqual(replay['data'], corrected['data'])
         self.assertEqual(investigations.load(self.state, self.iid)['revision'], 3)
+        progress = self.cli('investigation-progress', self.iid)[1]['data']
+        check = next(row for row in progress['recent_checks'] if row['run_id'] == corrected['run_id'])
+        self.assertIsNone(check['captured_input_bytes'])
+        self.assertEqual(check['reprocessed_input_bytes'], storage.case_source_path(self.state, derived, 's1').stat().st_size)
         from src.techexpert.update_state import inspect_state
         schemas = inspect_state(self.state)['schemata']
         self.assertEqual(schemas['operations'], [1])

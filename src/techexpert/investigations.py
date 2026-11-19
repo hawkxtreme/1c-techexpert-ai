@@ -32,6 +32,9 @@ EXECUTIONS=('completed','partial','error','cancelled')
 SUPPLEMENTAL_SCOPES = ('fix_verification', 'apdex_preparation')
 STAGES=('initial_analysis','prepare_observation','awaiting_occurrence','analyze_episode','verify_fix','closed')
 COLLECTION_STATES=('unknown','not_started','launch_reported','receiving_data','stopped_reported')
+IMPROVEMENT_STATES = dict(applied=('proposed','reported','evidenced'), comparability=('comparable','not_comparable','unknown'),
+                          effect=('better','no_confirmed_change','worse','unknown'), goal=('reached','not_reached','unknown'),
+                          recurrence=('observed','not_observed_in_window','unknown'))
 
 def _digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
 def _object(value,allowed,required=()):
@@ -265,8 +268,7 @@ def _validate(state_dir,doc):
     improvement=doc['improvement']
     if improvement is not None:
         _object(improvement,('applied','comparability','effect','goal','recurrence','window','evidence'),('applied','comparability','effect','goal','recurrence','window','evidence'))
-        enums=dict(applied=('proposed','reported','evidenced'),comparability=('comparable','not_comparable','unknown'),effect=('better','no_confirmed_change','worse','unknown'),goal=('reached','not_reached','unknown'),recurrence=('observed','not_observed_in_window','unknown'))
-        for key,allowed in enums.items():
+        for key,allowed in IMPROVEMENT_STATES.items():
             if improvement[key] not in allowed:raise InputError('invalid improvement status')
         _references(improvement['evidence'],eids,required=improvement['applied']=='evidenced' or improvement['effect']!='unknown' or improvement['goal']!='unknown' or improvement['recurrence']!='unknown')
         if improvement['window'] is not None:_text(improvement['window'],1024)
@@ -628,7 +630,8 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
             doc['assessment']=old_assessment;doc['assessment_status']='provided_by_harness' if old_assessment else 'not_provided'
             doc['assessment_harness']=deepcopy(doc['harness']) if old_assessment else None
         elif basis_changed:
-            doc['assessment_status']='stale_due_to_revision' if previous['assessment'] else 'not_provided'
+            stale = previous['assessment'] is not None or previous.get('assessment_status') == 'stale_due_to_revision'
+            doc['assessment_status']='stale_due_to_revision' if stale else 'not_provided'
             doc['assessment_harness']=None
         else:doc['assessment']=old_assessment
         if basis_changed and 'improvement' not in patch:doc['improvement']=None
