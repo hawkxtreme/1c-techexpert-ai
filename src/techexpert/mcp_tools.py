@@ -76,16 +76,19 @@ def input_schema(operation):
 
 def intake_schema():
     from .context_intake import OPERATIONS
-    from . import profile_journals
+    from . import profile_journals, tj_time_correction
     properties = input_schema('case.analyze')['properties']
     properties.update(operation=cap.string(64,enum=list(OPERATIONS)),
                       arguments=dict(type='object',maxProperties=32))
     result = cap.obj(properties,('operation','operation_key','executor_id','arguments','context'))
     result['oneOf'] = []
     for op in OPERATIONS:
-        schema = deepcopy(cap.ROUTES[op]['input_schema'])
+        modes = [deepcopy(cap.ROUTES[op]['input_schema'])]
         if op in profile_journals.OPERATIONS:
-            schema = dict(anyOf=[schema, profile_journals.schema(cap, op)])
+            modes.append(profile_journals.schema(cap, op))
+        if op == 'case.analyze':
+            modes.append(tj_time_correction.schema(cap))
+        schema = dict(anyOf=modes) if len(modes) > 1 else modes[0]
         result['oneOf'].append(dict(properties=dict(operation=dict(const=op), arguments=schema)))
     return result
 

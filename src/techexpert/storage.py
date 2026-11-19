@@ -98,10 +98,11 @@ def job_report(bundle):
 
 
 def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None,
-                prefix_review=None, should_stop=None, logcfg_observation=None):
+                prefix_review=None, should_stop=None, logcfg_observation=None, time_correction=None):
     bundle = load_manifest(manifest_path, reference_sha256=reference_sha256,
                            reference_state=state_dir if reference_state is None else reference_state,
-                           prefix_review=prefix_review, should_stop=should_stop)
+                           prefix_review=prefix_review, should_stop=should_stop,
+                           retained=time_correction['input'] if time_correction is not None else None)
     if intake is not None:
         selected=intake['selected']
         if len(selected)!=len(bundle['sources']):raise InputError('selected input capture is incomplete')
@@ -151,6 +152,12 @@ def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None,
                   baseline=dict(reported_seconds=bundle['manifest'].get('reported_normal_seconds'),
                                 status='user_reported_not_measured'),
                   sources=[{k: v for k, v in source.items() if k != 'data'} for source in bundle['sources']])
+    if time_correction is not None:
+        from .tj_time_correction import summarize
+        result['time_correction'] = summarize(time_correction, result)
+        original_review = time_correction['original'].get('reference_plan_sha256')
+        if original_review is not None:
+            result['reference_plan_sha256'] = original_review
     if len(result['timeline']) > 200:
         result['timeline'] = result['timeline'][:200]
         result['limitations'].append(dict(code='timeline_preview_limited', limit=200))
@@ -158,10 +165,10 @@ def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None,
     if len((json.dumps(result,ensure_ascii=False,indent=2,allow_nan=False)+'\n').encode('utf-8')) > MAX_REPORT_BYTES:
         raise InputError('report exceeds the resumable case size limit; narrow the input')
     folder = Path(state_dir) / 'cases' / result['case_id']
-    if reference_sha256 is not None:
+    if reference_sha256 is not None or time_correction is not None:
         from .operation_state import private, safe
         if should_stop and should_stop():
-            raise InputError('external TJ observation stopped before saving the case')
+            raise InputError('TJ observation stopped before saving the case')
         folder = safe(folder)
         folder.mkdir(parents=True, exist_ok=False)
         private(folder)

@@ -102,6 +102,59 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(code, 0, allowed)
         self.assertEqual(allowed['data']['records'][0]['duration_us'], 10)
 
+    def test_retained_tj_time_correction_reanalyzes_bytes_in_a_new_revision(self):
+        code, original = self.cli('context-intake', self.write_request(self.request()))
+        self.assertEqual(code, 0, original)
+        original_case = original['data']['material']['id']
+        old_report = storage.case_folder(self.state, original_case) / 'report.json'
+        previous = old_report.read_bytes()
+        old_revision = investigations.load(self.state, self.iid, revision=2)
+        self.source.unlink()
+        self.manifest.unlink()
+
+        selection = dict(attachment=original['attachment']['id'],
+                         offsets=[dict(source_id='s1', utc_offset='+02:00')],
+                         window=dict(start='2026-11-15T07:00:00Z', end='2026-11-15T08:00:00Z'))
+        request = self.request(args=dict(retained_tj=selection), key='correct-retained-tj-time')
+        request['context']['expected_revision'] = 2
+        spec = self.write_request(request)
+        code, corrected = self.cli('context-intake', spec)
+        self.assertEqual(code, 0, corrected)
+        self.assertEqual(corrected['attachment']['revision'], 3)
+        correction = corrected['data']['time_correction']
+        self.assertEqual(correction['original_case_id'], original_case)
+        change, = correction['sources']
+        self.assertEqual((change['before']['utc_offset'], change['after']['utc_offset']), ('+03:00', '+02:00'))
+        self.assertEqual((change['before']['records_in_window'], change['after']['records_in_window']), (0, 1))
+        derived = corrected['data']['material']['id']
+        self.assertNotEqual(derived, original_case)
+        record, = storage.list_native_events(self.state, derived)['records']
+        self.assertEqual(record['timestamp_utc'], '2026-11-15T07:10:00.000000+00:00')
+        old_evidence = storage.read_evidence(self.state, original_case, 's1:1')
+        new_evidence = storage.read_evidence(self.state, derived, 's1:1')
+        for field in ('sha256', 'line', 'byte_start', 'byte_end'):
+            self.assertEqual(new_evidence[field], old_evidence[field])
+        self.assertEqual(old_report.read_bytes(), previous)
+        self.assertEqual(investigations.load(self.state, self.iid, revision=2), old_revision)
+        self.assertEqual([item['target_id'] for item in investigations.load(self.state, self.iid)['attachments']],
+                         [original_case, derived])
+        replayed_code, replay = self.cli('context-intake', spec)
+        self.assertEqual(replayed_code, 0, replay)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], corrected['attachment'])
+        self.assertEqual(replay['data'], corrected['data'])
+        self.assertEqual(investigations.load(self.state, self.iid)['revision'], 3)
+        from src.techexpert.update_state import inspect_state
+        schemas = inspect_state(self.state)['schemata']
+        self.assertEqual(schemas['operations'], [1])
+        self.assertEqual(schemas['context-intake'], [1, 11])
+        old_snapshot = storage.case_source_path(self.state, original_case, 's1')
+        old_snapshot.write_bytes(old_snapshot.read_bytes().replace(b'-10,CALL', b'-11,CALL'))
+        code, refused = self.cli('context-intake', spec)
+        self.assertEqual(code, 2, refused)
+        self.assertNotIn('attachment', refused)
+        self.assertEqual(len(list((self.state / 'cases').iterdir())), 2)
+
     def test_later_binding_needs_the_same_environment_and_an_exact_revision(self):
         from src.techexpert import context_intake
         prepared = context_intake.prepare(self.request())
@@ -455,6 +508,24 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(code, 1, replay)
         self.assertTrue(replay['replayed'])
         self.assertEqual(replay['attachment'], result['attachment'])
+
+        selection = dict(retained_tj=dict(attachment=result['attachment']['id'],
+                         offsets=[dict(source_id='s1', utc_offset='+02:00')],
+                         window=dict(start='2026-11-15T07:10:00Z', end='2026-11-15T07:15:00Z')))
+        request = self.request('case.analyze', selection, 'correct-prefix-time')
+        request['context']['expected_revision'] = result['attachment']['revision']
+        code, corrected = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 0, corrected)
+        self.assertEqual(corrected['data']['prefix_captures'], result['data']['prefix_captures'])
+        change, = corrected['data']['time_correction']['sources']
+        self.assertTrue(change['retained_capture_window_only'])
+        self.assertEqual((change['before']['records_in_window'], change['after']['records_in_window']), (0, 1))
+        derived = storage.verified_case(self.state, corrected['data']['material']['id'])
+        self.assertEqual(derived['sources'][0]['reference_capture'], reference)
+        saved = derived['source_coverage']['sources'][0]['reference_window']
+        self.assertEqual(saved['window_basis'], 'selected_before_time_correction')
+        recaptured = storage.read_evidence(self.state, derived['case_id'], 's1:1')
+        self.assertEqual(recaptured['original_location'], evidence['original_location'])
 
     def test_retained_logcfg_supplies_parser_for_an_explicitly_selected_hourly_tj(self):
         from src.techexpert import artifacts

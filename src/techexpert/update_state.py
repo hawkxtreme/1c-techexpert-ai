@@ -141,9 +141,12 @@ def inspect_state(state):
                         raise InputError('operation status identity mismatch')
                     plan = document(folder/'plan.json')
                     fs.checked_plan(folder,plan,document(folder/'plan-receipt.json'))
-                    if plan['request'].get('operation') == context_program.OPERATION:
+                    request = plan['request']
+                    if request.get('operation') == context_program.OPERATION:
                         schema('context-program',plan)
-                    else:
+                    elif not (context_intake.protects(request) and 'retained_tj' in request['arguments']):
+                        # The protected correction plan is covered by its intake reader
+                        # capability below; the normal operation status stays schema 1.
                         schema(kind,plan)
                     if 'check_binding' in plan:
                         binding = check_history.saved_binding(plan)

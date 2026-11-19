@@ -49,6 +49,8 @@ def validate(request):
 
 
 def reader_capability(request):
+    if 'retained_tj' in request['arguments']:
+        return 11
     selector = request['arguments'].get('profile_journal')
     if selector is not None:
         from .logcfg_observation import FILE_LOOKUP_CAPABILITY
@@ -121,6 +123,8 @@ def metadata(operation, data):
         prefixes = [capture for source in data['sources'] if (capture := prefix_summary(source)) is not None]
         if prefixes:
             result['prefix_captures'] = prefixes
+        if 'time_correction' in data:
+            result['time_correction'] = data['time_correction']
     return result
 
 
@@ -198,6 +202,11 @@ def _bind(state, plan, value, revision):
         environment, _ = context_policy.scope(before)
         if context_policy.scope(doc)[0] != environment:
             return _linked(value, 'environment_changed')
+        if 'retained_tj' in plan['request']['arguments']:
+            from .tj_time_correction import attachment
+            selected_attachment = plan['request']['arguments']['retained_tj']['attachment']
+            if attachment(doc, selected_attachment) != attachment(before, selected_attachment):
+                return _linked(value, 'revision_conflict')
         if _same_attachment(doc, label, material, evidence, parent):
             return _linked(value, 'attached', doc=doc, label=label, evidence=evidence)
         if selected < head:

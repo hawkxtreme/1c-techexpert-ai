@@ -54,6 +54,8 @@ def plan(folder):
     return checked_plan(folder,value,receipt)
 
 def plan_schema(request):
+    if request.get('operation') == 'case.analyze' and 'retained_tj' in request['arguments']:
+        return 2
     if request.get('operation') != 'code.context':
         return 1
     from .context_disclosure import VIEW_READER_CAPABILITIES

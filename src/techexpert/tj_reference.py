@@ -333,6 +333,8 @@ def view(source):
     if prefix_summary(source) is not None:
         result.update(observed_sizes=capture['observed_sizes'], incomplete_tail=capture['incomplete_tail'],
                       original_sha256_scope='reviewed_prefix')
+    if source.get('retained_interpretation'):
+        result['window_basis'] = 'selected_before_time_correction'
     return result
 
 

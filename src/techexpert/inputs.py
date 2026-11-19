@@ -177,7 +177,7 @@ def read_manifest(path, *, tolerant_sources=False):
 
 
 def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, reference_state=None,
-                  prefix_review=None, should_stop=None):
+                  prefix_review=None, should_stop=None, retained=None):
     path, raw, manifest = read_manifest(path, tolerant_sources=tolerant_sources)
     from .source_coverage import validate_collection
     selection = manifest.get('selection')
@@ -222,6 +222,14 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
     records_seen, omitted_details = 0, 0
     for source_number, spec in enumerate(specs, 1):
         source_id=f's{source_number}'
+        saved = None
+        if retained is not None:
+            if should_stop and should_stop():
+                raise InputError('retained TJ correction stopped')
+            saved = retained['sources'].get(source_id)
+            if saved is None:
+                attempts.append(dict(retained['attempts'][source_id]))
+                continue
         attempt=dict(id=source_id,format=spec.get('format') if isinstance(spec,dict) and isinstance(spec.get('format'),str) else None,
             path=spec.get('path') if isinstance(spec,dict) and isinstance(spec.get('path'),str) else None,availability='not_attempted')
         attempts.append(attempt)
@@ -275,8 +283,17 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
                 continue
             raise InputError('source context supports bounded node, process and epoch labels')
         reference = references.get(source_id)
-        try:source_path=Path(reference['path']) if reference else source_path.absolute() if read_mode=='tj-prefix-v1' else source_path.resolve()
+        try:
+            if saved is not None:
+                from .operation_state import safe
+                source_path = safe(source_path)
+                if not stat.S_ISREG(source_path.lstat().st_mode):
+                    raise InputError('retained input is not an ordinary snapshot')
+            else:
+                source_path=Path(reference['path']) if reference else source_path.absolute() if read_mode=='tj-prefix-v1' else source_path.resolve()
         except (OSError,ValueError) as exc:
+            if saved is not None:
+                raise
             attempt['availability']='access_denied' if isinstance(exc,PermissionError) else 'read_error'
             limits.append(dict(code='source_unavailable',source=source_id,detail=str(exc)))
             continue
@@ -305,7 +322,7 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
             else:data = read_snapshot(source_path,maximum)
             total += len(data)
         except (OSError, InputError) as exc:
-            if reference:
+            if reference or saved is not None:
                 raise
             attempt['availability']=('not_found' if isinstance(exc,FileNotFoundError) else 'access_denied' if isinstance(exc,PermissionError)
                 else exc.code if isinstance(exc,SnapshotReadError) else 'read_error')
@@ -313,8 +330,19 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
             continue
         attempt.update(availability='captured',path=str(source_path))
         digest = hashlib.sha256(data).hexdigest()
+        if saved is not None:
+            if (saved['format'], saved['size'], saved['sha256']) != (spec['format'], len(data), digest):
+                raise InputError('retained input does not match its saved snapshot')
+            attempt['path'] = saved['path']
+            acquisition = saved.get('acquisition')
+            reference_capture = saved.get('reference_capture')
         source = dict(id=source_id, path=str(source_path), sha256=digest, size=len(data),
                       format=spec['format'], data=data,collection=collection)
+        if saved is not None:
+            source['path'] = saved['path']
+            if 'input_origin' in saved:
+                source['input_origin'] = saved['input_origin']
+            source['retained_interpretation'] = True
         if acquisition is not None:source['acquisition']=acquisition
         if reference_capture is not None:
             source['reference_capture'] = reference_capture
@@ -359,6 +387,8 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
         if profile is not None:
             from .observations import with_evidence
             budget = reference_capture['selected_records'] if reference_capture is not None else max(0, MAX_EVENTS - records_seen)
+            if saved is not None:
+                budget = min(budget, saved.get('record_budget', budget))
             parsed = parse_tj(data, profile, max_records=budget, max_record_bytes=MAX_RECORD_BYTES)
             if reference_capture is not None and len(parsed['records']) != budget:
                 raise InputError('retained external TJ window does not match its capture')

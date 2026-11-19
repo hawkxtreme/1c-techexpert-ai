@@ -71,6 +71,10 @@ def main(folder):
         if selected_journal:
             data, targets = profile_journals.execute(operation, args, Path(plan['state_dir']), folder/'work-state',
                                                       plan['context'], stop=stop)
+        elif 'retained_tj' in args:
+            from .tj_time_correction import execute as correct_tj_time
+            data, targets = correct_tj_time(Path(plan['state_dir']), folder/'work-state', args['retained_tj'],
+                                            plan['context'], stop=stop)
         else:
             data,targets=execute(operation,args,Path(plan['state_dir']),folder/'work-state',
                                  stop=stop, memory_bytes=min(memory,bound))

@@ -132,6 +132,8 @@ def _tj_source(state, case_id, source, bounds, wanted, remaining_records):
         collection_basis=collection.get('status', 'unknown'), collection_window=declared_start_end)
     if prefix is not None:
         result.update(snapshot_scope='saved_prefix_window', prefix_capture=prefix)
+    if reference and source.get('retained_interpretation'):
+        result['snapshot_window_basis'] = 'selected_before_time_correction'
     if wanted:
         status = ('declaration_conflicts_with_observed' if contradicting_declaration else
                   'observed_in_requested_scope' if events[wanted] else

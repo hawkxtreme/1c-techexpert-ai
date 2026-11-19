@@ -162,6 +162,9 @@ def _promote(state,folder,worker):
         elif kind=='artifacts' and worker['data'].get('kind')==capabilities._fix.KIND:
             from .case_retention import case_writers
             guard = case_writers(state,(item['id'] for item in worker['data']['result']['dependencies'] if item['kind']=='cases'))
+        elif kind == 'cases' and 'time_correction' in worker['data']:
+            from .case_retention import case_writers
+            guard = case_writers(state, (worker['data']['time_correction']['original_case_id'],))
         else:
             guard = nullcontext()
         with guard:
@@ -171,6 +174,10 @@ def _promote(state,folder,worker):
                 loaded = _verify_target(root, kind, identifier, inputs=state)
                 if fs.digest(loaded) != expected:
                     raise InputError('operation product disagrees with sealed worker output')
+                if kind == 'cases' and 'time_correction' in loaded:
+                    from .tj_time_correction import verify_parent
+                    parent = _verify_target(state, 'cases', loaded['time_correction']['original_case_id'])
+                    verify_parent(loaded, parent)
 
             verify()
             if source.exists():
@@ -237,6 +244,9 @@ def _snapshots(state,operation,args,data,*,output=None):
         profile_journals.pin_prefix(operation, args, data, add)
     if 'logcfg_id' in selector or logcfg_observation.INSPECTION_SELECTORS & selector.keys():
         profile_journals.pin_logcfg(operation, selector, data, add)
+    if 'retained_tj' in args:
+        from .tj_time_correction import pin
+        pin(args, data, add)
     return references
 
 def _worker(folder):
