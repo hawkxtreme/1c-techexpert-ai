@@ -9,6 +9,7 @@ from . import apdex_preparation
 from .context_disclosure import APDEX_VIEW, VIEW_READER_CAPABILITIES
 from .context_os_window import READER_CAPABILITY as OS_WINDOW_READER
 from .os_storage import READER_CAPABILITY as OS_STORAGE_READER
+from .os_process import READER_CAPABILITY as OS_PROCESS_READER
 from .inputs import InputError, json_value, read_snapshot
 from . import logcfg_observation, native_tj
 
@@ -160,8 +161,11 @@ def inspect_state(state):
                             schemas['check-history'].add(binding['schema_version'])
                     if 'observation' in plan['request']:
                         schemas['os-observation'].add(os_observation.FORMAT)
-                    if 'storage_path' in (plan.get('os_observation') or {}).get('collector',{}):
+                    collector=(plan.get('os_observation') or {}).get('collector',{})
+                    if 'storage_path' in collector:
                         schemas['os-observation'].add(OS_STORAGE_READER)
+                    if 'process_target' in collector:
+                        schemas['os-observation'].add(OS_PROCESS_READER)
                     if 'presentation' in plan['request']:
                         if not context_intake.protects(plan['request']):
                             raise InputError('unknown retained operation presentation')
@@ -263,6 +267,8 @@ def inspect_state(state):
                         schemas['context-disclosure'].add(context_excerpt.READER_CAPABILITY)
                         if fs.writer_active(folder):
                             problems.append(dict(kind='context-excerpt', id=folder.name, status='active'))
+                    if kind=='artifacts' and report.get('kind')=='os_metrics' and 'process_io' in report['result']:
+                        schemas['os-observation'].add(OS_PROCESS_READER)
 
         exports = state / 'source-exports'
         if fs.writer_active(exports):

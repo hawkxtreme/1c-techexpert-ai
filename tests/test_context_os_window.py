@@ -27,7 +27,7 @@ class ContextOsWindowTests(unittest.TestCase):
         path.write_text(json.dumps(value,ensure_ascii=False),encoding='utf-8')
         return path
 
-    def capture(self, *, timed=True, reversed_clock=False):
+    def capture(self, *, timed=True, reversed_clock=False, process=False):
         queue = lambda value: os_probe.metric('disk.avg_queue',PRIVATE,value,'requests')
         rate = lambda value: os_probe.metric('disk.read_bytes_per_second',PRIVATE,value,'bytes/second')
         memory = os_probe.metric('memory.available','all',40,'bytes')
@@ -48,6 +48,14 @@ class ContextOsWindowTests(unittest.TestCase):
         document = dict(schema_version=1,profile='os-metrics-v1',scope='windows_host',node=PRIVATE,
             observed_hostname=PRIVATE,role='storage',status='completed',started_at='2026-11-16T09:00:00Z',
             plan=os_probe.plan(5,1),samples=rows,limitations=[PRIVATE])
+        if process:
+            document['process_observation'] = dict(schema_version=1,platform='windows',
+                                                   basis='explicit_pid',target_sha256='d'*64)
+            for index,(row,count) in enumerate(zip(rows,(10,100,160,None,200,180))):
+                sample = dict(at=f'2026-11-16T09:00:0{index}Z',status='not_running' if count is None else 'observed')
+                if count is not None:
+                    sample.update(read_bytes=count,write_bytes=count*2)
+                row['process_io'] = sample
         original = self.write('capture.json',document)
         self.artifact = os_metrics.import_os(self.state,original)
         self.revision = investigations.revise(self.state,self.iid,dict(attachments=[
@@ -61,11 +69,34 @@ class ContextOsWindowTests(unittest.TestCase):
         preview = context_policy.plan(*args)
         context_policy.save(*args,preview['plan_sha256'])
 
-    def view(self,**args):
+    def view(self,kind='os-window',**args):
         response = context_disclosure.read(self.state,dict(investigation_id=self.iid,revision=self.revision,
-                            kind='os-window',attachment='A-os',**args))
+                            kind=kind,attachment='A-os',**args))
         self.assertNotIn(PRIVATE,json.dumps(response,ensure_ascii=False))
         return response
+
+    def test_process_window_uses_adjacent_available_samples_and_keeps_import_basis(self):
+        self.capture(process=True)
+        self.approve('tj')
+        self.assertEqual(self.view('os-process-window')['stop_reason'],'context_category_not_allowed')
+        self.approve('os')
+        data = self.view('os-process-window')['data']
+        self.assertEqual(data['coverage']['samples_in_window'],3)
+        self.assertEqual(data['process_io']['origin'],'reported_input')
+        self.assertEqual(data['process_io']['counter_scope'],'windows_process_io_transfers')
+        self.assertEqual(data['process_io']['usable_intervals'],1)
+        self.assertEqual(data['process_io']['sample_statuses'],dict(observed=2,not_running=1))
+        self.assertEqual(data['process_io']['delta_bytes'],dict(read_bytes=60,write_bytes=120))
+        self.assertEqual(data['process_io']['largest_intervals']['read_bytes']['start_pointer'],'/samples/1/process_io')
+        self.assertEqual(data['process_io']['largest_intervals']['read_bytes']['end_pointer'],'/samples/2/process_io')
+        self.assertEqual(data['source']['sha256'],self.artifact['sources'][0]['sha256'])
+        self.assertFalse(data['can_establish_absence'])
+        payload=json.dumps(data)
+        self.assertNotIn('d'*64,payload)
+        wider = self.view('os-process-window',window=dict(WINDOW,end='2026-11-16T09:00:06Z'))['data']
+        self.assertEqual(wider['process_io']['counter_reset_intervals'],1)
+        self.assertEqual(wider['process_io']['delta_bytes'],data['process_io']['delta_bytes'])
+        self.assertEqual(inspect_state(self.state)['schemata']['os-observation'],[3])
 
     def test_os_window_keeps_only_contained_intervals_and_exact_source_reference(self):
         self.capture()

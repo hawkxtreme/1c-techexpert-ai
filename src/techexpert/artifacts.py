@@ -85,7 +85,7 @@ def save_artifact(state_dir, kind, request, sources, result, *, input_intake=Non
     return report
 
 
-def read_artifact_record(state_dir,artifact_id):
+def _read_artifact_record(state_dir,artifact_id):
     """Check the saved report and request receipts. Source bytes are separate."""
     folder=artifact_folder(state_dir,artifact_id)
     receipt=json_value(read_snapshot(folder/'receipt.json',8192).decode('utf-8'),reject_duplicates=True)
@@ -112,7 +112,20 @@ def read_artifact_record(state_dir,artifact_id):
             raise InputError('invalid artifact source metadata')
         total+=size
         if total>MAX_TOTAL_BYTES:raise InputError('invalid artifact source byte total')
-    return report,receipt['report_sha256']
+    return report,receipt['report_sha256'],request_data
+
+
+def read_artifact_record(state_dir,artifact_id):
+    report,digest,_=_read_artifact_record(state_dir,artifact_id)
+    return report,digest
+
+
+def read_artifact_request(state_dir,artifact_id):
+    _,_,data=_read_artifact_record(state_dir,artifact_id)
+    value=json_value(data.decode('utf-8'),reject_duplicates=True)
+    if type(value) is not dict:
+        raise InputError('invalid saved artifact request')
+    return value
 
 
 def load_artifact(state_dir,artifact_id,*,input_state_dir=None):

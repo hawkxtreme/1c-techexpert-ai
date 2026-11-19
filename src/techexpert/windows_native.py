@@ -85,6 +85,8 @@ def _kernel():
         'ResumeThread':([w.HANDLE],w.DWORD),
         'WaitForSingleObject':([w.HANDLE,w.DWORD],w.DWORD),
         'GetExitCodeProcess':([w.HANDLE,c.POINTER(w.DWORD)],w.BOOL),
+        'GetProcessTimes':([w.HANDLE,*([c.POINTER(w.FILETIME)]*4)],w.BOOL),
+        'GetProcessIoCounters':([w.HANDLE,c.POINTER(_Io)],w.BOOL),
         'OpenProcess':([w.DWORD,w.BOOL,w.DWORD],w.HANDLE),
         'GetCurrentProcess':([],w.HANDLE),
         'QueryFullProcessImageNameW':([w.HANDLE,w.DWORD,w.LPWSTR,c.POINTER(w.DWORD)],w.BOOL),
@@ -115,11 +117,12 @@ def current_executable():
 
 
 @contextmanager
-def _query_process(pid):
+def _query_process(pid, *, synchronize=False):
     if type(pid) is not int or not 1 <= pid <= 0xFFFFFFFF:
         raise InputError('invalid Windows process identifier')
     kernel = _kernel()
-    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    access = 0x101000 if synchronize else 0x1000  # Limited information, optionally SYNCHRONIZE.
+    handle = kernel.OpenProcess(access, False, pid)
     if not handle:
         raise c.WinError(c.get_last_error())
     try:
@@ -141,6 +144,27 @@ def _image_path(kernel, handle):
 def process_image(pid):
     with _query_process(pid) as (kernel, handle):
         return _image_path(kernel, handle)
+
+
+def process_io(pid, lifetime):
+    """Read process transfer counts through the same handle used to check lifetime."""
+    with _query_process(pid,synchronize=True) as (kernel,handle):
+        times = [w.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(handle,*(c.byref(value) for value in times)):
+            raise c.WinError(c.get_last_error())
+        started = str((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime)
+        if started != lifetime:
+            return dict(status='different_lifetime')
+        wait = kernel.WaitForSingleObject(handle,0)
+        if wait != 258:  # WAIT_TIMEOUT means this process is still alive.
+            return dict(status='not_running' if wait==0 else 'unavailable')
+        counts = _Io()
+        if not kernel.GetProcessIoCounters(handle,c.byref(counts)):
+            raise c.WinError(c.get_last_error())
+        wait = kernel.WaitForSingleObject(handle,0)
+        if wait != 258:
+            return dict(status='not_running' if wait==0 else 'unavailable')
+        return dict(status='observed',read_bytes=counts.read_bytes,write_bytes=counts.write_bytes)
 
 
 def file_open_processes(path):

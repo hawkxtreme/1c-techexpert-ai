@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import re
 
-from . import operation_state as fs, os_storage, reader_scope
+from . import operation_state as fs, os_process, os_storage, reader_scope
 from .inputs import InputError
 from .os_metrics import PROBE, validate_request
 
@@ -42,6 +42,7 @@ def argument_schema():
         max_runs=integer(1,MAX_RUNS),max_seconds=integer(1,7*86400),
         max_bytes=integer(16384,64*1024**2),min_gap_seconds=integer(0,86400),
         map_file_storage=dict(type='boolean'),
+        process=cap.obj(dict(source_id=cap.string(80),pid=integer(1,0xFFFFFFFF)),('source_id',)),
         proposal_sha256=cap.SHA256),('mode','context'))
 
 
@@ -64,7 +65,7 @@ def normalize(value):
     mode = request['mode']
     common = {'mode','context'}
     selected = {'base_id','source_ids','max_runs','max_seconds','max_bytes'}
-    allowed = common if mode=='status' else common|selected|{'min_gap_seconds','map_file_storage'}
+    allowed = common if mode=='status' else common|selected|{'min_gap_seconds','map_file_storage','process'}
     if mode=='approve':
         allowed=allowed|{'proposal_sha256'}
         selected=selected|{'proposal_sha256'}
@@ -106,7 +107,7 @@ def _doc(state, context):
 
 
 def _collector(settings):
-    request=validate_request(settings)
+    request=validate_request(settings,bound_process=True)
     for key in ('known_hosts_file','identity_file'):
         if key in request:
             request[key]=str(Path(request[key]).absolute())
@@ -148,12 +149,21 @@ def _proposal(doc, request):
         domain=reader_scope.observe()
         if domain['status']!='observed':
             raise InputError('local observation cannot verify its execution domain')
+    process=request.get('process')
+    if process is not None:
+        collector=next((row['collector'] for row in targets if row['source_id']==process['source_id']),None)
+        if collector is None or collector['transport']!='local':
+            raise InputError('select a local OS source in this plan for the process')
+        target_path=os_storage.file_base_target(selected_base) if 'pid' not in process else None
+        collector['process_target']=os_process.select(process,domain,target_path)
     plan = dict(schema_version=FORMAT,investigation_id=doc['investigation_id'],profile_sha256=doc['profile_sha256'],
                 base_id=base,window=dict(start=start.isoformat(),end=end.isoformat()),targets=targets,
                 budgets={key:request[key] for key in QUOTAS},probe_sha256=sha256(PROBE.read_bytes()).hexdigest(),
                 local_execution_domain=domain,delivery='direct_managed_os_summary')
     if map_storage:
         plan.update(schema_version=os_storage.READER_CAPABILITY,storage_reader_sha256=os_storage.reader_digest())
+    if process is not None:
+        plan.update(schema_version=os_process.READER_CAPABILITY,process_reader_sha256=os_process.reader_digest())
     return plan
 
 
@@ -178,15 +188,28 @@ def read_ledger(state, identifier, *, read=fs.read):
             plan=entry['plan'];charges=entry['reservations'];quota=plan['budgets']
             if (type(digest) is not str or not SHA256.fullmatch(digest) or fs.digest(plan)!=digest
                 or set(entry)!={'plan','reservations'} or plan['investigation_id']!=identifier
-                    or plan['schema_version'] not in (FORMAT,os_storage.READER_CAPABILITY) or type(charges) is not list
+                or type(plan['schema_version']) is not int
+                or plan['schema_version'] not in (FORMAT,os_storage.READER_CAPABILITY,os_process.READER_CAPABILITY)
+                or type(charges) is not list
                 or not 0<=len(charges)<=quota['max_runs']<=MAX_RUNS):
                 raise InputError('invalid observation approval')
             targets={row['source_id']:row['collector'] for row in plan['targets']}
-            if plan['schema_version']==os_storage.READER_CAPABILITY:
-                if not SHA256.fullmatch(plan['storage_reader_sha256']):
+            if 'storage_reader_sha256' in plan:
+                if plan['schema_version']==FORMAT or not SHA256.fullmatch(plan['storage_reader_sha256']):
                     raise InputError('invalid storage reader identity')
-            elif 'storage_reader_sha256' in plan or any('storage_path' in col for col in targets.values()):
+            elif plan['schema_version']==os_storage.READER_CAPABILITY or any('storage_path' in col for col in targets.values()):
                 raise InputError('storage observations require a matching saved plan')
+            processes=[col for col in targets.values() if 'process_target' in col]
+            if plan['schema_version']==os_process.READER_CAPABILITY:
+                if len(processes)!=1 or not SHA256.fullmatch(plan['process_reader_sha256']):
+                    raise InputError('invalid process reader or target')
+                collector, = processes
+                target=os_process.validate_target(collector['process_target'])
+                domain=plan['local_execution_domain']
+                if collector['transport']!='local' or target['domain_sha256']!=domain['id'] or target['platform']!=domain['platform']:
+                    raise InputError('process target is outside the saved local scope')
+            elif processes or 'process_reader_sha256' in plan:
+                raise InputError('process observations require a matching saved plan')
             for charge in charges:
                 rid=charge['run_id'];target=targets[charge['source_id']]
                 if (set(charge)!=RESERVATION_FIELDS or charge['approval_sha256']!=digest
@@ -294,9 +317,13 @@ def _show(plan):
     targets=[dict(source_id=row['source_id'],
                   **{k:row['collector'][k] for k in ('transport','host','port','role','duration_seconds','interval_seconds','max_bytes')})
              for row in plan['targets']]
-    if plan['schema_version']==os_storage.READER_CAPABILITY:
-        for view,row in zip(targets,plan['targets']):
+    for view,row in zip(targets,plan['targets']):
+        if 'storage_reader_sha256' in plan:
             view['storage_selection']='profile_file_path' if 'storage_path' in row['collector'] else 'unavailable_for_source'
+        process=row['collector'].get('process_target')
+        if process is not None:
+            view['process']=dict(pid=process['pid'],basis=process['basis'],
+                                 counter_scope=os_process.SCOPES[process['platform']])
     return dict(base_id=plan['base_id'],window=plan['window'],budgets=plan['budgets'],
                 targets=targets,delivery=plan['delivery'],probe_sha256=plan['probe_sha256'],
                 local_execution_domain=plan['local_execution_domain'])
@@ -309,7 +336,8 @@ def _effective_window(doc, plan, sources):
 
 def _same_reader(plan):
     return (sha256(PROBE.read_bytes()).hexdigest()==plan['probe_sha256']
-            and (plan['schema_version']==FORMAT or os_storage.reader_digest()==plan['storage_reader_sha256']))
+            and ('storage_reader_sha256' not in plan or os_storage.reader_digest()==plan['storage_reader_sha256'])
+            and ('process_reader_sha256' not in plan or os_process.reader_digest()==plan['process_reader_sha256']))
 
 
 def _availability(doc, plan):

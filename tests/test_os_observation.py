@@ -1,5 +1,6 @@
 """Approved observation windows and conservative operating-system sampler admission."""
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -128,6 +129,55 @@ class OSObservationTests(unittest.TestCase):
         self.assertIn(2,update_state.inspect_state(self.state)['schemata']['os-observation'])
         self.no_worker(self.collect('override-storage',saved['approval_sha256'],
                                    arguments=dict(storage_path=str(self.state/'other'))),'argument')
+
+    def test_selected_process_is_pinned_at_review_and_cannot_be_replaced(self):
+        selected = dict(source_id='disk',pid=os.getpid())
+        draft = self.control('preview',process=selected)
+        self.assertEqual(draft['targets'][0]['process']['pid'],os.getpid())
+        self.assertEqual(draft['targets'][0]['process']['basis'],'explicit_pid')
+        self.assertFalse((self.state/'operations').exists())
+        identity = fs.process_identity(os.getpid())
+        changed = ('1' if os.name=='nt' else identity['lifetime'].split(':')[0]+':1')
+        with patch.object(fs,'process_identity',return_value=dict(identity,lifetime=changed)):
+            with self.assertRaisesRegex(InputError,'proposal changed'):
+                self.control('approve',process=selected,proposal_sha256=draft['proposal_sha256'])
+        saved = self.control('approve',process=selected,proposal_sha256=draft['proposal_sha256'])
+        approval = saved['approval_sha256']
+        self.no_worker(self.collect('override-process',approval,
+                      arguments=dict(process_target=selected)),'argument')
+        result = operations.run(self.state,self.collect('observed-process',approval))
+        self.assertEqual(result['status'],'succeeded',result.get('message'))
+        process = result['data']['result']['process_io']
+        self.assertEqual(process['origin'],'local_collector')
+        self.assertGreaterEqual(process['observed_samples'],2)
+        self.assertEqual(update_state.inspect_state(self.state)['schemata']['os-observation'],[1,3])
+
+    def test_automatic_file_process_reuses_exact_file_holder_selection(self):
+        base = self.state.parent/'file-base'
+        profile = dict(schema_version=1,name='File process',
+            bases=[dict(id='orders',name='Orders',mode='file',connection=f'File="{base}"')],
+            sources=[dict(id='disk',type='os',host='',path='',base_ids=['orders'],settings=self.settings)])
+        current = profiles.save_profile(self.state,profile,expected_revision=1)
+        self.doc = investigations.revise(self.state,self.iid,dict(profile_revision=current['revision']),
+                                         expected_revision=self.doc['revision'])
+        if os.name!='nt':
+            with self.assertRaisesRegex(InputError,'explicit PID'):
+                self.control('preview',process=dict(source_id='disk'))
+            return
+        from src.techexpert import logcfg_discovery, windows_native
+        base.mkdir()
+        target=base/'1Cv8.1CD'
+        target.write_bytes(b'lab metadata selection')
+        pid=os.getpid()
+        lifetime=fs.process_identity(pid)['lifetime']
+        with patch.object(windows_native,'file_open_processes',return_value=((pid,lifetime),)) as holders:
+            with patch.object(windows_native,'process_image',return_value=base/'bin'/'1cv8.exe'):
+                draft=self.control('preview',process=dict(source_id='disk'))
+        self.assertEqual(holders.call_args.args,(target,))
+        self.assertEqual(draft['targets'][0]['process']['basis'],'windows_file_holder_at_review')
+        with patch.object(logcfg_discovery,'_file_client',side_effect=logcfg_discovery.DiscoveryError('client_ambiguous')):
+            with self.assertRaisesRegex(InputError,'client_ambiguous'):
+                self.control('preview',process=dict(source_id='disk'))
 
     def test_expired_window_or_unknown_stop_blocks_a_new_run(self):
         approval = self.approve()

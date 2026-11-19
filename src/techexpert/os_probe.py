@@ -170,7 +170,7 @@ class WindowsPdh:
     def close(self):self.dll.PdhCloseQuery(self.query)
 
 
-def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_bytes=8*1024*1024,should_stop=None):
+def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_bytes=8*1024*1024,should_stop=None,process_sample=None):
     settings=plan(duration_seconds,interval_seconds,max_bytes)
     if role not in ('onec','sql','storage','client','terminal','web','other'):raise ValueError('unsupported node role')
     if node is not None and (not isinstance(node,str) or not 1<=len(node)<=256 or any(ord(c)<32 for c in node)):raise ValueError('invalid node label')
@@ -195,6 +195,8 @@ def collect(duration_seconds=300,interval_seconds=1,*,node=None,role='onec',max_
                 current=linux_snapshot()
                 row=dict(elapsed_seconds=elapsed,metrics=linux_metrics(previous,current),raw=current)
                 previous=current
+            if process_sample is not None:
+                row['process_io']=process_sample()
             row['timestamp']=datetime.now(timezone.utc).isoformat()
             # ASCII wire JSON also survives legacy Windows PowerShell encodings.
             size=len(json.dumps(row,ensure_ascii=True,allow_nan=False).encode('ascii'))+2

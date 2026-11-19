@@ -8,7 +8,7 @@ import re
 import tempfile
 
 from .artifacts import save_artifact
-from . import operation_state as fs, os_storage
+from . import operation_state as fs, os_process, os_storage
 from .inputs import InputError,read_snapshot,json_value
 from .os_probe import plan,collect,summarize
 from .processes import run_bounded
@@ -16,8 +16,10 @@ from .processes import run_bounded
 PROBE=Path(__file__).with_name('os_probe.py')
 
 
-def validate_request(value):
+def validate_request(value, *, bound_process=False):
     allowed={'transport','host','port','duration_seconds','interval_seconds','max_bytes','node','role','python','use_ssl','identity_file','known_hosts_file','storage_path'}
+    if bound_process:
+        allowed.add('process_target')
     if not isinstance(value,dict) or set(value)-allowed:raise InputError('unsupported collector request field; credentials are not accepted here')
     settings=plan(value.get('duration_seconds',300),value.get('interval_seconds',1),value.get('max_bytes',8388608))
     transport=value.get('transport','local');host=value.get('host','');role=value.get('role','onec')
@@ -42,6 +44,10 @@ def validate_request(value):
         if transport!='local':
             raise InputError('storage path observations require the local collector')
         refs['storage_path']=os_storage.local_path(value['storage_path'])
+    if 'process_target' in value:
+        if transport!='local':
+            raise InputError('a selected process requires the local collector')
+        refs['process_target']=os_process.validate_target(value['process_target'])
     for key in ('identity_file','known_hosts_file'):
         if key in value:
             path=value[key]
@@ -89,27 +95,35 @@ def import_os(state_dir,path,*,intake=None):
     result=summarize(document)
     storage=os_storage.binding(document,origin='reported_input')
     if storage is not None:result['storage_binding']=storage
+    process,_=os_process.record(document,origin='reported_input')
+    if process is not None:result['process_io']=process
     return save_artifact(state_dir,'os_metrics',dict(import_path=str(Path(path).resolve())),
                          [(str(Path(path).resolve()),data)],result,input_intake=intake)
 
 
 def collect_os(state_dir,request,*,should_stop=None):
-    request=validate_request(request)
+    request=validate_request(request,bound_process=True)
     transport=request['transport']
     if transport=='local':
         selected=request.get('storage_path')
+        process_target=request.get('process_target')
         def stopped():return should_stop is not None and should_stop()
         before=os_storage.observe(selected) if selected is not None and not stopped() else None
+        options={}
+        if process_target is not None:
+            options['process_sample']=os_process.sampler(process_target)
         document=collect(request['duration_seconds'],request['interval_seconds'],node=request['node'],
-                         role=request['role'],max_bytes=request['max_bytes'],should_stop=should_stop)
+                         role=request['role'],max_bytes=request['max_bytes'],should_stop=should_stop,**options)
+        if process_target is not None:
+            document['process_observation']=os_process.observation(process_target)
         if before is not None:
             after=(dict(status='stopped',at=fs.stamp(),platform=before['platform']) if stopped()
                    else os_storage.observe(selected))
             document['storage_observation']=dict(schema_version=os_storage.SCHEMA,selected_path_sha256=fs.digest(selected),
                                                  before=before,after=after)
         data=json.dumps(document,ensure_ascii=False,allow_nan=False).encode('utf-8')
-        if before is not None and len(data)>request['max_bytes']:
-            raise InputError('OS capture including storage observations exceeds its byte limit')
+        if (before is not None or process_target is not None) and len(data)>request['max_bytes']:
+            raise InputError('OS capture including local observations exceeds its byte limit')
     else:
         timeout=request['duration_seconds']+30
         if transport=='ssh':
@@ -129,6 +143,8 @@ def collect_os(state_dir,request,*,should_stop=None):
     if transport=='local':
         storage=os_storage.binding(document,origin='local_collector')
         if storage is not None:result['storage_binding']=storage
+        process,_=os_process.record(document,origin='local_collector')
+        if process is not None:result['process_io']=process
     if request['node']:result['requested_node_label']=request['node']
     return save_artifact(state_dir,'os_metrics',dict(**request,probe_sha256=hashlib.sha256(PROBE.read_bytes()).hexdigest()),
                          [('os-metrics.json',data)],result)

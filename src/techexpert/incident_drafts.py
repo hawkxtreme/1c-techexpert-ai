@@ -16,7 +16,7 @@ import zipfile
 import unicodedata
 from datetime import datetime,timezone
 
-from .artifacts import artifact_evidence,encoded,load_artifact
+from .artifacts import artifact_evidence,encoded,load_artifact,read_artifact_request
 from .inputs import InputError,json_value,read_snapshot
 from .investigations import load as load_investigation
 from .knowledge import load_library as knowledge_catalogue
@@ -24,7 +24,7 @@ from .storage import read_evidence,write_json,verified_case,load_comparison
 
 MAX_PUBLIC=512*1024
 MAX_BODY=128*1024
-SANITIZER_VERSION=11
+SANITIZER_VERSION=12
 EXCERPT_HEADING='\n## Выбранные очищенные фрагменты\n'
 SECRET_NAME=r'(?:password|pwd|token|secret|authorization|api[_-]?key|пароль|токен|секрет|авторизация|api[_-]?ключ)'
 SECRET=re.compile(r'''(?ix)(?<!\w)["']?'''+SECRET_NAME+r'''["']?\s*[=:]\s*(?:"(?:\\.|[^"\\])*(?:"|$)|'(?:\\.|[^'\\])*(?:'|$)|[^\s,;}\]]+)|\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+''')
@@ -196,6 +196,15 @@ def _known(doc,state_dir):
         kind=report.get('kind')
         if kind=='client_ui':
             add('ID',(report['result'].get('session') or {}).get('id'))
+        if kind=='os_metrics' and 'process_io' in report['result']:
+            request=read_artifact_request(state_dir,attachment['target_id'])
+            target=request.get('process_target')
+            if type(target) is dict:
+                for key in ('lifetime','domain_sha256','file_identity_sha256'):
+                    add('ID',target.get(key))
+                pid=target.get('pid')
+                if type(pid) is int:
+                    add('ID',str(pid))
         while stack:
             item,depth=stack.pop();visited+=1
             if visited>200000 or depth>32:raise InputError('incident identifier discovery exceeds bounds')
@@ -285,7 +294,8 @@ def _source_bytes(state_dir,doc,evidence_id):
     attachment=next(a for a in doc['attachments'] if a['id']==evidence['attachment'])
     if attachment['kind']=='case':result=read_evidence(state_dir,attachment['target_id'],evidence['record'])
     elif attachment['kind']=='artifact':
-        kind=load_artifact(state_dir,attachment['target_id'])['kind']
+        artifact=load_artifact(state_dir,attachment['target_id'])
+        kind=artifact['kind']
         if kind=='onec_source':
             raise InputError('encoded source snapshots require a separate prepared text excerpt; raw source bundles are not exported')
         if kind=='knowledge_use':
@@ -298,6 +308,8 @@ def _source_bytes(state_dir,doc,evidence_id):
             raise InputError('native JR dictionaries, parts and serialized records require separate prepared text; use parsed observations in the proposal')
         if kind=='client_ui':
             raise InputError('private client episodes require separate reviewed observations; raw UI evidence is not a public excerpt')
+        if kind=='os_metrics' and 'process_io' in artifact['result']:
+            raise InputError('private process measurements require separate prepared text')
         else:result=artifact_evidence(state_dir,attachment['target_id'],evidence['record'])
     else:
         result=dict(text=json.dumps(dict(kind='calculation',report_digest=attachment['report_sha256']),ensure_ascii=False),truncated=False)

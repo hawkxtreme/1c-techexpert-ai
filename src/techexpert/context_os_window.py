@@ -2,7 +2,7 @@
 from hashlib import sha256
 import re
 
-from . import artifacts, context_coverage, context_fields as fields, investigation_progress, operation_state as fs, os_storage
+from . import artifacts, context_coverage, context_fields as fields, investigation_progress, operation_state as fs, os_process, os_storage
 from .analysis import parse_time
 from .inputs import InputError, json_value, read_snapshot
 from .os_probe import summarize
@@ -10,6 +10,8 @@ from .os_probe import summarize
 
 VIEW = 'os-window'
 READER_CAPABILITY = 7
+PROCESS_VIEW = 'os-process-window'
+PROCESS_READER_CAPABILITY = 8
 GROUPS = ('disk', 'cpu', 'memory', 'network')
 COUNTERS = {
     'disk.avg_queue': 'requests', 'disk.inflight': 'requests',
@@ -135,6 +137,51 @@ def _summaries(rows, selected, artifact_id, group_filter, aliases, *, estimate_t
     return records,dict(matching_objects=len(exact),ambiguous_devices=sum(len(keys)>1 for keys in matched.values()))
 
 
+def _process_window(capture, known, window, aliases):
+    if known is None:
+        _,coverage = _select([],window)
+        return dict(status='not_recorded'),coverage
+    origin = known['origin']
+    if origin not in ('local_collector','reported_input'):
+        raise InputError('unsupported process measurement basis')
+    process, samples = os_process.record(capture,origin=origin)
+    if known!=process:
+        raise InputError('saved process measurements disagree with the report')
+    rows = [
+        dict(timestamp=sample['at'],elapsed_seconds=row['elapsed_seconds'])
+        for row,sample in zip(capture['samples'],samples)]
+    selected, coverage = _select(rows,window)
+    statuses, intervals, resets = {},[],0
+    for index, stamp, spacing in selected:
+        current = samples[index]
+        status = current['status']
+        statuses[status] = statuses.get(status,0)+1
+        if spacing is None or coverage['clock_order_issues'] or status!='observed':
+            continue
+        previous = samples[index-1]
+        if previous['status']!='observed':
+            continue
+        delta = {name:current[name]-previous[name] for name in os_process.COUNTERS}
+        if min(delta.values())<0:
+            resets+=1
+            continue
+        intervals.append((index,_time(previous['at']),stamp,delta))
+    peaks = {}
+    for name in os_process.COUNTERS:
+        if intervals:
+            index, start, end, delta = max(intervals,key=lambda row:row[3][name])
+            peaks[name]=dict(bytes=delta[name],start=start.isoformat(),end=end.isoformat(),
+                             start_pointer=f'/samples/{index-1}/process_io',end_pointer=f'/samples/{index}/process_io')
+    totals = {name:sum(row[3][name] for row in intervals) if intervals else None for name in os_process.COUNTERS}
+    status = ('clock_order_uncertain' if coverage['clock_order_issues'] else
+              'observed_intervals_in_window' if intervals else 'no_usable_intervals_in_window')
+    target = capture['process_observation']['target_sha256']
+    return dict(status=status,instance=aliases('os_process',target),sample_statuses=statuses,
+                origin=origin,counter_scope=process['counter_scope'],selection_basis=process['selection_basis'],
+                usable_intervals=len(intervals),counter_reset_intervals=resets,delta_bytes=totals,largest_intervals=peaks,
+                recorded_interval_seconds=sum((end-start).total_seconds() for _,start,end,_ in intervals)),coverage
+
+
 def view(state, doc, attachment, args, aliases):
     window = args.get('window') or investigation_progress._occurrence_window(doc.get('occurrence') or {})
     if window is None:
@@ -156,6 +203,17 @@ def view(state, doc, attachment, args, aliases):
     except AttributeError as exc:
         raise InputError('invalid saved OS metric samples') from exc
     rows = capture['samples']
+    if args['kind']==PROCESS_VIEW:
+        process, coverage = _process_window(capture,report['result'].get('process_io'),window,aliases)
+        if context_coverage._pinned_report(state,attachment) != report:
+            raise InputError('saved OS report changed during verification')
+        coverage.update(capture_samples=len(rows),plan_step_seconds=summary['plan']['interval_seconds'])
+        return dict(window=window,window_basis='explicit_window' if 'window' in args else 'saved_occurrence',
+                    time_basis='recorded_process_sample_timestamps',
+                    interval_selection='adjacent_sample_timestamps_wholly_in_half_open_window',
+                    clock_alignment='not_verified',can_establish_absence=False,node=aliases('os_node',summary['node']),
+                    process_io=process,coverage=coverage,attribution='not_established',
+                    source=dict(id=source['id'],sha256=source['sha256'],byte_start=0,byte_end=source['bytes']))
     selected, coverage = _select(rows,window)
     group = args.get('metric_group')
     known=report['result'].get('storage_binding')

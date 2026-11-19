@@ -389,6 +389,27 @@ class IncidentDraftTests(unittest.TestCase):
             state=Path(temp);inv=self.jr_investigation(state)
             with self.assertRaisesRegex(ValueError,'prepared text'):self.api.prepare(state,inv['investigation_id'],evidence_ids=['E-3'])
 
+    def test_process_capture_stays_private_even_when_the_full_source_fits(self):
+        from src.techexpert.artifacts import save_artifact
+        from src.techexpert.investigations import revise
+        with tempfile.TemporaryDirectory() as temp:
+            state=Path(temp)
+            inv=self.investigation(state)
+            selected=dict(pid=790123,lifetime='133456789012345678',platform='windows',domain_sha256='1'*64,
+                          basis='explicit_pid')
+            artifact=save_artifact(state,'os_metrics',dict(process_target=selected),
+                [('process-capture.json',b'{"process_observation":{"target":{"pid":790123,"lifetime":"133456789012345678"}}}')],
+                dict(process_io=dict(origin='local_collector')))
+            iid=inv['investigation_id']
+            revise(state,iid,dict(attachments=inv['attachments']+[dict(id='A-os',kind='artifact',target_id=artifact['artifact_id'])],
+                evidence=inv['evidence']+[dict(id='E-os',attachment='A-os',record='s1')],
+                open_questions=['Проверить PID 790123, время создания 133456789012345678.']),expected_revision=2)
+            with self.assertRaisesRegex(ValueError,'prepared text'):
+                self.api.prepare(state,iid,evidence_ids=['E-os'])
+            cleaned=self.api.prepare(state,iid)
+            self.assertNotIn('790123',cleaned['body'])
+            self.assertNotIn('133456789012345678',cleaned['body'])
+
     def test_duplicate_or_truncated_json_never_falls_back_to_uncleaned_text(self):
         from src.techexpert.artifacts import save_artifact
         from src.techexpert.investigations import revise
