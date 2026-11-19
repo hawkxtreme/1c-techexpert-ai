@@ -292,6 +292,91 @@ class UpdateTests(unittest.TestCase):
         cache.write_bytes(payload)
         with self.assertRaisesRegex(InputError,'bytecode'):
             updates._verify_tree(root,expected,installed=True)
+        observed = updates._verify_tree(root,expected,installed=True,observe_python_cache=True)
+        self.assertEqual(observed[0]['sha256'], hashlib.sha256(payload).hexdigest())
+        unknown = cache.with_name(cache.name.replace('sample.', 'unrelated.', 1))
+        unknown.write_bytes(payload)
+        with self.assertRaisesRegex(InputError, 'no checked source'):
+            updates._verify_tree(root, expected, installed=True, observe_python_cache=True)
+        unknown.unlink()
+        dest.write_bytes(data+b'# local edit\n')
+        with self.assertRaisesRegex(InputError, 'input changed'):
+            updates._verify_tree(root, expected, installed=True, observe_python_cache=True)
+
+    def test_codex_install_preserves_reviewed_legacy_cache_before_replacing_it(self):
+        from src.techexpert import operation_state as fs, update_codex, updates
+
+        stage = self.stage(self.check())
+        release = stage['release_id']
+        profile = self.root/'codex-profile'
+        installed = profile/'plugins/cache'/updates.MARKETPLACE/'1c-techexpert-ai'/stage['version']
+        shutil.copytree(stage['bundle_root'], installed)
+        cached = Path(py_compile.compile(str(installed/'techexpert.py'), doraise=True))
+        # Unrecognized payloads at known cache paths must be retained as data.
+        raw = bytearray(cached.read_bytes())
+        raw[-1] ^= 1
+        cached.write_bytes(raw)
+
+        def plan():
+            return update_codex.plan_install(self.state, release, profile, maintenance_window=True)
+
+        preview = plan()
+        self.assertEqual(preview['plan']['observed_python_cache']['file_count'], 1)
+        self.assertEqual(cached.read_bytes(), raw)
+        journal = self.state/'updates/activations'/preview['plan_sha256']
+        self.assertFalse(journal.exists())
+
+        cached.write_bytes(raw+b'changed')
+        with patch.object(update_codex, '_command') as command:
+            with self.assertRaisesRegex(InputError, 'cache changed since review'):
+                update_codex.install(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+            command.return_value.assert_not_called()
+        self.assertFalse(journal.exists())
+
+        cached.write_bytes(raw)
+        preview = plan()
+        journal = self.state/'updates/activations'/preview['plan_sha256']
+        saved = journal/'python-cache'
+        issued = []
+
+        def command(*args):
+            issued.append(args)
+            if args[:3] == ('plugin','marketplace','list'):
+                return dict(marketplaces=[dict(name=updates.MARKETPLACE, root=str(self.state/'updates'))])
+            if args[:2] == ('plugin','add'):
+                self.assertEqual((saved/'0001.bin').read_bytes(), raw)
+                self.assertEqual(fs.read(saved/'manifest.json')['files'][0]['path'],
+                                 cached.relative_to(installed).as_posix())
+                cached.unlink()
+                cached.parent.rmdir()
+                (profile/'config.toml').write_text('[plugins."'+updates.SELECTOR+'"]\nenabled = true\n', encoding='utf-8')
+                return dict(pluginId=updates.SELECTOR, version=stage['version'], installedPath=str(installed))
+            raise AssertionError(args)
+
+        interrupted = plan()
+        with patch.object(update_codex, '_command', return_value=command), \
+             patch.object(update_codex, '_save_python_cache', side_effect=OSError('interrupted copy')):
+            with self.assertRaisesRegex(OSError, 'interrupted copy'):
+                update_codex.install(self.state, interrupted['plan'], expected_sha256=interrupted['plan_sha256'])
+            with self.assertRaisesRegex(InputError, 'saved Python cache'):
+                update_codex.install(self.state, interrupted['plan'], expected_sha256=interrupted['plan_sha256'])
+        self.assertEqual(cached.read_bytes(), raw)
+        self.assertIsNone(updates.selected(self.state)['release_id'])
+
+        with patch.object(update_codex, '_command', return_value=command):
+            result = update_codex.install(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+            self.assertTrue(result['installation_verified'])
+            self.assertEqual(Path(result['retained_python_cache']['manifest_path']), saved/'manifest.json')
+            target = installed/'src/techexpert/__init__.py'
+            py_compile.compile(str(target), doraise=True, invalidation_mode=py_compile.PycInvalidationMode.CHECKED_HASH)
+            updates._verify_tree(installed, updates._staged(self.state, release)['files'], installed=True)
+            replay = update_codex.install(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+            self.assertTrue(replay['replayed'])
+            self.assertEqual(replay['retained_python_cache'], result['retained_python_cache'])
+            (saved/'0001.bin').write_bytes(b'incomplete')
+            with self.assertRaisesRegex(InputError, 'saved Python cache'):
+                update_codex.install(self.state, preview['plan'], expected_sha256=preview['plan_sha256'])
+        self.assertEqual(sum(args[:2] == ('plugin','add') for args in issued), 1)
 
     def test_interrupted_codex_response_reconciles_by_cache_without_reinstall(self):
         from src.techexpert import update_codex, updates

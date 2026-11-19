@@ -57,6 +57,8 @@ class PluginInstallTests(unittest.TestCase):
         cwd=server['cwd'].replace('${PLUGIN_ROOT}',str(self.bundle))
         self.assertEqual(Path(cwd),self.bundle)
         state=self.home/'private data';env=dict(os.environ,LOCALAPPDATA=str(state),XDG_STATE_HOME=str(state))
+        env.pop('PYTHONDONTWRITEBYTECODE', None)
+        env.pop('PYTHONPYCACHEPREFIX', None)
         requests=[dict(jsonrpc='2.0',id=1,method='initialize',params=dict(protocolVersion='2025-11-25',capabilities={},clientInfo=dict(name='plugin-package-test',version='1'))),
                   dict(jsonrpc='2.0',method='notifications/initialized'),dict(jsonrpc='2.0',id=2,method='tools/list',params={})]
         # Exercise declared argv with the current interpreter. Redirecting app-data
@@ -85,6 +87,30 @@ class PluginInstallTests(unittest.TestCase):
         self.assertEqual(len(tools),53)
         self.assertIn('techexpert_code_execute',{item['name'] for item in tools})
         self.assertFalse(state.exists());self.assertFalse((self.bundle/'cases').exists())
+        self.assertEqual(list(self.bundle.rglob('*.pyc')), [])
+
+    def test_packaged_managed_run_and_replay_leave_the_bundle_free_of_bytecode(self):
+        state = self.home/'private data'
+        request = self.home/'search.json'
+        request.write_text(json.dumps(dict(schema_version=1, operation_key='package-check',
+            executor_id='test', operation='knowledge.search', arguments=dict(query='очередь'))), encoding='utf-8')
+        env = {key:value for key,value in os.environ.items()
+               if key.upper() not in ('PYTHONDONTWRITEBYTECODE','PYTHONPYCACHEPREFIX')}
+        command = [sys.executable,'-X','utf8',str(self.bundle/'techexpert.py'),'--state-dir',str(state)]
+
+        def run(action, argument):
+            result = subprocess.run(command+[action,str(argument)],cwd=self.home,env=env,
+                                    capture_output=True,timeout=30)
+            self.assertEqual(result.returncode,0,result.stdout.decode('utf-8','replace'))
+            value = json.loads(result.stdout)
+            self.assertEqual(value['status'],'succeeded')
+            return value
+
+        first = run('operation-run', request)
+        replay = run('operation-result', first['run_id'])
+        self.assertTrue(replay['integrity_verified'])
+        self.assertEqual(replay['data'], first['data'])
+        self.assertEqual(list(self.bundle.rglob('*.pyc')), [])
 
     def test_readiness_refuses_a_package_with_missing_mcp_configuration(self):
         path=self.bundle/'mcp.json';self.assertTrue(path.is_file());path.unlink()

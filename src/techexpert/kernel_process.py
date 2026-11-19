@@ -14,7 +14,7 @@ def controller_argv(folder,memory):
     if os.name=='nt':
         from .windows_native import current_executable
         python=current_executable()
-    return [python,'-X','utf8',str(Path(__file__).with_name('kernel_controller.py')),str(folder),str(ROOT),str(memory)]
+    return [python,'-B','-X','utf8',str(Path(__file__).with_name('kernel_controller.py')),str(folder),str(ROOT),str(memory)]
 
 
 def run(folder,*,guard,on_started,timeout,memory_bytes):

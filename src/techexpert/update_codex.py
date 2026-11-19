@@ -5,7 +5,7 @@ import shutil
 import tomllib
 import uuid
 
-from . import operation_state as fs, updates
+from . import input_files, operation_state as fs, updates
 from .inputs import InputError, json_value, read_snapshot
 from .processes import run_bounded
 from .release_packages import PLUGIN, version_number
@@ -15,6 +15,7 @@ SUPPORTED_CODEX = 'codex-cli 0.164.0'
 _ENV = {'SYSTEMROOT','WINDIR','PATH','PATHEXT','APPDATA','LOCALAPPDATA','USERPROFILE','HOME',
         'USERNAME','COMPUTERNAME','TEMP','TMP','LANG','LC_ALL'}
 _FIELDS = {'release_id','expected_selection','observed_cache','observed_registration','profile','maintenance_window','activation_id'}
+_CACHE_FIELD = 'observed_python_cache'
 
 
 def _profile(state, path):
@@ -43,7 +44,7 @@ def _registered(profile):
     return type(plugin) is dict and plugin.get('enabled') is True
 
 
-def _cache_release(state, profile, choices):
+def _cache_release(state, profile, choices, *, observe_python_cache=False):
     cache = _cache(profile)
     try:
         with os.scandir(cache) as rows:
@@ -53,9 +54,9 @@ def _cache_release(state, profile, choices):
                     raise InputError('Codex cache contains an unverified installation')
                 paths.append(fs.safe(Path(row.path)))
     except FileNotFoundError:
-        return None
+        return None, []
     if not paths:
-        return None
+        return None, []
     path = paths[0]
     version_number(path.name)
     for release in dict.fromkeys(item for item in choices if item is not None):
@@ -63,11 +64,56 @@ def _cache_release(state, profile, choices):
         if path.name!=record['metadata']['version']:
             continue
         try:
-            updates._verify_tree(path,record['files'],installed=True)
+            bytecode = updates._verify_tree(path,record['files'],installed=True,
+                observe_python_cache=observe_python_cache)
         except (OSError,ValueError):
             continue
-        return release
+        return release, bytecode
     raise InputError('Codex cache has local changes or an unverified installation')
+
+
+def _cache_summary(files):
+    if files:
+        return dict(file_count=len(files), bytes=sum(file['bytes'] for file in files), sha256=fs.digest(files))
+    return None
+
+
+def _save_python_cache(cache, journal, files, approved):
+    manifest = dict(schema_version=1, files=files)
+    updates._space(journal, approved['bytes']+len(fs.encode(manifest)))
+    backup = fs.private(journal/'python-cache')
+    for number, item in enumerate(files, 1):
+        source = fs.safe(cache/item['path'])
+        if source.lstat().st_nlink!=1:
+            raise InputError('installed Python cache link count changed since review')
+        identity = dict(bytes=item['bytes'],sha256=item['sha256'])
+        data, _ = input_files.read(source,updates.LIMITS['max_file_bytes'],keep=True,expected=identity,
+            observed=item['observed'])
+        with fs.safe(backup/f'{number:04}.bin').open('xb') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+    fs.write(backup/'manifest.json',manifest)
+
+
+def _saved_python_cache(journal, approved):
+    if approved is None:
+        return None
+    backup = journal/'python-cache'
+    manifest_path = backup/'manifest.json'
+    try:
+        manifest = fs.read(manifest_path,1024*1024)
+        files = manifest['files']
+        if (type(manifest['schema_version']) is not int or manifest['schema_version']!=1
+            or type(files) is not list or not 1<=len(files)<=updates.LIMITS['max_files']
+            or _cache_summary(files)!=approved):
+            raise InputError('retained file list differs from the plan')
+        for number, item in enumerate(files, 1):
+            input_files.read(fs.safe(backup/f'{number:04}.bin'),updates.LIMITS['max_file_bytes'],
+                expected=dict(bytes=item['bytes'],sha256=item['sha256']))
+    except (OSError,ValueError,KeyError,TypeError) as exc:
+        raise InputError('saved Python cache is incomplete or changed') from exc
+    return dict(approved, manifest_path=str(manifest_path))
 
 
 def plan_install(state, release_id, profile, *, maintenance_window=False):
@@ -76,10 +122,12 @@ def plan_install(state, release_id, profile, *, maintenance_window=False):
     record = updates._staged(state,release_id)
     current = updates._selection_id(state)
     observed = updates._ensure_safe_point(state,record,require_idle=False)
-    cached = _cache_release(state,profile,(current,release_id))
+    cached, bytecode = _cache_release(state,profile,(current,release_id),observe_python_cache=True)
     plan = dict(schema_version=1,kind='codex_install',state=str(state),profile=str(profile),
         release_id=release_id,expected_selection=current,observed_cache=cached,maintenance_window=maintenance_window is True,
         observed_registration=_registered(profile),activation_id=uuid.uuid4().hex)
+    if bytecode:
+        plan[_CACHE_FIELD] = _cache_summary(bytecode)
     status = 'needs_safe_point' if observed['activity']!='idle_observed' or maintenance_window is not True else 'installation_plan'
     return dict(status=status,plan=plan,plan_sha256=fs.digest(plan),activity=observed,
         codex_profile=str(profile),current_selection=current,installed_release=cached,
@@ -120,19 +168,28 @@ def _marketplace(command, root):
     return bool(names)
 
 
-def _verified_install(state, plan, profile, record, command):
+def _verified_install(state, plan, profile, record, command, journal):
     release_id = plan['release_id']
     root = updates._root(state)
+    retained = _saved_python_cache(journal,plan.get(_CACHE_FIELD))
     if (updates._selection_id(state)!=release_id or not _marketplace(command,root) or not _registered(profile)
-        or _cache_release(state,profile,(release_id,))!=release_id):
+        or _cache_release(state,profile,(release_id,))[0]!=release_id):
         raise InputError('Codex installation outcome is unresolved; retain the interrupted activation')
-    return dict(status='installed',installation_verified=True,runtime_reload_observed=False,
+    result = dict(status='installed',installation_verified=True,runtime_reload_observed=False,
         installed_root=str(_cache(profile)/record['metadata']['version']),codex_profile=str(profile),
         codex_version=SUPPORTED_CODEX,**updates._presentation(state,record))
+    if retained is not None:
+        result['retained_python_cache'] = retained
+    return result
 
 
 def install(state, plan, *, expected_sha256):
-    updates._plan(state,plan,expected_sha256,'codex_install',_FIELDS)
+    fields = _FIELDS | {_CACHE_FIELD} if type(plan) is dict and _CACHE_FIELD in plan else _FIELDS
+    updates._plan(state,plan,expected_sha256,'codex_install',fields)
+    approved = plan.get(_CACHE_FIELD)
+    if _CACHE_FIELD in fields and (type(approved) is not dict or set(approved)!={'file_count','bytes','sha256'}
+        or type(approved['file_count']) is not int or type(approved['bytes']) is not int):
+        raise InputError('invalid Python cache observation in the update plan')
     if plan['maintenance_window'] is not True:
         raise InputError('observe the installation safe point and confirm the selected Codex profile')
     profile = _profile(state,plan['profile'])
@@ -147,7 +204,7 @@ def install(state, plan, *, expected_sha256):
             saved = fs.read(journal/'plan.json',65536)
             if saved!=plan:
                 raise InputError('activation has an incomplete or mismatched plan')
-            verified = _verified_install(state,plan,profile,record,command)
+            verified = _verified_install(state,plan,profile,record,command,journal)
             if not (journal/'result.json').exists():
                 fs.write(journal/'result.json',verified)
             return dict(verified,replayed=True)
@@ -155,8 +212,8 @@ def install(state, plan, *, expected_sha256):
         current = updates._selection_id(state)
         if current!=plan['expected_selection']:
             raise InputError('local marketplace selection changed; review the current installation plan')
-        target = _cache_release(state,profile,(current,release_id))
-        if target!=plan['observed_cache']:
+        target, bytecode = _cache_release(state,profile,(current,release_id),observe_python_cache=True)
+        if target!=plan['observed_cache'] or _cache_summary(bytecode)!=approved:
             raise InputError('Codex installed cache changed since review')
         registered = _registered(profile)
         if registered is not plan['observed_registration']:
@@ -165,19 +222,29 @@ def install(state, plan, *, expected_sha256):
         updates._ensure_safe_point(state,record,require_idle=True)
         fs.private(journal.parent)
         journal.mkdir()
+        fs.private(journal)
         fs.write(journal/'plan.json',plan)
+        if bytecode:
+            installed = _cache(profile)/updates._staged(state,target)['metadata']['version']
+            _save_python_cache(installed,journal,bytecode,approved)
+            _saved_python_cache(journal,approved)
+            if _cache_release(state,profile,(current,release_id),observe_python_cache=True)!=(target,bytecode):
+                raise InputError('Codex installed cache changed during preservation')
+            if _registered(profile) is not registered:
+                raise InputError('Codex plugin registration changed during preservation')
+            updates._ensure_safe_point(state,record,require_idle=True)
         manifest = root/updates.MANIFEST
         if current!=release_id:
             fs.private(manifest.parent)
             fs.write(manifest,updates._selection_manifest(release_id))
         if not known_marketplace:
             command('plugin','marketplace','add',root,'--json')
-        if target!=release_id or not registered:
+        if target!=release_id or not registered or bytecode:
             reply = command('plugin','add',updates.SELECTOR,'--json')
             expected = _cache(profile)/record['metadata']['version']
             if (type(reply) is not dict or reply.get('pluginId')!=updates.SELECTOR or reply.get('version')!=record['metadata']['version']
                 or fs.safe(reply['installedPath'])!=expected):
                 raise InputError('Codex install reply does not match the selected package and profile')
-        result = _verified_install(state,plan,profile,record,command)
+        result = _verified_install(state,plan,profile,record,command,journal)
         fs.write(journal/'result.json',result)
         return dict(result,replayed=False)

@@ -80,15 +80,20 @@ def _selection_id(state):
     return release_id
 
 
-def _verify_bytecode(root, path, expected):
-    tag = sys.implementation.cache_tag
-    match = re.fullmatch(r'(.+)\.'+re.escape(tag)+r'(?:\.opt-([12]))?\.pyc',path.name) if tag else None
+def _bytecode_source(root, path, expected, tag_pattern):
+    match = re.fullmatch(r'(.+)\.'+tag_pattern+r'(?:\.opt-([12]))?\.pyc',path.name) if tag_pattern else None
     if not match:
         raise InputError('unrecognized installed Python bytecode')
     source = path.parent.parent/(match[1]+'.py')
     identity = expected.get(source.relative_to(root).as_posix())
     if identity is None:
         raise InputError('installed bytecode has no checked source')
+    return source, identity, int(match[2] or 0)
+
+
+def _verify_bytecode(root, path, expected):
+    tag = sys.implementation.cache_tag
+    source, identity, optimize = _bytecode_source(root,path,expected,re.escape(tag) if tag else None)
     data,_ = input_files.read(source,LIMITS['max_file_bytes'],keep=True,expected=identity)
     projected,_ = input_files.read(path,LIMITS['max_file_bytes'],keep=True)
     if len(projected)<16 or projected[:4]!=MAGIC_NUMBER:
@@ -101,17 +106,19 @@ def _verify_bytecode(root, path, expected):
     else:
         raise InputError('unsupported installed bytecode header')
     try:
-        compiled = compile(data,str(source),'exec',dont_inherit=True,optimize=int(match[2] or 0))
+        compiled = compile(data,str(source),'exec',dont_inherit=True,optimize=optimize)
     except SyntaxError as exc:
         raise InputError('installed bytecode source does not compile') from exc
     if projected[8:16]!=marker or projected[16:]!=marshal.dumps(compiled):
         raise InputError('installed bytecode differs from its checked source')
 
 
-def _verify_tree(root, expected, *, installed=False):
+def _verify_tree(root, expected, *, installed=False, observe_python_cache=False):
     root = fs.safe(root)
     found = set()
     inspected = 0
+    bytecode = []
+    bytecode_bytes = 0
     parents = {path.as_posix() for name in expected for path in Path(name).parents}
     for current, directories, files in os.walk(root,followlinks=False,onerror=_raise_scan):
         parent = fs.safe(current)
@@ -128,7 +135,20 @@ def _verify_tree(root, expected, *, installed=False):
             path = parent/name
             relative = path.relative_to(root).as_posix()
             if installed and path.parent.name=='__pycache__':
-                _verify_bytecode(root,path,expected)
+                if observe_python_cache:
+                    # Save previous cache files as opaque bytes after verifying all
+                    # package members. A cache name does not attest to its contents.
+                    _bytecode_source(root,path,expected,r'cpython-[0-9]{2,4}')
+                    observed = input_files.observe(path)
+                    if path.lstat().st_nlink!=1 or len(bytecode)>=LIMITS['max_files']:
+                        raise InputError('installed Python cache has unsupported links or file count')
+                    _, identity = input_files.read(path,LIMITS['max_file_bytes'],observed=observed)
+                    bytecode_bytes += identity['bytes']
+                    if bytecode_bytes>LIMITS['max_total_bytes']:
+                        raise InputError('installed Python cache exceeds the retention byte limit')
+                    bytecode.append(dict(path=relative,observed=observed,**identity))
+                else:
+                    _verify_bytecode(root,path,expected)
                 continue
             if relative not in expected:
                 raise InputError('staged package has an unexpected file')
@@ -136,6 +156,7 @@ def _verify_tree(root, expected, *, installed=False):
             found.add(relative)
     if found!=set(expected):
         raise InputError('staged package is missing expected files')
+    return sorted(bytecode,key=lambda row:row['path'])
 
 
 def _raise_scan(error):
