@@ -11,7 +11,8 @@ from src.techexpert.readiness import _inventory,canonical,MANIFEST
 
 KNOWLEDGE=('cases/SC01-time-boundaries.md','cases/SC01-native-tj-boundaries.md',
            'cases/SC01-job-lifecycle.md','playbooks/slow-background-job.md')
-CONTROLLERS={'scripts/sc01_blind.py','scripts/sc01_kit.py','scripts/sc01_trial.py','scripts/generate_bundle_manifest.py'}
+CONTROLLERS={'scripts/sc01_blind.py','scripts/sc01_kit.py','scripts/sc01_trial.py','scripts/generate_bundle_manifest.py',
+             'scripts/sc01_experiment_plan.py','scripts/sc01_experiment_report.py'}
 BOUNDARY=('\n\nEvaluation workspace: use the supplied skills, references, general knowledge, intake and '
     'captured data. Run techexpert.py as an executable tool; do not inspect its implementation. '
     'Do not search outside this workspace, consult other chats, open external links or use network services. '

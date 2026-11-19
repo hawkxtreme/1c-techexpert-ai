@@ -32,6 +32,7 @@ from src.techexpert.operation_state import safe
 
 SERIES = ('first_start', 'prepared_start')
 METHODS = ('cli', 'direct_mcp', 'code_mode')
+REPEATS = 5
 OUTCOMES = ('completed', 'failed', 'interrupted', 'limit_exceeded')
 USAGE_FIELDS = ('input_tokens', 'cached_input_tokens', 'cache_write_input_tokens',
                 'output_tokens', 'reasoning_output_tokens')
@@ -73,14 +74,14 @@ def _slot(row):
     if not isinstance(row, dict):
         raise InputError('expected a scheduled attempt object')
     series, repeat, method = (row.get(key) for key in ('series', 'repeat', 'method'))
-    if series not in SERIES or type(repeat) is not int or not 1 <= repeat <= 5 or method not in METHODS:
+    if series not in SERIES or type(repeat) is not int or not 1 <= repeat <= REPEATS or method not in METHODS:
         raise InputError('invalid SC-01 attempt slot')
     return series, repeat, method
 
 
 def _schedule(doc):
     rows = doc.get('schedule')
-    if not isinstance(rows, list) or len(rows) != len(SERIES) * len(METHODS) * 5:
+    if not isinstance(rows, list) or len(rows) != len(SERIES) * len(METHODS) * REPEATS:
         raise InputError('SC-01 requires 30 scheduled slots')
     entries = {}
     positions = set()

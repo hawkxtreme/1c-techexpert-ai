@@ -15,6 +15,7 @@ from scripts.sc01_kit import copy_toolkit,verification_schema
 ROOT=Path(__file__).resolve().parents[1]
 MAX_INPUT_BYTES=64*1024*1024
 MAX_TREE_BYTES=80*1024*1024
+MAX_MEMBER_BYTES=16*1024*1024
 MAX_DOCUMENT=512*1024
 MAX_FILES=2048
 
@@ -43,7 +44,7 @@ def inventory(root,*,participant=False):
                     pending.append(path)
                 elif stat.S_ISREG(info.st_mode):
                     if participant and current==root and entry.name in ('answer.json','transcript.jsonl'):continue
-                    data=read_snapshot(path,min(16*1024*1024,MAX_TREE_BYTES-total));total+=len(data)
+                    data=read_snapshot(path,min(MAX_MEMBER_BYTES,MAX_TREE_BYTES-total));total+=len(data)
                     result[path.relative_to(root).as_posix()]=digest(data)
                 else:raise InputError('unsupported trial member')
     return dict(sorted(result.items()))
