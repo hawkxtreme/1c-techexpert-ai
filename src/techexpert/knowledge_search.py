@@ -32,6 +32,7 @@ def schema(cap):
 
     return dict(environment=cap.obj({key: cap.string(128) for key in ENVIRONMENT}),
                 events=dict(type='array', items=cap.string(64, pattern=EVENT.pattern), maxItems=MAX_EVENTS),
+                card_type=cap.string(128),
                 offset=dict(type='integer', minimum=0, maximum=MAX_CARDS),
                 excerpt_chars=dict(type='integer', minimum=0, maximum=MAX_EXCERPT),
                 expected_knowledge_digest=cap.SHA256)
@@ -67,8 +68,10 @@ def _query_terms(query):
     return keys
 
 
-def _matches(card, query, events, exact_id):
-    terms, found_events = {}, {}
+def _matches(card, query, events, declared, exact_id):
+    terms = {}
+    found_events = {token: dict(kind='event', term=token.upper(), field='event_types', basis='declared')
+                    for token in declared}
     for field, weight in FIELDS:
         content = card[field]
         if field == 'signs':
@@ -118,7 +121,8 @@ def _applicability(card, by_id, environment, review):
 
 
 def _summary(card):
-    return {key: card[key] for key in ('id', 'title', 'status', 'type', 'revision', 'applicability')}
+    keys = ('id', 'title', 'status', 'type', 'revision', 'applicability', 'event_types')
+    return {key: card[key] for key in keys if key in card}
 
 
 def _conflicts(rows, library, by_id, environment):
@@ -139,7 +143,7 @@ def _conflicts(rows, library, by_id, environment):
     return output
 
 
-def search(query, *, limit=5, root=None, environment=None, events=(), offset=0, excerpt_chars=MAX_EXCERPT,
+def search(query, *, limit=5, root=None, environment=None, events=(), card_type=None, offset=0, excerpt_chars=MAX_EXCERPT,
            expected_knowledge_digest=None):
     from .knowledge import MAX_CARDS, ROOT, card_review, load_library, validate_environment
 
@@ -151,16 +155,13 @@ def search(query, *, limit=5, root=None, environment=None, events=(), offset=0, 
     if (not isinstance(events, (tuple, list)) or len(events) > MAX_EVENTS
             or any(not isinstance(value, str) or not EVENT.fullmatch(value) for value in events)):
         raise InputError('invalid observed knowledge event types')
-    if expected_knowledge_digest is not None and (
-            not isinstance(expected_knowledge_digest, str) or not SHA256.fullmatch(expected_knowledge_digest)):
-        raise InputError('invalid expected knowledge digest')
+    if card_type is not None and (not isinstance(card_type,str) or len(card_type)>128 or not card_type.strip()):
+        raise InputError('invalid knowledge card type filter')
     if offset and expected_knowledge_digest is None:
         raise InputError('subsequent knowledge results require the same knowledge revision digest')
     environment = {key: value for key, value in validate_environment(environment).items()
                    if value != 'unknown'}
-    library = load_library(root)
-    if expected_knowledge_digest is not None and expected_knowledge_digest != library['digest']:
-        raise InputError('knowledge revision changed; search the current revision again')
+    library = load_library(root,expected_knowledge_digest=expected_knowledge_digest)
     root = ROOT/'knowledge' if root is None else Path(root)
     by_id = {card['id']: card for card in library['cards']}
     terms = _query_terms(query)
@@ -170,8 +171,13 @@ def search(query, *, limit=5, root=None, environment=None, events=(), offset=0, 
     for card in library['cards']:
         if card['lifecycle']['state'] == 'withdrawn' or card['status'] == 'deprecated':
             continue
-        score, signals, signal_count, event_count = _matches(card, terms, event_words,
-                                                            exact_id=card['id'].casefold() == literal)
+        if card_type is not None and card['type'] != card_type:
+            continue
+        declared = event_words.intersection(name.casefold() for name in card.get('event_types', ()))
+        if card_type == 'tj_event' and event_words and not declared:
+            continue
+        score, signals, signal_count, event_count = _matches(card, terms, event_words, declared,
+                                                             exact_id=card['id'].casefold() == literal)
         if not score:
             continue
         review = card_review(library, card['id'], environment=environment)
@@ -183,7 +189,7 @@ def search(query, *, limit=5, root=None, environment=None, events=(), offset=0, 
             excluded.append(summary)
             continue
         exact_id = any(row['kind'] == 'text' and row['field'] == 'id' and row['basis'] == 'exact' for row in signals)
-        rank = (not exact_id, provisional, -event_count, -score,
+        rank = (not exact_id, provisional, -len(declared), -event_count, -score,
                 applicability['status'] == 'environment_unknown', card['id'])
         ranked.append((rank, summary, card))
     ranked.sort(key=lambda item: item[0])

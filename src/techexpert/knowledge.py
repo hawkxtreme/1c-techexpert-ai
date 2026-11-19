@@ -7,7 +7,7 @@ import stat
 from urllib.parse import urlsplit
 
 from .inputs import InputError,read_snapshot,json_value
-from .knowledge_search import search
+from .knowledge_search import EVENT, MAX_EVENTS, SHA256, search
 from .storage import ROOT
 
 MAX_CARDS=256
@@ -82,7 +82,45 @@ def _rights(value):
     if not isinstance(actions,list) or len(actions)>16 or any(not isinstance(a,str) or len(a)>256 for a in actions):raise InputError('invalid permitted source actions')
     return dict(value)
 
-def load_library(root=None):
+def validate_card_annotations(card):
+    event_card = card.get('type') == 'tj_event'
+    if not event_card and 'event_types' not in card and 'claims' not in card:
+        return
+    withdrawn = _lifecycle(card.get('lifecycle'))['state'] == 'withdrawn'
+    if 'event_types' in card or (event_card and not withdrawn):
+        names = card.get('event_types')
+        if (not event_card or not isinstance(names, list) or not 1 <= len(names) <= MAX_EVENTS
+                or any(not isinstance(name, str) or not EVENT.fullmatch(name) or name != name.upper() for name in names)
+                or len(set(names)) != len(names)):
+            raise InputError('invalid knowledge card event types')
+    if withdrawn:
+        if 'claims' in card:
+            raise InputError('withdrawn knowledge card must omit claims')
+        return
+    if 'claims' not in card and not event_card:
+        return
+    claims = card.get('claims')
+    if not isinstance(claims, list) or not 1 <= len(claims) <= 16:
+        raise InputError('knowledge card requires 1..16 annotated claims')
+    source_ids = set(_ids(card.get('sources', [])))
+    seen = set()
+    for item in claims:
+        if (not isinstance(item, dict) or set(item) != {'id','status','text','applicability','sources'}
+                or not isinstance(item['id'], str) or not ID.fullmatch(item['id']) or item['id'] in seen
+                or item['status'] not in ('documented','hypothesis')):
+            raise InputError('invalid knowledge claim')
+        _text(item['text'],1024)
+        _text(item['applicability'],1024)
+        sources = _ids(item['sources'],8)
+        if set(sources)-source_ids or (item['status']=='documented' and not sources):
+            raise InputError('invalid knowledge claim source binding')
+        seen.add(item['id'])
+
+
+def load_library(root=None, *, expected_knowledge_digest=None):
+    if expected_knowledge_digest is not None and (
+            not isinstance(expected_knowledge_digest,str) or not SHA256.fullmatch(expected_knowledge_digest)):
+        raise InputError('invalid expected knowledge digest')
     root=Path(ROOT/'knowledge' if root is None else root).absolute()
     if '..' in root.parts:raise InputError('knowledge root must not contain parent traversal')
     # Preserve the selected boundary until every ancestor has been inspected.
@@ -127,6 +165,7 @@ def load_library(root=None):
             if not isinstance(values,list) or not 1<=len(values)<=64:raise InputError('invalid applicability values')
             for value in values:_text(value,128)
         normalized=dict(card,depends_on=dependencies,lifecycle=lifecycle,applicability_constraints=constraints)
+        validate_card_annotations(normalized)
         body=''
         if lifecycle['state']=='withdrawn':
             if card['path'] is not None:raise InputError('withdrawn card requires a body-free tombstone')
@@ -161,7 +200,10 @@ def load_library(root=None):
     legacy=hashlib.sha256()
     for name,data in sorted(raw_members.items()):legacy.update(('knowledge/'+name).encode());legacy.update(data)
     fingerprint=dict(index=index,cards=[dict(id=c['id'],content_sha256=c['content_sha256']) for c in cards])
-    return dict(schema_version=index['schema_version'],revision=index['revision'],digest=digest(fingerprint),legacy_digest=legacy.hexdigest(),
+    library_digest=digest(fingerprint)
+    if expected_knowledge_digest is not None and expected_knowledge_digest!=library_digest:
+        raise InputError('knowledge revision changed; search the current revision again')
+    return dict(schema_version=index['schema_version'],revision=index['revision'],digest=library_digest,legacy_digest=legacy.hexdigest(),
         digest_normalization='canonical_json_and_utf8_lf',cards=cards,sources=sources,open_conflicts=conflicts,
         package_members=sorted(raw_members),original_materials_stored=False,capture_consistency='per_file_stable_reads_not_atomic_library_snapshot')
 
@@ -190,8 +232,10 @@ def card_review(library,card_id,*,environment=None):
     return dict(review_required=bool(reasons),reasons=reasons,link_warnings=links,open_conflicts=conflicts,
         technical_truth_judged=False,requires_applicability_check=True)
 
-def get_card(card_id,*,root=None):
-    library=load_library(root);card=next((c for c in library['cards'] if c['id']==card_id),None)
+def get_card(card_id,*,root=None,expected_knowledge_digest=None):
+    library=load_library(root,expected_knowledge_digest=expected_knowledge_digest)
+    card=next((c for c in library['cards'] if c['id']==card_id),None)
     if card is None:raise InputError('unknown knowledge card')
-    return dict(card,knowledge_revision=library['revision'],sources_metadata=[library['sources'][s] for s in card['sources']],
+    return dict(card,knowledge_revision=library['revision'],knowledge_digest=library['digest'],
+        sources_metadata=[library['sources'][s] for s in card['sources']],
         untrusted_reference_content=True,**card_review(library,card_id))

@@ -48,6 +48,39 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertEqual(len(found['matches']),3)
         self.assertFalse(found['matches'][0]['diagnosis_for_current_case_established'])
 
+    def test_event_claims_bind_exact_revision_and_retained_source_provenance(self):
+        a = self.doc['cards'][0]
+        a.update(type='tj_event', event_types=['SDBL'], claims=[
+            dict(id='observed-model-call', status='documented', text='Own fixture statement.',
+                 applicability='Synthetic test scope', sources=['S1'])])
+        self.save()
+        actual = knowledge.load_library(self.library)['digest']
+        pinned = self.api.pin_use(self.state, ['A'], root=self.library, expected_knowledge_digest=actual)
+        self.assertEqual(pinned['result']['cards'][0]['card']['claims'], a['claims'])
+        self.assertEqual(self.api.checked_snapshot(pinned)['result']['library_digest'], actual)
+        forged = copy.deepcopy(pinned)
+        card = forged['result']['cards'][0]
+        card['card']['claims'][0]['sources'] = ['S2']
+        card['metadata_sha256'] = knowledge.digest(card['card'])
+        with self.assertRaisesRegex(ValueError, 'claim source'):
+            self.api.checked_snapshot(forged)
+
+        a['claims'][0]['text'] = 'Changed independently authored statement.'
+        self.save()
+        with self.assertRaisesRegex(ValueError, 'revision changed'):
+            self.api.pin_use(self.state, ['A'], root=self.library, expected_knowledge_digest=actual)
+        review = self.api.review_use(self.state, pinned['artifact_id'], root=self.library)
+        self.assertIn('card_metadata_changed', {reason['code'] for reason in review['cards'][0]['reasons']})
+
+        for changes in ({'event_types':['SDBL','sdbl']}, {'event_types':[]},
+                        {'claims':[dict(a['claims'][0], sources=['S2'])]},
+                        {'lifecycle':dict(state='withdrawn',reason='Fixture withdrawal'),'path':None}):
+            with self.subTest(changes=changes):
+                self.doc['cards'][0] = dict(a, **changes)
+                self.save()
+                with self.assertRaises(ValueError):
+                    knowledge.load_library(self.library)
+
     def test_explicit_dependencies_are_not_the_related_navigation_graph(self):
         self.doc['sources'][0]['lifecycle']=dict(state='withdrawn',reason='Synthetic source withdrawal')
         self.save();found=knowledge.search('slow',root=self.library)

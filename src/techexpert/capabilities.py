@@ -64,7 +64,8 @@ ROUTES={
      ['explicitly selected manifest and TJ'],'read-only inspection or metadata-only external reference preview',['sources','limitations']),
  'knowledge.search':route(dict(query=string(500),limit=integer(1,20,5),**_knowledge_schema(_sys.modules[__name__])),
      ['query'],['bundled offline knowledge'],'retrieve candidate references by symptom, events and reported environment; no source fetch',['knowledge_revision','matches']),
- 'knowledge.card':route(dict(card_id=string(128),offset=integer(0,65536,0),limit=integer(1,8192,6000)),['card_id'],['bundled authored card'],
+ 'knowledge.card':route(dict(card_id=string(128),offset=integer(0,65536,0),limit=integer(1,8192,6000),
+     expected_knowledge_digest=SHA256),['card_id'],['bundled authored card'],
      'bounded authored note; no independent diagnosis',['id','body','content_sha256']),
  'os.collect':dict(route(OS['properties'],[],['explicit node and existing local/SSH/WinRM access'],
      'bounded counter collection; no service setup or permission changes',['artifact_id','result','sources'],timeout=1830)),
@@ -341,7 +342,8 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
         from .knowledge import search,get_card
         if operation=='knowledge.search':data=search(**args)
         else:
-            data=get_card(args['card_id']);body=data['body'];offset=args['offset'];limit=args['limit']
+            data=get_card(args['card_id'],expected_knowledge_digest=args.get('expected_knowledge_digest'))
+            body=data['body'];offset=args['offset'];limit=args['limit']
             data=dict(data,body=body[offset:offset+limit],body_truncated=offset>0 or offset+limit<len(body),body_total_characters=len(body),body_offset=offset)
     elif operation in ('os.collect','os.import'):
         from .os_metrics import collect_os,import_os

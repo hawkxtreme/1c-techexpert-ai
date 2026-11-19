@@ -1,7 +1,82 @@
 {
   "schema_version": 2,
-  "revision": "2026.11.19.1",
+  "revision": "2026.11.19.2",
   "sources": [
+    {
+      "id": "1c-tj-event-types",
+      "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_file_mode_8_3_27/#section-30",
+      "publisher": "1C",
+      "version": "8.3.27",
+      "access": "public",
+      "section": "§3.24.2.3",
+      "checked_at": "2026-11-19",
+      "storage": "url_only",
+      "lifecycle": {
+        "state": "active"
+      },
+      "link": {
+        "state": "available",
+        "checked_at": "2026-11-19"
+      },
+      "rights": {
+        "status": "link_only",
+        "basis": "Сохраняем ссылку на раздел руководства. Карточки самостоятельно подготовлены для комплекта.",
+        "allowed_actions": [
+          "retain_source_url",
+          "author_independent_notes"
+        ]
+      }
+    },
+    {
+      "id": "1c-tj-event-functions",
+      "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_file_mode_8_3_27/#the-property-values-of-func",
+      "publisher": "1C",
+      "version": "8.3.27",
+      "access": "public",
+      "section": "§3.24.2.4.4",
+      "checked_at": "2026-11-19",
+      "storage": "url_only",
+      "lifecycle": {
+        "state": "active"
+      },
+      "link": {
+        "state": "available",
+        "checked_at": "2026-11-19"
+      },
+      "rights": {
+        "status": "link_only",
+        "basis": "Сохраняем ссылку на раздел руководства. Карточки самостоятельно подготовлены для комплекта.",
+        "allowed_actions": [
+          "retain_source_url",
+          "author_independent_notes"
+        ]
+      }
+    },
+    {
+      "id": "1c-tj-exception-context",
+      "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_file_mode_8_3_27/#writing-exception-contexts",
+      "publisher": "1C",
+      "version": "8.3.27",
+      "access": "public",
+      "section": "§3.24.4",
+      "checked_at": "2026-11-19",
+      "storage": "url_only",
+      "lifecycle": {
+        "state": "active"
+      },
+      "link": {
+        "state": "available",
+        "checked_at": "2026-11-19"
+      },
+      "rights": {
+        "status": "link_only",
+        "basis": "Сохраняем ссылку на раздел руководства. Карточки самостоятельно подготовлены для комплекта.",
+        "allowed_actions": [
+          "retain_source_url",
+          "author_independent_notes"
+        ]
+      }
+    },
     {
       "id": "1c-file",
       "url": "https://1c-dn.com/library/tutorials/1c_enterprise_administrator_guide_file_mode_8_3_27/",
@@ -969,6 +1044,212 @@
         "state": "active"
       },
       "depends_on": []
+    },
+    {
+      "id": "KB-TJ-SDBL",
+      "title": "SDBL — обращения к модели данных 1С",
+      "path": "events/tj-sdbl.md",
+      "status": "draft",
+      "type": "tj_event",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-19",
+      "revision": 1,
+      "applicability": "Практика чтения сохранённого ТЖ файловой ИБ 1С 8.3.27.1989 на Windows.",
+      "applicability_constraints": {
+        "database_mode": [
+          "file"
+        ],
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      },
+      "event_types": [
+        "SDBL"
+      ],
+      "signs": [
+        "Обращения к данным в технологическом журнале",
+        "Серия похожих запросов"
+      ],
+      "steps": [
+        "Связать записи SDBL с конкретным запуском",
+        "Сравнить обращения и длительности в сопоставимых запусках"
+      ],
+      "evidence_basis": "Руководство 1С 8.3.27 и локальная проверка выбора записей в сохранённом ТЖ файловой ИБ.",
+      "related": [
+        "SC01-NATIVE-TJ",
+        "SC01-LIFECYCLE",
+        "PLAYBOOK-SLOW-JOB"
+      ],
+      "sources": [
+        "1c-tj-event-types",
+        "1c-tj-event-functions"
+      ],
+      "claims": [
+        {
+          "id": "data-model",
+          "status": "documented",
+          "text": "События SDBL относятся к обращениям к модели данных платформы.",
+          "applicability": "Технологический журнал 1С 8.3.27.",
+          "sources": [
+            "1c-tj-event-types"
+          ]
+        },
+        {
+          "id": "transaction-start",
+          "status": "documented",
+          "text": "Вариант beginTransaction отмечает начало транзакции и записывается без длительности.",
+          "applicability": "Событие SDBL с Func=beginTransaction в руководстве 1С 8.3.27.",
+          "sources": [
+            "1c-tj-event-functions"
+          ]
+        },
+        {
+          "id": "repeat-cost",
+          "status": "hypothesis",
+          "text": "Повторные обращения могут занимать заметную часть времени обработчика.",
+          "applicability": "Гипотеза для сопоставимых запусков с привязанными записями и независимым замером выполнения.",
+          "sources": []
+        }
+      ],
+      "lifecycle": {
+        "state": "active"
+      }
+    },
+    {
+      "id": "KB-TJ-SESN",
+      "title": "SESN — события сеанса 1С",
+      "path": "events/tj-sesn.md",
+      "status": "draft",
+      "type": "tj_event",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-19",
+      "revision": 1,
+      "applicability": "Практика чтения сохранённого ТЖ файловой ИБ 1С 8.3.27.1989 на Windows.",
+      "applicability_constraints": {
+        "database_mode": [
+          "file"
+        ],
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      },
+      "event_types": [
+        "SESN"
+      ],
+      "signs": [
+        "Начало и завершение сеанса",
+        "Сеанс фонового задания"
+      ],
+      "steps": [
+        "Сверить область сеанса для Start и Finish",
+        "Связать нужный сеанс с UUID задания по независимым данным"
+      ],
+      "evidence_basis": "Руководство 1С 8.3.27 и локальная проверка выбора записей в сохранённом ТЖ файловой ИБ.",
+      "related": [
+        "SC01-LIFECYCLE",
+        "SC01-TIME",
+        "SC01-NATIVE-TJ"
+      ],
+      "sources": [
+        "1c-tj-event-types",
+        "1c-tj-event-functions"
+      ],
+      "claims": [
+        {
+          "id": "session-actions",
+          "status": "documented",
+          "text": "Группа SESN описывает действия, относящиеся к сеансу.",
+          "applicability": "Технологический журнал 1С 8.3.27.",
+          "sources": [
+            "1c-tj-event-types"
+          ]
+        },
+        {
+          "id": "session-boundaries",
+          "status": "documented",
+          "text": "Start отмечает начало сеанса. Finish записывается при его завершении и содержит длительность сеанса.",
+          "applicability": "Значения Func для SESN в руководстве 1С 8.3.27.",
+          "sources": [
+            "1c-tj-event-functions"
+          ]
+        }
+      ],
+      "lifecycle": {
+        "state": "active"
+      }
+    },
+    {
+      "id": "KB-TJ-EXCP",
+      "title": "EXCP и EXCPCNTX — исключение и его контекст",
+      "path": "events/tj-excp.md",
+      "status": "draft",
+      "type": "tj_event",
+      "author": "TechExpert contributors (agent-assisted)",
+      "date": "2026-11-19",
+      "revision": 1,
+      "applicability": "Практика чтения сохранённого ТЖ файловой ИБ 1С 8.3.27.1989 на Windows.",
+      "applicability_constraints": {
+        "database_mode": [
+          "file"
+        ],
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      },
+      "event_types": [
+        "EXCP",
+        "EXCPCNTX"
+      ],
+      "signs": [
+        "Исключение в ТЖ",
+        "Указатель на незавершённое действие в контексте исключения"
+      ],
+      "steps": [
+        "Сверить область исключения и контекста с нужным запуском",
+        "Сопоставить состояние задания и итог работы"
+      ],
+      "evidence_basis": "Руководство 1С 8.3.27 и локальная проверка выбора записей в сохранённом ТЖ файловой ИБ.",
+      "related": [
+        "SC01-LIFECYCLE",
+        "SC01-NATIVE-TJ",
+        "KB-EVIDENCE-CAUSE"
+      ],
+      "sources": [
+        "1c-tj-event-types",
+        "1c-tj-exception-context"
+      ],
+      "claims": [
+        {
+          "id": "exception-event",
+          "status": "documented",
+          "text": "EXCP фиксирует исключение приложения 1С, попавшее в технологический журнал.",
+          "applicability": "Технологический журнал 1С 8.3.27.",
+          "sources": [
+            "1c-tj-event-types"
+          ]
+        },
+        {
+          "id": "unfinished-context",
+          "status": "documented",
+          "text": "В EXCPCNTX приводятся уже начатые действия, выполнявшиеся к моменту нештатной ситуации. SrcName указывает исходный вид события.",
+          "applicability": "Описание записи контекста исключения в 1С 8.3.27.",
+          "sources": [
+            "1c-tj-exception-context"
+          ]
+        },
+        {
+          "id": "database-error-filter",
+          "status": "documented",
+          "text": "При ошибке базы запись EXCP отбирается по условиям logcfg.xml.",
+          "applicability": "Запись ошибок базы в технологический журнал 1С 8.3.27.",
+          "sources": [
+            "1c-tj-exception-context"
+          ]
+        }
+      ],
+      "lifecycle": {
+        "state": "active"
+      }
     }
   ],
   "open_conflicts": []

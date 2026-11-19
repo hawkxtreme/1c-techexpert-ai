@@ -4,17 +4,18 @@ import hashlib
 import json
 
 from .inputs import InputError
-from .knowledge import ID,card_review,digest,load_library,validate_environment
+from .knowledge import ID,card_review,digest,load_library,validate_card_annotations,validate_environment
 
 ERRORS=(OSError,ValueError,TypeError,KeyError,AttributeError,RecursionError)
 
-def pin_use(state_dir,card_ids,*,root=None,purpose='recommendation',environment=None):
+def pin_use(state_dir,card_ids,*,root=None,purpose='recommendation',environment=None,expected_knowledge_digest=None):
     environment=validate_environment(environment)
     if (not isinstance(card_ids,list) or not 1<=len(card_ids)<=16 or
         any(not isinstance(cid,str) or not ID.fullmatch(cid) for cid in card_ids) or len(set(card_ids))!=len(card_ids)):
         raise InputError('knowledge-use requires1..16 distinct card IDs')
     if purpose not in ('recommendation','reference'):raise InputError('invalid knowledge-use purpose')
-    library=load_library(root);by_id={card['id']:card for card in library['cards']}
+    library=load_library(root,expected_knowledge_digest=expected_knowledge_digest)
+    by_id={card['id']:card for card in library['cards']}
     if set(card_ids)-by_id.keys():raise InputError('unknown knowledge card')
     selected=list(card_ids)
     for cid in selected:
@@ -76,6 +77,7 @@ def checked_snapshot(report):
             raise InputError('invalid knowledge-use source provenance')
         if len({s['id'] for s in metadata_sources})!=len(metadata_sources) or {s['id'] for s in metadata_sources}!=set(card['card'].get('sources',[])):
             raise InputError('knowledge-use source provenance disagrees with card')
+        validate_card_annotations(card['card'])
         ids.add(card['id']);source_ids.add(card['source_id'])
     requested=result.get('requested_card_ids')
     if (not isinstance(requested,list) or not 1<=len(requested)<=16 or any(not isinstance(cid,str) or cid not in ids for cid in requested)

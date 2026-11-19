@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from urllib.parse import urlsplit
 
 
 class KnowledgeTests(unittest.TestCase):
@@ -60,6 +61,28 @@ class KnowledgeTests(unittest.TestCase):
         self.assertNotEqual(result['matches'][0]['id'], second['matches'][0]['id'])
         with self.assertRaisesRegex(ValueError, 'revision'):
             self.api.search('замедление', offset=1, expected_knowledge_digest='0'*64)
+
+    def test_tj_event_cards_use_declared_events_and_link_their_claims(self):
+        environment = dict(database_mode='file', platform_version='8.3.27.1989')
+        result = self.api.search('Границы фонового задания и SDBL', events=['sesn'],
+                                 environment=environment, card_type='tj_event', excerpt_chars=0)
+        self.assertEqual([row['id'] for row in result['matches']], ['KB-TJ-SESN'])
+        selected = result['matches'][0]
+        self.assertEqual(selected['event_types'], ['SESN'])
+        self.assertIn(dict(kind='event', term='SESN', field='event_types', basis='declared'), selected['matching'])
+        self.assertEqual(selected['applicability_check']['status'], 'matches_reported_environment')
+        self.assertTrue(selected['hypothesis_only'])
+        self.assertFalse(selected['diagnosis_for_current_case_established'])
+        card = self.api.get_card(selected['id'], expected_knowledge_digest=result['knowledge_digest'])
+        self.assertEqual(card['knowledge_digest'], result['knowledge_digest'])
+        self.assertEqual(card['status'], 'draft')
+        sources = {item['id']:item for item in card['sources_metadata']}
+        supporting = [source for row in card['claims'] if row['status']=='documented' for source in row['sources']]
+        self.assertTrue(supporting)
+        self.assertTrue(all(sources[source]['storage']=='url_only' and urlsplit(sources[source]['url']).fragment
+                            for source in supporting))
+        with self.assertRaisesRegex(ValueError, 'revision changed'):
+            self.api.get_card(selected['id'], expected_knowledge_digest='0'*64)
 
     def test_changed_catalogue_revision_includes_metadata_and_invalid_paths_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
