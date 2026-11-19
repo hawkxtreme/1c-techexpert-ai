@@ -110,13 +110,13 @@ def _inputs(kind, report):
         result.append(_binding('artifact', intake['artifact_id'], 'normalized', intake['plan_report_digest']))
     if kind == 'artifact' and report['kind'] == 'source_export' and details.get('source_artifact_id') is not None:
         result.append(_binding('artifact', details['source_artifact_id'], 'file', details['source_artifact_report_sha256']))
-    if kind == 'artifact' and report['kind'] == 'apdex_preparation':
-        from .apdex_preparation import DEPENDENCY_LIMIT
-        dependencies = details['dependencies']
-        if type(dependencies) is not list or len(dependencies) > DEPENDENCY_LIMIT or any(
-                type(item) is not dict or item.get('kind') != 'artifacts' for item in dependencies):
-            raise InputError('invalid APDEX preparation material list')
-        result.extend(_binding('artifact', item['id'], 'normalized', item['report_digest']) for item in dependencies)
+    if kind == 'artifact' and report['kind'] in ('apdex_preparation', 'fix_verification'):
+        if report['kind'] == 'apdex_preparation':
+            from .apdex_preparation import dependencies
+        else:
+            from .fix_verification import dependencies
+        kinds = dict(artifacts='artifact', cases='case', comparisons='comparison')
+        result.extend(_binding(kinds[item['kind']], item['id'], 'normalized', item['report_digest']) for item in dependencies(report))
     return result
 
 

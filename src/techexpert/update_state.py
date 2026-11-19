@@ -259,9 +259,10 @@ def inspect_state(state):
                             and report['result'].get('profile')==native_jr_sqlite.PROFILE):
                         schemas['jr-lgd'].add(native_jr_sqlite.READER_FORMAT)
                     if kind=='artifacts' and report.get('kind')==fix_verification.KIND:
-                        schemas['fix-verification'].add(fix_verification.READER_FORMAT)
-                    if kind == 'artifacts' and (report.get('kind') == apdex_preparation.KIND
-                        or report.get('kind') == 'apdex' and report['result'].get('target_seconds') is None):
+                        schemas['fix-verification'].add(fix_verification.reader_format(report))
+                    if kind == 'artifacts' and report.get('kind') == apdex_preparation.KIND:
+                        schemas['apdex-preparation'].add(apdex_preparation.reader_format(report))
+                    if kind == 'artifacts' and report.get('kind') == 'apdex' and report['result'].get('target_seconds') is None:
                         schemas['apdex-preparation'].add(apdex_preparation.READER_FORMAT)
                     if kind == 'artifacts' and report.get('kind') == context_excerpt.KIND:
                         schemas['context-disclosure'].add(context_excerpt.READER_CAPABILITY)

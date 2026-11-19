@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import stat
 
-from . import investigation_materials as materials, investigations, operation_state as fs, storage
+from . import case_retention, investigation_materials as materials, investigations, operation_state as fs, storage
 from .inputs import InputError
 
 _ID = re.compile(r'[a-f0-9]{32}')
@@ -83,14 +83,12 @@ def observed(state, case, file_digest, source_id):
                     if attachment['report_sha256'] != comparison_digests[identifier]:
                         raise InputError('saved investigation refers to a different comparison digest')
                     derived.append(attachment['id'])
-                if attachment.get('scope')=='fix_verification':
-                    from .fix_verification import case_dependencies
-                    dependencies=case_dependencies(state,attachment)
-                    if case['case_id'] in dependencies:
-                        if dependencies[case['case_id']]!=verification_digest:
-                            raise InputError('saved fix verification refers to a different case digest')
-                        derived.append(attachment['id'])
-                        includes_verification=True
+                dependencies = case_retention.derived_case_dependencies(state, attachment)
+                if case['case_id'] in dependencies:
+                    if dependencies[case['case_id']] != verification_digest:
+                        raise InputError('saved calculation refers to a different case digest')
+                    derived.append(attachment['id'])
+                    includes_verification = True
             if not (direct or derived):
                 continue
             counts, uses = materials._uses(doc, limit=None)

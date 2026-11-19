@@ -183,6 +183,8 @@ def _verification_sample(sample):
         return None
     counts = measurements(sample['counts'], ('selected', 'failed', 'unknown_outcome', 'unknown_duration',
         'met', 'breaches', 'uncertain_bounds', 'chronology_conflicts', 'unplaced', 'duplicate_observations'))
+    if 'execution_evidence' in sample:
+        counts.update(measurements(sample['counts'], ('conflicting_inputs',)))
     apdex = sample['apdex']
     return dict(profile=enum(sample.get('profile'), ('normalized_apdex_rows', 'saved_case_execution',
                                                     'controlled_case_comparison')),
@@ -223,15 +225,20 @@ def fix_summary(result):
 
 def apdex_setup(result):
     from .apdex_preparation import ACTIONS, BSP_MARKERS, CONFIG_STATES, SAMPLE_STATES
+    from .apdex_cases import SAMPLE_PROFILE
 
     config = result['configuration']
     sample = result['measurements']
     goal = result['goal']
+    sample_fields = measurements(sample, ('selected', 'failed', 'unknown_duration', 'score_at_target'))
+    if sample.get('profile') == SAMPLE_PROFILE:
+        sample_fields.update(profile=SAMPLE_PROFILE, **measurements(sample, ('unknown_outcome', 'uncertain_bounds',
+            'unplaced', 'duplicate_observations', 'conflicting_inputs')))
     return dict(
         configuration=dict(status=enum(config['status'], CONFIG_STATES), runtime_availability='unknown',
                            declared_markers=[key for key in BSP_MARKERS.values() if key in config['declared_markers']]),
         measurements=dict(status=enum(sample['status'], SAMPLE_STATES),
-                          **measurements(sample, ('selected', 'failed', 'unknown_duration', 'score_at_target')),
+                          **sample_fields,
                           duration_seconds=measurements(sample['duration_seconds'], ('median', 'p90', 'known')),
                           apdex=measurements(sample['apdex'], ('satisfied', 'tolerating', 'frustrated', 'unknown'))
                           if sample['apdex'] is not None else None),

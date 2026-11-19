@@ -3,8 +3,9 @@ from collections import Counter
 from pathlib import Path, PurePosixPath
 from xml.etree import ElementTree
 
-from . import artifacts, context_policy, investigations, operation_state as fs, sample_description, source_code
+from . import artifacts, context_policy, investigations, operation_state as fs, sample_description, source_code, storage
 from .apdex import instant, measurement_category
+from .apdex_cases import CaseSample, SAMPLE_PROFILE
 from .inputs import InputError
 from .source_coverage import validate_request as window_request
 
@@ -12,8 +13,11 @@ from .source_coverage import validate_request as window_request
 OPERATION = 'apdex.prepare'
 KIND = 'apdex_preparation'
 PROFILE = 'apdex-preparation-v1'
+CASE_PROFILE = 'apdex-preparation-v2'
 READER_FORMAT = 1
-ATTACHMENT_LIMIT = 4
+CASE_READER_FORMAT = 2
+LEGACY_ATTACHMENT_LIMIT = 4
+ATTACHMENT_LIMIT = 16
 DEPENDENCY_LIMIT = 1 + 2 * ATTACHMENT_LIMIT
 DEPENDENCY_KINDS = ('apdex', 'onec_source', 'input_catalog', 'remote_capture')
 NS = '{http://v8.1c.ru/8.3/MDClasses}'
@@ -29,7 +33,7 @@ CONFIG_STATES = ('not_selected', 'metadata_not_found', 'ambiguous_export', 'unre
 SAMPLE_STATES = ('not_selected', 'no_rows', 'observed', 'incomplete')
 ACTIONS = ('select_configuration_export', 'confirm_runtime_subsystem_and_export', 'define_operation_boundary',
            'choose_priority', 'choose_target', 'choose_score', 'choose_comparison_windows',
-           'review_window_selection', 'obtain_normalized_measurements', 'check_first_sample')
+           'review_window_selection', 'obtain_normalized_measurements', 'review_saved_execution_evidence', 'check_first_sample')
 
 
 def route(cap):
@@ -43,7 +47,7 @@ def route(cap):
         baseline_window=cap.WINDOW, verification_window=cap.WINDOW,
         configuration_access=cap.string(12, enum=['available', 'unavailable', 'unknown'], default='unknown'))
     return cap.route(fields, ('investigation_id', 'revision', 'operation'),
-        ['exact saved investigation revision and optional selected configuration and measurement attachments'],
+        ['exact saved investigation revision and optional selected configuration, normalized measurements or saved cases'],
         'save a preparation plan and measurement preview; read no live configuration and start no collection',
         ['artifact_id', 'result', 'sources'])
 
@@ -67,10 +71,10 @@ def normalize(args):
     return args
 
 
-def _attachment(doc, label):
+def _attachment(doc, label, kinds=('artifact',)):
     selected = next((entry for entry in doc['attachments'] if entry['id'] == label), None)
-    if selected is None or selected['kind'] != 'artifact':
-        raise InputError('select a matching artifact from the pinned investigation revision')
+    if selected is None or selected['kind'] not in kinds:
+        raise InputError('select a matching attachment from the pinned investigation revision')
     return selected
 
 
@@ -131,11 +135,15 @@ def _measurements(state, doc, args):
     if not args['measurement_attachments']:
         return dict(status='not_selected', selected=0, failed=0, unknown_duration=0,
                     duration_seconds={}, score_at_target=None, apdex=None), []
-    pinned = [_attachment(doc, label) for label in args['measurement_attachments']]
-    references = [dict(kind='artifact', id=item['target_id']) for item in pinned]
-    if len({item['id'] for item in references}) != len(references):
-        raise InputError('select each retained measurement artifact once')
+    pinned = [_attachment(doc, label, ('case', 'artifact')) for label in args['measurement_attachments']]
+    kind = pinned[0]['kind']
+    if any(item['kind'] != kind for item in pinned):
+        raise InputError('select one compatible measurement profile per APDEX sample')
+    if kind == 'artifact' and len(pinned) > LEGACY_ATTACHMENT_LIMIT:
+        raise InputError('select at most four normalized APDEX measurement artifacts')
+    references = [dict(kind=kind, id=item['target_id']) for item in pinned]
     target = args.get('target_seconds')
+    case_sample = CaseSample(target) if kind == 'case' else None
     counts = Counter(selected=0, failed=0, unknown_duration=0)
     apdex = Counter(satisfied=0, tolerating=0, frustrated=0, unknown=0) if target is not None else None
 
@@ -151,18 +159,22 @@ def _measurements(state, doc, args):
             apdex[measurement_category(success, duration, target)] += 1
 
     sample = sample_description.describe(state, references, args['operation'], window=args.get('baseline_window'),
-                                         limit=1, observe=observe)
+                                         limit=1, observe=case_sample.observe if case_sample else observe)
     for item, summary in zip(pinned, sample['inputs'], strict=True):
-        report, _ = artifacts.read_artifact_record(state, item['target_id'])
+        folder = state / sample_description.KINDS[kind] / item['target_id']
+        report = fs.read(fs.safe(folder / 'report.json'), storage.MAX_REPORT_BYTES)
         if investigations._digest(report) != item['report_sha256'] or fs.digest(report) != summary['report_digest']:
             raise InputError('APDEX measurements differ from the pinned attachment')
-    count = counts['selected']
     stats = sample['statistics']
+    details = dict(duration_seconds=dict(median=stats['median'], p90=stats['percentiles']['values']['90'], known=stats['count']),
+                   selection_sha256=sample['selection_sha256'])
+    if case_sample:
+        return dict(case_sample.summary(), **details), sample['dependencies']
+    count = counts['selected']
     score = (apdex['satisfied'] + .5 * apdex['tolerating']) / count if apdex is not None and count and not apdex['unknown'] else None
     status = 'incomplete' if counts['unknown_duration'] else 'observed' if count else 'no_rows'
-    return dict(status=status, **counts, duration_seconds=dict(median=stats['median'],
-        p90=stats['percentiles']['values']['90'], known=stats['count']), score_at_target=score,
-        apdex=dict(apdex) if apdex is not None else None, selection_sha256=sample['selection_sha256']), sample['dependencies']
+    return dict(status=status, **counts, **details, score_at_target=score,
+        apdex=dict(apdex) if apdex is not None else None), sample['dependencies']
 
 
 def _window_relation(baseline, verification):
@@ -176,6 +188,7 @@ def _window_relation(baseline, verification):
 
 
 def _actions(args, configuration, measurements, relation):
+    saved_execution = measurements.get('profile') == SAMPLE_PROFILE
     needed = dict(
         select_configuration_export=configuration['status'] in ('not_selected', 'metadata_not_found', 'ambiguous_export', 'unrecognized_metadata'),
         confirm_runtime_subsystem_and_export=True,
@@ -185,7 +198,8 @@ def _actions(args, configuration, measurements, relation):
         choose_score='target_score' not in args,
         choose_comparison_windows=relation == 'unselected',
         review_window_selection=relation in ('overlap', 'before_baseline'),
-        obtain_normalized_measurements=measurements['status'] != 'observed',
+        obtain_normalized_measurements=not saved_execution and measurements['status'] != 'observed',
+        review_saved_execution_evidence=saved_execution and measurements['status'] != 'observed',
         check_first_sample=True,
     )
     return [name for name, active in needed.items() if active]
@@ -199,7 +213,9 @@ def evaluate(state, output, args):
     measurements, sample_dependencies = _measurements(state, doc, args)
     baseline, verification = args.get('baseline_window'), args.get('verification_window')
     relation = _window_relation(baseline, verification)
-    result = dict(profile=PROFILE, investigation=dict(id=iid, revision=revision, sha256=investigations._digest(doc)),
+    case_sample = measurements.get('profile') == SAMPLE_PROFILE
+    result = dict(profile=CASE_PROFILE if case_sample else PROFILE,
+        investigation=dict(id=iid, revision=revision, sha256=investigations._digest(doc)),
         configuration=configuration, measurements=measurements, priority=args.get('priority'),
         operation=args['operation'], boundary=args.get('boundary'), target_reason=args.get('target_reason'),
         goal=dict(target_seconds=args.get('target_seconds'), target_score=args.get('target_score'),
@@ -210,21 +226,65 @@ def evaluate(state, output, args):
         next_actions=_actions(args, configuration, measurements, relation), dependencies=config_dependencies + sample_dependencies,
         requires_ai_interpretation=True,
         limitations=['Metadata declarations apply to the captured export. Runtime configuration, rights and native export format remain unverified.',
-                     'Observed duration statistics describe the selected normalized sample. A user target is a goal, and the tool does not establish normal performance.'])
+                     ('The score uses recorded execution bounds and platform outcomes. The operation label is supplied by the caller. Business results, '
+                      'representative coverage and healthy performance require separate evidence.' if case_sample else
+                      'Observed duration statistics describe the selected normalized sample. A user target is a goal, and the tool does not establish normal performance.')])
     return artifacts.save_artifact(output, KIND, args, [], result)
 
 
+def reader_format(report):
+    profile = report['result'].get('profile')
+    if profile == PROFILE:
+        return READER_FORMAT
+    if profile == CASE_PROFILE:
+        return CASE_READER_FORMAT
+    raise InputError('unsupported APDEX preparation profile')
+
+
+def dependencies(report):
+    format_number = reader_format(report)
+    allowed = ('artifacts', 'cases') if format_number == CASE_READER_FORMAT else ('artifacts',)
+    refs = report['result'].get('dependencies')
+    limit = DEPENDENCY_LIMIT if format_number == CASE_READER_FORMAT else 1 + 2 * LEGACY_ATTACHMENT_LIMIT
+    if (report['sources'] or type(refs) is not list or len(refs) > limit
+            or any(type(ref) is not dict or ref.get('kind') not in allowed for ref in refs)):
+        raise InputError('invalid retained APDEX preparation basis')
+    return refs
+
+
 def verify_inputs(state, report):
+    from .operations import _verify_target
+
+    state = Path(state)
     result = report['result']
     selected = result['investigation']
     doc = context_policy.selected_investigation(state, selected['id'], selected['revision'])
-    if (result.get('profile') != PROFILE or report['sources'] or investigations._digest(doc) != selected['sha256']
-            or not isinstance(result.get('dependencies'), list) or len(result['dependencies']) > DEPENDENCY_LIMIT):
+    if investigations._digest(doc) != selected['sha256']:
         raise InputError('invalid retained APDEX preparation basis')
-    for dependency in result['dependencies']:
-        _, checked = _artifact(Path(state), dependency['id'])
+    for dependency in dependencies(report):
+        kind, identifier = dependency['kind'], dependency['id']
+        if kind == 'cases':
+            folder = fs.safe(storage.case_folder(state, identifier))
+            receipt = fs.digest(fs.read(folder / 'receipt.json', 8192))
+            case = _verify_target(state, kind, identifier)
+            if fs.digest(fs.read(folder / 'receipt.json', 8192)) != receipt:
+                raise InputError('APDEX preparation input changed during verification')
+            checked = dict(kind=kind, id=identifier, report_digest=fs.digest(case), receipt_digest=receipt)
+        else:
+            _, checked = _artifact(state, identifier)
         if checked != dependency:
             raise InputError('APDEX preparation input changed')
+
+
+def case_dependencies(state, attachment):
+    identifier = attachment['target_id']
+    folder = fs.safe(artifacts.artifact_folder(state, identifier))
+    for name in ('report.json', 'request.json', 'receipt.json'):
+        fs.safe(folder / name)
+    report, _ = artifacts.read_artifact_record(state, identifier)
+    if report['kind'] != KIND or investigations._digest(report) != attachment['report_sha256']:
+        raise InputError('saved APDEX preparation attachment integrity mismatch')
+    return {item['id']: item['report_digest'] for item in dependencies(report) if item['kind'] == 'cases'}
 
 
 def require_parent(report, doc):

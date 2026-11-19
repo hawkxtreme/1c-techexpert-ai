@@ -4,15 +4,17 @@ from pathlib import Path
 
 from . import artifacts, investigations, operation_state as fs, sample_description as samples, storage
 from .apdex import instant, measurement_category
+from .apdex_cases import CaseSample, SAMPLE_PROFILE, evidence_keys, execution_bounds
 from .inputs import InputError, MAX_TOTAL_BYTES
-from .sample_statistics import duration
 from .source_coverage import validate_request as window_request
 
 
 OPERATION = 'fix.verify'
 KIND = 'fix_verification'
 PROFILE = 'fix-verification-v1'
+CASE_PROFILE = 'fix-verification-v2'
 READER_FORMAT = 1
+CASE_READER_FORMAT = 2
 MAX_DEPENDENCIES = 128
 EXCLUDED = {'other_operation','outside_window','duplicate_input_view','conflicting_input_interpretation'}
 
@@ -113,20 +115,6 @@ def _extend(dependencies, found):
         raise InputError('verification retained dependency limit exceeded')
 
 
-def _bounds(row, report):
-    value = row['value_seconds']
-    if value is None or not duration(value):
-        return None
-    if row['kind']=='artifact':
-        return value,value
-    life = report.get('job_correlation',{}).get('job_lifecycle',{})
-    candidate = life.get('execution_bounds_seconds')
-    if (life.get('status')=='established' and life.get('execution_seconds')==value and type(candidate) is list
-            and len(candidate)==2 and all(duration(number) for number in candidate) and candidate[0]<=value<=candidate[1]):
-        return tuple(candidate)
-    return None
-
-
 def _proof(row):
     result = {key:row[key] for key in ('kind','id','normalized_start_utc','row_index') if key in row}
     result['sources'] = row['evidence'][:4]
@@ -134,7 +122,7 @@ def _proof(row):
 
 
 class _Measurements:
-    def __init__(self, goal, name, changed_at):
+    def __init__(self, goal, name, changed_at, *, saved_cases=False):
         self.goal = goal
         self.name = name
         self.changed_at = instant(changed_at) if changed_at else None
@@ -142,8 +130,11 @@ class _Measurements:
                               chronology_conflicts=0,unplaced=0,unknown_outcome=0,duplicate_observations=0)
         self.apdex = Counter(satisfied=0,tolerating=0,frustrated=0,unknown=0)
         self.evidence = []
+        self.case_apdex = CaseSample(goal['target_seconds']) if saved_cases and goal['kind'] == 'apdex' else None
 
     def observe(self, row, report):
+        if self.case_apdex is not None:
+            self.case_apdex.observe(row, report)
         reason = row.get('reason')
         if reason in EXCLUDED:
             return
@@ -168,9 +159,10 @@ class _Measurements:
                 admitted = (stamp<self.changed_at)==(self.name=='before')
                 self.counts['chronology_conflicts'] += int(not admitted)
         if self.goal['kind']=='apdex':
-            self.apdex[measurement_category(not failed,value,self.goal['target_seconds'])] += 1
+            if self.case_apdex is None:
+                self.apdex[measurement_category(not failed,value,self.goal['target_seconds'])] += 1
             return
-        bounds = _bounds(row,report)
+        bounds = execution_bounds(row,report)
         if not admitted:
             return
         if (failed and self.name!='observation') or bounds and bounds[0]>self.goal['value']:
@@ -185,7 +177,15 @@ class _Measurements:
     def summary(self, *, statistics, sources, selection_sha256=None, window=None, period=None, exclusions=None):
         counts = dict(self.counts)
         apdex = None
-        if self.goal['kind']=='apdex':
+        additional = {}
+        if self.case_apdex is not None:
+            case_sample = self.case_apdex.summary()
+            counts.update(self.case_apdex.counts)
+            counts['unplaced'] = max(counts['unplaced'], self.counts['unplaced'])
+            value = case_sample['score_at_target'] if not counts['unplaced'] and not counts['chronology_conflicts'] else None
+            apdex = case_sample['apdex']
+            additional['execution_evidence'] = case_sample['execution_evidence']
+        elif self.goal['kind']=='apdex':
             if counts['selected'] and not self.apdex['unknown']:
                 value = (self.apdex['satisfied']+.5*self.apdex['tolerating'])/counts['selected']
             else:
@@ -194,19 +194,18 @@ class _Measurements:
         else:
             value = statistics.get('median')
         return dict(value=value,counts=counts,statistics=statistics,sources=sources,selection_sha256=selection_sha256,
-                    window=window,period=period,exclusions=exclusions or {},evidence=self.evidence,apdex=apdex)
+                    window=window,period=period,exclusions=exclusions or {},evidence=self.evidence,apdex=apdex,**additional)
 
 
 def _sample(state, document, name, phase, args, dependencies, remaining):
     if phase is None or not phase['attachments']:
         return None,remaining
     goal = dict(kind='duration',value=phase['threshold_seconds']) if name=='observation' else args['goal']
-    allowed = ('artifact',) if goal['kind']=='apdex' else ('case','artifact')
-    selected = [_attachment(document,label,allowed) for label in phase['attachments']]
+    selected = [_attachment(document,label,('case','artifact')) for label in phase['attachments']]
     if len({item['kind'] for item in selected})!=1:
         raise InputError('choose one compatible measurement profile per verification sample')
     inputs = [dict(kind=item['kind'],id=item['target_id']) for item in selected]
-    summary = _Measurements(goal,name,args.get('changed_at'))
+    summary = _Measurements(goal,name,args.get('changed_at'),saved_cases=selected[0]['kind']=='case')
     observed = samples.describe(state,inputs,args['operation'],window=phase.get('window'),limit=1,
                                 observe=summary.observe,maximum_bytes=remaining)
     for chosen,seen in zip(selected,observed['inputs'],strict=True):
@@ -218,7 +217,7 @@ def _sample(state, document, name, phase, args, dependencies, remaining):
     remaining -= sum(source['bytes'] for item in observed['inputs'] for source in item['sources'])
     result = summary.summary(statistics=observed['statistics'],sources=phase['attachments'],selection_sha256=observed['selection_sha256'],
                              window=phase.get('window'),period=observed['period'],exclusions=observed['exclusions'])
-    result['profile'] = 'normalized_apdex_rows' if selected[0]['kind']=='artifact' else 'saved_case_execution'
+    result['profile'] = 'normalized_apdex_rows' if selected[0]['kind']=='artifact' else SAMPLE_PROFILE
     return result,remaining
 
 
@@ -231,6 +230,15 @@ def _check_group_separation(document, args):
     windows = [group.get('window') for group in (before,after)]
     if any(window is None for window in windows) or max(w['start'] for w in windows)<min(w['end'] for w in windows):
         raise InputError('one retained input can serve both groups only in disjoint recorded-time windows')
+
+
+def _check_apdex_groups(before, after):
+    if before is None or after is None:
+        return
+    if before['profile'] != after['profile']:
+        raise InputError('use one compatible APDEX measurement profile across both groups')
+    if evidence_keys(before.get('execution_evidence', ())) & evidence_keys(after.get('execution_evidence', ())):
+        raise InputError('both APDEX groups contain the same verified execution evidence')
 
 
 def _comparison_inputs(state, attachment, dependencies, remaining):
@@ -379,6 +387,8 @@ def evaluate(state, output, args):
     else:
         before,remaining = _sample(state,document,'before',args.get('before'),args,dependencies,remaining)
         after,remaining = _sample(state,document,'after',args.get('after'),args,dependencies,remaining)
+    if args['goal']['kind'] == 'apdex':
+        _check_apdex_groups(before, after)
     selected = args.get('observation')
     observed,remaining = _sample(state,document,'observation',selected,args,dependencies,remaining)
     counts = observed['counts'] if observed else {}
@@ -388,7 +398,8 @@ def evaluate(state, output, args):
         evidence=observed['evidence'] if observed else [],sample=observed)
     effect,comparability = _effect(before,after,saved,args['goal'],args['minimum_observations'])
     application = _application(state,document,args,dependencies,remaining)
-    result = dict(profile=PROFILE,investigation=context,measure=args['measure'],recommendation=recommendation,
+    case_apdex = any('execution_evidence' in phase for phase in (before, after) if phase is not None)
+    result = dict(profile=CASE_PROFILE if case_apdex else PROFILE,investigation=context,measure=args['measure'],recommendation=recommendation,
         operation=args['operation'],control=args['control'],reported_conditions=args.get('conditions',{}),application=application,
         before=before,after=after,goal=_goal(after,args['goal'],args['minimum_observations']),effect=effect,
         comparability=comparability,recurrence=recurrence,dependencies=dependencies,
@@ -415,16 +426,32 @@ def _load_input(state, kind, target):
     return _verify_target(state,kind,target)
 
 
+def reader_format(artifact):
+    profile = artifact['result'].get('profile')
+    if profile == PROFILE:
+        return READER_FORMAT
+    if profile == CASE_PROFILE:
+        return CASE_READER_FORMAT
+    raise InputError('unsupported saved fix verification')
+
+
+def dependencies(artifact):
+    reader_format(artifact)
+    refs = artifact['result'].get('dependencies')
+    if (artifact['sources'] or type(refs) is not list or len(refs) > MAX_DEPENDENCIES
+            or any(type(ref) is not dict or ref.get('kind') not in ('artifacts', 'cases', 'comparisons') for ref in refs)):
+        raise InputError('invalid saved fix verification dependencies')
+    return refs
+
+
 def verify_inputs(state, artifact):
     state = Path(state)
-    result = artifact['result']
-    context = result['investigation']
-    if result.get('profile')!=PROFILE or artifact['sources'] or len(result['dependencies'])>MAX_DEPENDENCIES:
-        raise InputError('unsupported saved fix verification')
+    refs = dependencies(artifact)
+    context = artifact['result']['investigation']
     _,replayed = _document(state,context['id'],context['revision'])
     if replayed!=context:
         raise InputError('saved fix verification investigation changed')
-    for ref in result['dependencies']:
+    for ref in refs:
         report = _load_input(state,ref['kind'],ref['id'])
         if _reference(state,ref['kind'],ref['id'],report)!=ref:
             raise InputError('saved fix verification input changed')
@@ -440,8 +467,14 @@ def require_parent(artifact, document):
 def evidence(artifact, document):
     revision = require_parent(artifact,document)
     result = artifact['result']
-    return dict(kind='calculation',method=PROFILE,sha256=investigations._digest(artifact),revision=revision,
+    proof = dict(kind='calculation',method=PROFILE,sha256=investigations._digest(artifact),revision=revision,
                 **{key:result[key]['status'] for key in ('application','comparability','effect','goal','recurrence')})
+    if result['profile'] == CASE_PROFILE:
+        criterion = result['goal']['criterion']
+        proof['apdex'] = dict(target_seconds=criterion['target_seconds'], target_score=criterion['value'],
+            **{phase: dict(score=result[phase]['value'], n=result[phase]['counts']['selected']) if result[phase] else None
+               for phase in ('before', 'after')})
+    return proof
 
 
 def case_dependencies(state, attachment):
@@ -449,10 +482,9 @@ def case_dependencies(state, attachment):
     for name in ('report.json','request.json','receipt.json'):
         fs.safe(base/name)
     report,_ = artifacts.read_artifact_record(state,attachment['target_id'])
-    if (report['kind']!=KIND or report['result'].get('profile')!=PROFILE
-            or investigations._digest(report)!=attachment['report_sha256']):
+    if report['kind']!=KIND or investigations._digest(report)!=attachment['report_sha256']:
         raise InputError('saved verification attachment integrity mismatch')
-    return {item['id']:item['report_digest'] for item in report['result']['dependencies'] if item['kind']=='cases'}
+    return {item['id']:item['report_digest'] for item in dependencies(report) if item['kind']=='cases'}
 
 
 def summarize_proof(proof):

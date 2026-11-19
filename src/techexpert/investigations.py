@@ -433,6 +433,14 @@ def render(doc):
             from .fix_verification import summarize_proof
             lines.append('- '+_md(item['id'])+' · ревизия '+str(proof['revision'])+' · '
                          + _md(summarize_proof(proof)))
+            if 'apdex' in proof:
+                criteria = proof['apdex']
+                lines.append(f"  APDEX при T = {criteria['target_seconds']} с, целевой уровень {criteria['target_score']}.")
+                for phase, label in (('before', 'До изменения'), ('after', 'После изменения')):
+                    sample = criteria[phase]
+                    if sample is not None:
+                        score = sample['score'] if sample['score'] is not None else 'неизвестен'
+                        lines.append(f"  {label} APDEX {score} по {sample['n']} наблюдениям.")
     lines+=['', '## План наблюдения','',_md(json.dumps(doc['observation_plan'],ensure_ascii=False)),
             '', '## Версии и ограничения учёта','',_md(json.dumps(doc['versions'],ensure_ascii=False)),
             '',_md(json.dumps(dict(current_harness=doc['harness'],assessment_harness=doc['assessment_harness']),ensure_ascii=False)),

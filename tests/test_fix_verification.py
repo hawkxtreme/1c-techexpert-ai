@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from src.techexpert import artifacts, investigations, operations
+from src.techexpert import artifacts, investigations, operations, storage
 from src.techexpert.inputs import InputError
 
 
@@ -42,6 +42,55 @@ class FixVerificationTests(unittest.TestCase):
         arguments.update(changes)
         return dict(schema_version=1,operation_key='verified-fix',executor_id='test-harness',
                     operation='fix.verify',arguments=arguments)
+
+    def test_case_apdex_uses_the_same_target_and_keeps_comparability_and_correctness_separate(self):
+        from src.techexpert import context_intake, investigation_materials
+        from src.techexpert.update_state import inspect_state
+
+        fixtures = Path(__file__).parent / 'fixtures/order-load'
+        for name, label in [('baseline', 'before'), ('cached', 'after'), ('cached', 'after-copy')]:
+            case = storage.investigate(fixtures / (name + '.json'), self.state)
+            self.attachments.append(dict(id='A-' + label, kind='case', target_id=case['case_id']))
+        doc = self.investigation()
+        goal = dict(kind='apdex', value=.9, target_seconds=4)
+        request = self.request(doc, goal=goal, minimum_observations=1)
+        completed = operations.run(self.state, request)
+        self.assertEqual(completed['status'], 'succeeded', completed)
+        result = completed['data']['result']
+        self.assertEqual((result['before']['value'], result['after']['value']), (.5, 1))
+        self.assertEqual(result['goal']['status'], 'reached')
+        self.assertEqual(result['effect']['observed_direction'], 'better')
+        self.assertEqual(result['effect']['status'], 'unknown')
+        self.assertEqual(result['comparability']['status'], 'unknown')
+        self.assertEqual(result['result_correctness'], 'not_verified')
+        self.assertEqual(result['recurrence']['status'], 'unknown')
+
+        intake = dict(request, operation_key='linked-case-apdex', context=dict(
+            investigation_id=doc['investigation_id'], expected_revision=doc['revision']))
+        attached = context_intake.acquire(self.state, context_intake.prepare(intake))
+        self.assertEqual(attached['attachment_status'], 'attached')
+        linked = investigations.load(self.state, doc['investigation_id'])
+        self.assertIn('После изменения APDEX 1.0 по 1 наблюдениям.', investigations.render(linked))
+        self.assertEqual(linked['assessment'], doc['assessment'])
+        self.assertIn(2, inspect_state(self.state)['schemata']['fix-verification'])
+        materials = investigation_materials.view(self.state, doc['investigation_id'], category='evidence')
+        evidence, = materials['entries']
+        self.assertEqual(evidence['evidence_id'], attached['attachment']['evidence_id'])
+        self.assertTrue(evidence['depends_on_copies'])
+        self.assertEqual(materials['categories']['copies']['dependent_evidence'], 1)
+
+        duplicate = self.request(doc, goal=goal, after=dict(attachments=['A-after', 'A-after-copy']))
+        duplicate['operation_key'] += '-duplicate'
+        result = operations.run(self.state, duplicate)['data']['result']
+        self.assertEqual(result['after']['counts']['duplicate_observations'], 1)
+        self.assertIsNone(result['after']['value'])
+        self.assertEqual(result['goal']['status'], 'unknown')
+
+        overlap = self.request(doc, goal=goal, before=dict(attachments=['A-after-copy']))
+        overlap['operation_key'] += '-overlap'
+        result = operations.run(self.state, overlap)
+        self.assertEqual(result['status'], 'invalid_input', result)
+        self.assertIn('same verified execution evidence', result['message'])
 
     def test_shared_apdex_target_and_scoped_recurrence_replay_from_retained_bytes(self):
         before,_ = self.measurements('before',16,[5,2],import_target=10)

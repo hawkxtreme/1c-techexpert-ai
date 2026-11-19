@@ -116,6 +116,16 @@ def case_writers(state, case_ids, *, require_sources=True):
         yield
 
 
+def derived_case_dependencies(state, attachment):
+    if attachment.get('scope') == 'fix_verification':
+        from .fix_verification import case_dependencies
+    elif attachment.get('scope') == 'apdex_preparation':
+        from .apdex_preparation import case_dependencies
+    else:
+        return {}
+    return case_dependencies(state, attachment)
+
+
 def attachment_case_ids(state, attachments):
     cases = {item['target_id'] for item in attachments if item['kind'] == 'case'}
     for item in attachments:
@@ -125,9 +135,7 @@ def attachment_case_ids(state, attachments):
                 fs.safe(folder / name)
             report, _ = storage.read_comparison_record(state, item['target_id'])
             cases.update(input_['case_id'] for input_ in report['input_reports'])
-        if item.get('scope')=='fix_verification':
-            from .fix_verification import case_dependencies
-            cases.update(case_dependencies(state,item))
+        cases.update(derived_case_dependencies(state, item))
     return cases
 
 

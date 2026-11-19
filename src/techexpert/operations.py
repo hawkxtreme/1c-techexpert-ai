@@ -159,7 +159,7 @@ def _promote(state,folder,worker):
         if kind == 'comparisons':
             from .case_retention import case_writers
             guard = case_writers(state, (item['case_id'] for item in worker['data']['input_reports']))
-        elif kind=='artifacts' and worker['data'].get('kind')==capabilities._fix.KIND:
+        elif kind=='artifacts' and worker['data'].get('kind') in (capabilities._fix.KIND, capabilities._apdex.KIND):
             from .case_retention import case_writers
             guard = case_writers(state,(item['id'] for item in worker['data']['result']['dependencies'] if item['kind']=='cases'))
         elif kind == 'cases' and 'time_correction' in worker['data']:
