@@ -56,10 +56,10 @@ def plan(folder):
 def plan_schema(request):
     if request.get('operation') != 'code.context':
         return 1
-    from .context_coverage import VIEWS
+    from .context_disclosure import VIEW_READER_CAPABILITIES
     views = request.get('arguments', {}).get('scope', {}).get('views', [])
     # Older readers must stop before opening a protected result they cannot verify.
-    return 3 if any(view['kind'] in VIEWS for view in views) else 2
+    return max((VIEW_READER_CAPABILITIES.get(view['kind'], 2) for view in views), default=2)
 
 def checked_plan(folder,value,receipt):
     version=value.get('schema_version')

@@ -158,6 +158,134 @@ class FixVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(InputError,'exact investigation revision'):
             operations.run(self.state,request)
 
+    def test_protected_verification_links_and_discloses_only_reviewed_measurements(self):
+        import io
+
+        from src.techexpert import context_disclosure, context_intake, context_policy, kernel, mcp_tools
+        from src.techexpert.update_state import inspect_state
+
+        private = 'private-verification-label'
+        before, _ = self.measurements('before', 16, [5, 2])
+        after, after_id = self.measurements('after', 17, [1, 2])
+        later, _ = self.measurements('later', 18, [9, None])
+        doc = self.investigation()
+        iid, revision = doc['investigation_id'], doc['revision']
+        request = self.request(doc, measure=private, conditions=dict(workload=private), observation=dict(
+            attachments=['A-later'], window=dict(start='2026-11-18T10:00:00Z', end='2026-11-18T11:00:00Z'),
+            threshold_seconds=4))
+        with self.assertRaises(InputError):
+            context_intake.prepare(request)
+        with self.assertRaisesRegex(InputError, 'exact investigation revision'):
+            context_intake.prepare(dict(request, context=dict(investigation_id=iid, expected_revision=1)))
+        self.assertFalse((self.state / 'operations').exists())
+
+        tool_args = {key: value for key, value in request.items() if key != 'schema_version'}
+        call_args = dict(tool_args, context=dict(investigation_id=iid, expected_revision=revision))
+        action, _, prepared = mcp_tools.prepare('techexpert_context_intake', call_args, 'context')
+        self.assertEqual(action, 'context-intake')
+        acquired = context_intake.acquire(self.state, prepared)
+        self.assertEqual(acquired['status'], 'succeeded', acquired)
+        self.assertEqual(set(acquired['data']), {'material'})
+        self.assertNotIn(private, json.dumps(acquired))
+        link = acquired['attachment']
+        self.assertEqual(link['revision'], revision + 1)
+        linked = investigations.load(self.state, iid)
+        evidence = linked['evidence'][0]
+        self.assertEqual((evidence['id'], evidence['attachment'], evidence['record']),
+                         (link['evidence_id'], link['id'], 'report'))
+        self.assertEqual(evidence['proof']['method'], 'fix-verification-v1')
+        self.assertEqual(evidence['proof']['revision'], revision)
+        self.assertEqual(linked['assessment'], doc['assessment'])
+        self.assertEqual(linked['analysis_basis_sha256'], doc['analysis_basis_sha256'])
+        self.assertEqual(inspect_state(self.state)['schemata']['context-intake'], [2])
+
+        selection = dict(investigation_id=iid, revision=link['revision'], attachment=link['id'], kind='fix-summary')
+        with patch.object(artifacts, 'load_artifact', side_effect=AssertionError('opened before policy')):
+            self.assertEqual(context_disclosure.read(self.state, selection)['stop_reason'], 'context_policy_required')
+            approval = (self.state, iid, revision, ['case'], 4096)
+            context_policy.save(*approval, context_policy.plan(*approval)['plan_sha256'])
+            self.assertEqual(context_disclosure.read(self.state, selection)['stop_reason'], 'context_category_not_allowed')
+        approval = (self.state, iid, revision, ['case', 'comparison'], 4096)
+        context_policy.save(*approval, context_policy.plan(*approval)['plan_sha256'])
+
+        def emit(call):
+            stream = io.StringIO()
+            kernel.emit(call, stream)
+            self.assertNotIn(private, stream.getvalue())
+            return json.loads(stream.getvalue())
+
+        direct = emit(kernel.invoke(self.state, 'context-read', dict(selection=context_disclosure.compact(selection))))
+        self.assertEqual(direct['status'], 'succeeded', direct)
+        self.assertEqual(direct['disclosure']['category'], 'comparison')
+        self.assertEqual(direct['disclosure']['source_report_sha256'], evidence['proof']['sha256'])
+        data = direct['data']
+        self.assertEqual(data['application']['status'], 'reported')
+        self.assertEqual(data['comparability']['status'], 'unknown')
+        self.assertEqual(data['effect']['observed_direction'], 'better')
+        self.assertEqual(data['effect']['status'], 'unknown')
+        self.assertEqual(data['goal']['status'], 'not_reached')
+        self.assertEqual(data['after']['value'], .75)
+        self.assertEqual(data['recurrence']['status'], 'observed')
+        self.assertEqual(data['recurrence']['unknown_duration'], 1)
+        self.assertIsNone(data['recurrence']['complete_coverage'])
+        self.assertNotIn('2026-11-18T', json.dumps(data))
+
+        view = dict(attachment=link['id'], kind='fix-summary')
+        program = ('summary = api("context.read", ' + json.dumps(view) + ')["data"]\n'
+                   'return {"goal": summary["goal"]["status"], "score": summary["after"]["value"]}')
+        spec = self.root / 'program.json'
+        spec.write_text(json.dumps(dict(schema_version=1, operation='code.context', operation_key='fix-summary',
+            executor_id='test-harness', context=dict(investigation_id=iid, expected_revision=link['revision']),
+            arguments=dict(program=program, scope=dict(views=[view])))), encoding='utf-8')
+
+        def run_program():
+            return emit(kernel.invoke(self.state, 'run', dict(request=str(spec))))
+
+        projected = run_program()
+        self.assertEqual(projected['status'], 'succeeded', projected)
+        self.assertEqual(projected['data']['value'], dict(goal='not_reached', score=.75))
+        observed = inspect_state(self.state)
+        self.assertEqual(observed['activity'], 'idle_observed')
+        self.assertEqual(observed['schemata']['context-disclosure'], [1, 4])
+        self.assertEqual(observed['schemata']['context-program'], [4])
+
+        for source in (before, after, later):
+            source.unlink()
+        replay = context_intake.acquire(self.state, prepared)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], link)
+        self.assertEqual(investigations.load(self.state, iid)['revision'], link['revision'])
+        self.assertTrue(run_program()['replayed'])
+        saved = self.state / 'artifacts' / after_id / 'sources' / 's1.bin'
+        saved.write_bytes(saved.read_bytes() + b' ')
+        self.assertEqual(context_disclosure.read(self.state, selection)['stop_reason'], 'context_evidence_unavailable')
+        self.assertIsNone(run_program().get('data'))
+
+    def test_protected_verification_can_attach_after_an_intervening_revision(self):
+        from src.techexpert import context_intake
+
+        self.measurements('after', 17, [1, 2])
+        doc = self.investigation()
+        iid, revision = doc['investigation_id'], doc['revision']
+        request = self.request(doc, before=dict(attachments=[]))
+        prepared = context_intake.prepare(dict(request, context=dict(investigation_id=iid, expected_revision=revision)))
+        saved = operations.run(self.state, prepared)
+        self.assertEqual(saved['status'], 'succeeded', saved)
+        intervening = investigations.revise(self.state, iid, dict(open_questions=['Private clarification']),
+                                            expected_revision=revision)
+        conflict = context_intake.acquire(self.state, prepared)
+        self.assertEqual(conflict['attachment_status'], 'revision_conflict')
+        attached = context_intake.attach(self.state, saved['run_id'], intervening['revision'])
+        self.assertEqual(attached['attachment_status'], 'attached', attached)
+        link = attached['attachment']
+        self.assertEqual(link['revision'], intervening['revision'] + 1)
+        current = investigations.load(self.state, iid)
+        self.assertEqual(current['open_questions'], intervening['open_questions'])
+        self.assertEqual(current['evidence'][0]['proof']['revision'], revision)
+        self.assertEqual(current['evidence'][0]['id'], link['evidence_id'])
+        self.assertEqual(context_intake.attach(self.state, saved['run_id'], intervening['revision'])['attachment'], link)
+        self.assertEqual(context_intake.acquire(self.state, prepared)['attachment'], link)
+
     def test_known_admissible_breach_survives_an_unplaced_or_conflicting_row(self):
         from src.techexpert import fix_verification
 

@@ -109,7 +109,8 @@ def tools(profile='full'):
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=False)))
     if CONTEXT_INTAKE in controls:
         result.append(dict(name=CONTEXT_INTAKE,title='context.intake',inputSchema=intake_schema(),outputSchema=responses.schema(),
-            description='Inspect or import selected local sources. Returns operational metadata, with an investigation attachment on successful intake. Repeat the same operation key after uncertainty.',
+            description='Inspect or import selected local sources, or verify a change from retained measurements. '
+                        'Returns metadata and links saved results to the investigation. Repeat the same operation key after uncertainty.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=True)))
         result.append(dict(name=CONTEXT_ATTACH,title='context.attach',inputSchema=deepcopy(ATTACH_SCHEMA),outputSchema=responses.schema(),
             description='Link an already saved intake result to an explicit revision of its investigation in the same environment.',

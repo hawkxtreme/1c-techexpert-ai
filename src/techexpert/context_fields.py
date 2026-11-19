@@ -174,3 +174,46 @@ def comparison_summary(report):
                         if type(item.get('strictly_faster_with_precision')) is bool else None))
                for item in report['pairs']],
         requires_ai_interpretation=True)
+
+
+def _verification_sample(sample):
+    if sample is None:
+        return None
+    counts = measurements(sample['counts'], ('selected', 'failed', 'unknown_outcome', 'unknown_duration',
+        'met', 'breaches', 'uncertain_bounds', 'chronology_conflicts', 'unplaced', 'duplicate_observations'))
+    apdex = sample['apdex']
+    return dict(profile=enum(sample.get('profile'), ('normalized_apdex_rows', 'saved_case_execution',
+                                                    'controlled_case_comparison')),
+                value=number(sample['value']), counts=counts,
+                durations_seconds=measurements(sample['statistics'], ('median', 'minimum', 'maximum')),
+                apdex=measurements(apdex, ('satisfied', 'tolerating', 'frustrated', 'unknown'))
+                if apdex is not None else None)
+
+
+def fix_summary(result):
+    application, comparability, effect, goal, recurrence = (
+        result[key] for key in ('application', 'comparability', 'effect', 'goal', 'recurrence'))
+    direction = ('better', 'no_confirmed_change', 'worse')
+    criterion = goal['criterion']
+    return dict(
+        status=enum(result['status'], ('evaluated', 'awaiting_measurements')),
+        application=dict(status=enum(application['status'], ('proposed', 'reported', 'evidenced')),
+                         basis=enum(application['basis'], ('caller_declaration', 'harness_linked_evidence'))),
+        comparability=dict(status=enum(comparability['status'], ('comparable', 'not_comparable')),
+                           basis=enum(comparability['basis'], ('runtime_conditions_not_verified',
+                                                              'sealed_controlled_comparison'))),
+        effect=dict(status=enum(effect['status'], direction), observed_direction=enum(effect['observed_direction'], direction),
+                    basis=enum(effect['basis'], ('nominal_supplied_samples', 'controlled_paired_duration_bounds')),
+                    required_pairs=number(effect.get('required_pairs'))),
+        goal=dict(status=enum(goal['status'], ('reached', 'not_reached')),
+                  criterion=dict(kind=enum(criterion['kind'], ('duration', 'apdex')),
+                                 **measurements(criterion, ('value', 'target_seconds'))),
+                  **measurements(goal, ('minimum_observations',))),
+        recurrence=dict(status=enum(recurrence['status'], ('observed',)), window_selected=recurrence['window'] is not None,
+                        **measurements(recurrence, ('threshold_seconds', 'breaches', 'unknown_duration')),
+                        complete_coverage=None),
+        before=_verification_sample(result['before']), after=_verification_sample(result['after']),
+        result_correctness=enum(result['result_correctness'], ('matches_expected', 'mismatch', 'not_verified')),
+        verification_scope=enum(result['verification_scope'], ('selected_reported_measurements', 'retained_comparison',
+            'synthetic_calculations_only', 'provided_evidence_only', 'mixed_or_unknown_evidence_only')),
+        requires_ai_interpretation=True)

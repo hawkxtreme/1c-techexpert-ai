@@ -1,6 +1,6 @@
 {
   "name": "1c-techexpert-ai",
-  "version": "0.59.0",
+  "version": "0.60.0",
   "description": "Расследование технических проблем 1С с ИИ текущего harness, локальными инструментами и комплектной базой знаний.",
   "author": {
     "name": "1C TechExpert AI contributors"

@@ -4,12 +4,13 @@ import json
 from pathlib import PurePosixPath
 
 from . import context_policy, investigations, kernel_context, operation_state as fs
+from .fix_verification import OPERATION as FIX_OPERATION, PROFILE as FIX_PROFILE
 from .inputs import InputError
 
 
 PRESENTATION = 'context-intake-v1'
-OPERATIONS = ('input.inspect', 'source.check', 'case.analyze', 'jr.import')
-MATERIALS = {'case.analyze': 'case', 'jr.import': 'artifact'}
+OPERATIONS = ('input.inspect', 'source.check', 'case.analyze', 'jr.import', FIX_OPERATION)
+MATERIALS = {'case.analyze': 'case', 'jr.import': 'artifact', FIX_OPERATION: 'artifact'}
 SEALED_FIELDS = (
     'schema_version', 'run_id', 'operation', 'status', 'snapshots', 'evidence',
     'limits', 'stop_verified', 'cancellation_requested', 'execution_status', 'result_availability',
@@ -38,9 +39,13 @@ def prepare(request):
 
 def validate(request):
     if request['operation'] not in OPERATIONS or 'context' not in request:
-        raise InputError('private file intake requires a supported operation and an investigation revision')
+        raise InputError('private intake requires a supported operation and an investigation revision')
     if request['operation'] == 'source.check' and request['arguments'].get('reference_preview') is not True:
         raise InputError('private source check requires a metadata-only external TJ preview')
+
+
+def reader_capability(request):
+    return 2 if request['operation'] == FIX_OPERATION else 1
 
 
 def safe_reason(reason):
@@ -111,15 +116,24 @@ def seal(value, raw):
     return result
 
 
-def _same_attachment(doc, label, material):
+def _same_attachment(doc, label, material, evidence=None, parent=None):
     item = next((item for item in doc['attachments'] if item['id'] == label), None)
-    return item is not None and item['kind'] == material['kind'] and item['target_id'] == material['id']
+    if item is None or item['kind'] != material['kind'] or item['target_id'] != material['id']:
+        return False
+    if evidence is None:
+        return True
+    return any(all(row.get(key) == value for key, value in evidence.items())
+               and row['proof']['method'] == FIX_PROFILE
+               and row['proof']['sha256'] == item['report_sha256']
+               and row['proof']['revision'] == parent for row in doc['evidence'])
 
 
-def _linked(value, status, *, doc=None, label=None):
+def _linked(value, status, *, doc=None, label=None, evidence=None):
     result = dict(value, intake_status=value['status'], attachment_status=status)
     if status == 'attached':
         result['attachment'] = dict(investigation_id=doc['investigation_id'], revision=doc['revision'], id=label)
+        if evidence is not None:
+            result['attachment']['evidence_id'] = evidence['id']
     elif value['data'] is not None:
         result['status'] = 'partial'
         result['limitations'] = [*value['limitations'],
@@ -133,12 +147,15 @@ def _bind(state, plan, value, revision):
         return value
     original = plan['context']
     iid = original['investigation_id']
-    selected = original['expected_revision'] if revision is None else revision
+    parent = original['expected_revision']
+    selected = parent if revision is None else revision
     label = 'A-intake-' + value['run_id']
     # The investigation attachment grammar permits only 60 characters after A-.
     label = label[:62]
+    evidence = (dict(id='E' + label[1:], attachment=label, record='report')
+                if plan['request']['operation'] == FIX_OPERATION else None)
     try:
-        before = context_policy.selected_investigation(state, iid, original['expected_revision'])
+        before = context_policy.selected_investigation(state, iid, parent)
         if fs.digest(before) != original['report_sha256']:
             raise InputError('intake investigation binding changed')
         head = investigations._read_head(state, iid)['revision']
@@ -148,23 +165,27 @@ def _bind(state, plan, value, revision):
         environment, _ = context_policy.scope(before)
         if context_policy.scope(doc)[0] != environment:
             return _linked(value, 'environment_changed')
-        if _same_attachment(doc, label, material):
-            return _linked(value, 'attached', doc=doc, label=label)
+        if _same_attachment(doc, label, material, evidence, parent):
+            return _linked(value, 'attached', doc=doc, label=label, evidence=evidence)
         if selected < head:
             recovered = None
             # Verify the entire chain before reporting its earliest matching link.
             for historical in context_policy.verified_revisions(state, iid, head):
-                if (historical['revision'] > selected and _same_attachment(historical, label, material)
+                if (historical['revision'] > selected and _same_attachment(historical, label, material, evidence, parent)
                         and context_policy.scope(historical)[0] == environment):
                     recovered = historical
             if recovered is not None:
-                return _linked(value, 'attached', doc=recovered, label=label)
+                return _linked(value, 'attached', doc=recovered, label=label, evidence=evidence)
             return _linked(value, 'revision_conflict')
         if kernel_context.stop():
             return _linked(value, 'attachment_deferred')
-        current = [*doc['attachments'], dict(id=label, kind=material['kind'], target_id=material['id'])]
-        attached = investigations.revise(state, iid, dict(attachments=current), expected_revision=selected)
-        return _linked(value, 'attached', doc=attached, label=label)
+        changes = {}
+        if not _same_attachment(doc, label, material):
+            changes['attachments'] = [*doc['attachments'], dict(id=label, kind=material['kind'], target_id=material['id'])]
+        if evidence is not None:
+            changes['evidence'] = [*doc['evidence'], evidence]
+        attached = investigations.revise(state, iid, changes, expected_revision=selected)
+        return _linked(value, 'attached', doc=attached, label=label, evidence=evidence)
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _linked(value, 'attachment_pending')
 

@@ -5,7 +5,7 @@ import re
 import stat
 
 from . import check_history, context_excerpt, context_intake, context_program, fix_verification, investigation_progress, investigation_task, native_jr_sqlite, operation_state as fs, operations, os_observation, report_references
-from . import context_coverage
+from .context_disclosure import VIEW_READER_CAPABILITIES
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -148,7 +148,7 @@ def inspect_state(state):
                     if 'presentation' in plan['request']:
                         if not context_intake.protects(plan['request']):
                             raise InputError('unknown retained operation presentation')
-                        schemas['context-intake'].add(1)
+                        schemas['context-intake'].add(context_intake.reader_capability(plan['request']))
                     output = _exists(folder/'output.json')
                     receipt = _exists(folder/'output-receipt.json')
                     status = current.get('status')
@@ -174,8 +174,9 @@ def inspect_state(state):
                         raise InputError('controller completion unverified')
                     if plan.get('action') == 'context-read' and value.get('response', {}).get('exit_code') == 0:
                         selection = json_value(plan['arguments']['selection'], reject_duplicates=True)
-                        if selection['kind'] in context_coverage.VIEWS:
-                            schemas['context-disclosure'].add(context_coverage.READER_CAPABILITY)
+                        capability = VIEW_READER_CAPABILITIES.get(selection['kind'])
+                        if capability is not None:
+                            schemas['context-disclosure'].add(capability)
             except _ERRORS:
                 problems.append(dict(kind=kind,id=folder.name,status='state_unavailable_or_incomplete'))
 

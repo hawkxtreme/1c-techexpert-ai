@@ -11,6 +11,7 @@ from . import operation_state as fs, storage
 from .inputs import InputError
 
 
+FIX_VIEW = 'fix-summary'
 VIEWS = {
     'case-summary': ('case', 'case'),
     'tj-events': ('tj', 'case'),
@@ -18,9 +19,12 @@ VIEWS = {
     'jr-events': ('jr', 'artifact'),
     'jr-evidence': ('jr', 'artifact'),
     'comparison': ('comparison', 'comparison'),
+    FIX_VIEW: ('comparison', 'artifact'),
     context_excerpt.VIEW: (context_excerpt.CATEGORY, 'artifact'),
     **context_coverage.VIEWS,
 }
+VIEW_READER_CAPABILITIES = dict.fromkeys(context_coverage.VIEWS, context_coverage.READER_CAPABILITY)
+VIEW_READER_CAPABILITIES[FIX_VIEW] = 4
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
@@ -186,6 +190,11 @@ def _project(state, attachment, args, aliases):
         return fields.case_summary(verified)
     if kind == 'comparison':
         return fields.comparison_summary(report)
+    if kind == FIX_VIEW:
+        from .fix_verification import KIND
+        if report.get('kind') != KIND:
+            raise InputError('selected artifact is not a saved fix verification')
+        return fields.fix_summary(report['result'])
     if kind == 'tj-events':
         if not any(s['format'] == '1c-tj-text-v1' for s in report['sources']):
             raise InputError('no supported native TJ is present')
