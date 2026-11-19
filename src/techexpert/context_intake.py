@@ -43,16 +43,20 @@ def prepare(request):
 def validate(request):
     if request['operation'] not in OPERATIONS or 'context' not in request:
         raise InputError('private intake requires a supported operation and an investigation revision')
-    if request['operation'] == 'source.check' and request['arguments'].get('reference_preview') is not True:
-        raise InputError('private source check requires a metadata-only external TJ preview')
+    if (request['operation'] == 'source.check' and request['arguments'].get('reference_preview') is not True
+            and 'profile_journal' not in request['arguments']):
+        raise InputError('private source check requires a configured journal selection or metadata-only external TJ preview')
 
 
 def reader_capability(request):
+    if 'profile_journal' in request['arguments']:
+        return 4
     return READER_CAPABILITIES.get(request['operation'], 1)
 
 
 def safe_reason(reason):
-    return reason if type(reason) is str and reason in REASONS else 'context_intake_unavailable'
+    from .profile_journals import REASONS as JOURNAL_REASONS
+    return reason if type(reason) is str and reason in REASONS + JOURNAL_REASONS else 'context_intake_unavailable'
 
 
 def _catalogue(report):
@@ -84,6 +88,9 @@ def metadata(operation, data):
     if operation == 'input.inspect':
         return _catalogue(data)
     if operation == 'source.check':
+        for key in ('journal_sources', 'journal_preview'):
+            if key in data:
+                return {key: data[key]}
         return _reference(data)
     kind = MATERIALS[operation]
     result = dict(material=dict(kind=kind, id=data['case_id' if kind == 'case' else 'artifact_id']))

@@ -61,14 +61,27 @@ def main(folder):
             parent=state.process_identity(os.getpid()),cancel_files=list(dict.fromkeys(markers)),
             limits=dict(memory_bytes=request['arguments']['resources']['memory_bytes'])))
     outcome='succeeded';data=None;targets=[];message=None;stop_reason=None;command_stop=None
+    from . import profile_journals
     try:
         from .os_observation import execution_arguments
         bound = plan.get('kernel',{}).get('limits',{}).get('memory_bytes',memory)
         args=execution_arguments(request,plan,folder.name)
-        data,targets=execute(request['operation'],args,Path(plan['state_dir']),folder/'work-state',
-                             stop=stop, memory_bytes=min(memory,bound))
-        if request['operation'] in PROGRAM_EXECUTIONS:outcome=data['result_status']
-        else:outcome,stop_reason=output_status(request['operation'],data)
+        operation = request['operation']
+        selected_journal = 'profile_journal' in args
+        if selected_journal:
+            data, targets = profile_journals.execute(operation, args, Path(plan['state_dir']), folder/'work-state',
+                                                      plan['context'], stop=stop)
+        else:
+            data,targets=execute(operation,args,Path(plan['state_dir']),folder/'work-state',
+                                 stop=stop, memory_bytes=min(memory,bound))
+        if operation in PROGRAM_EXECUTIONS:outcome=data['result_status']
+        else:outcome,stop_reason=output_status(operation,data)
+        if selected_journal:
+            preview = data.get('journal_preview')
+            if preview is not None and preview['status'] != 'ready':
+                outcome, stop_reason = 'partial', 'journal_preview_incomplete'
+            elif operation == 'case.analyze' and data['source_coverage']['status'] != 'observations_available':
+                outcome, stop_reason = 'partial', 'journal_coverage_limited'
     except CommandStopped as exc:
         outcome='cancelled' if exc.reason=='cancelled' else 'failed';stop_reason=exc.reason
         message='Bounded command stopped: '+exc.reason+'. Private partial output retained; no source artifact created.'
@@ -82,6 +95,8 @@ def main(folder):
         state.write(folder/'command-stop.json',command_stop)
     except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
         outcome='invalid_input' if isinstance(exc,(InputError,ValueError)) else 'failed';message=str(exc)[:2048]
+        if isinstance(exc, profile_journals.PreviewChanged):
+            stop_reason = 'journal_preview_changed'
     metrics=dict(elapsed_seconds=time.monotonic()-started,model_tokens=None,harness_memory_bytes=None)
     if command_stop is not None:metrics['command_stop']=command_stop
     if os.name!='nt':

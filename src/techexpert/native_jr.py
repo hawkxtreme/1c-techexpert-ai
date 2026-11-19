@@ -265,10 +265,15 @@ def read_journal(state_dir,path,*,platform_version=None,utc_offset=None,consiste
         result=parse_snapshot(sources,utc_offset=utc_offset)
     if input_files.chain(path)!=ancestry or (before is not None and before!=_inventory(path)):
         raise InputError('JR file set changed; provide a stable native snapshot')
+    request=dict(path=str(path),platform_version=platform_version,utc_offset=utc_offset,consistency=consistency)
+    return _save_snapshot(state_dir,request,sources,result,intake=intake)
+
+
+def _save_snapshot(state_dir, request, sources, result, *, intake=None):
+    consistency = request['consistency']
     result.pop('records')
     result.update(consistency=consistency,consistency_basis='unknown' if consistency=='unknown' else 'user_declaration_only',
                   atomic_snapshot_verified=False)
-    request=dict(path=str(path),platform_version=platform_version,utc_offset=utc_offset,consistency=consistency)
     return save_artifact(state_dir,'native-jr',request,sources,result,input_intake=intake)
 
 def _saved(state_dir,artifact_id):

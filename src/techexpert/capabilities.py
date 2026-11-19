@@ -196,6 +196,7 @@ def normalize_request(value):
     from .check_history import READS
     from .context_intake import PRESENTATION, validate as validate_intake
     from .os_observation import binding_schema, sampler_arguments
+    from . import profile_journals
     identity=string(128,pattern='[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}')
     schema=obj(dict(schema_version=dict(type='integer',minimum=1,maximum=1),operation_key=identity,executor_id=identity,operation=string(64),
         arguments=dict(type='object',maxProperties=32,additionalProperties={}),
@@ -216,10 +217,16 @@ def normalize_request(value):
     planned='observation' in result
     if planned and (operation!='os.collect' or 'context' not in result or 'presentation' in result):
         raise InputError('approved observation requires an investigation-bound OS collection')
-    args=sampler_arguments(arguments) if planned else validate(arguments,ROUTES[operation]['input_schema'])
+    selected_journal = type(arguments) is dict and 'profile_journal' in arguments
+    if selected_journal:
+        if operation not in profile_journals.OPERATIONS or 'presentation' not in result or 'context' not in result or planned:
+            raise InputError('a configured journal selection requires protected intake in an investigation')
+        args = profile_journals.normalize(_sys.modules[__name__], operation, arguments)
+    else:
+        args=sampler_arguments(arguments) if planned else validate(arguments,ROUTES[operation]['input_schema'])
     for key in ('manifest','measurements','identity_file','known_hosts_file'):
         if key in args:args[key]=str(Path(args[key]).absolute())
-    if operation in ('source.check','case.coverage'):
+    if operation in ('source.check','case.coverage') and not selected_journal:
         from .source_coverage import validate_request as coverage_request
         args.update(coverage_request(**{k:args[k] for k in COVERAGE if k in args}))
     if operation=='source.check' and args.get('reference_preview') and any(args.get(k) for k in COVERAGE):
@@ -258,7 +265,7 @@ def normalize_request(value):
         if operation=='code.context' and 'context' not in result:
             raise InputError('a policy-filtered program requires an exact investigation revision')
         args=code_request(args,operation=operation)
-    if operation in _diagnostics.OPERATIONS:args=_diagnostics.normalize(operation,args)
+    if operation in _diagnostics.OPERATIONS and not selected_journal:args=_diagnostics.normalize(operation,args)
     ceiling=timeout_limit(operation,args)
     timeout=ceiling if operation=='case.analyze' else ROUTES[operation].get('default_timeout_seconds',ceiling)
     if operation=='os.collect' and not planned:timeout=args['duration_seconds']+30
@@ -272,7 +279,8 @@ def normalize_request(value):
 
 def timeout_limit(operation, arguments):
     route = ROUTES[operation]
-    if operation == 'case.analyze' and not (isinstance(arguments, dict) and arguments.get('reference_sha256')):
+    if operation == 'case.analyze' and not (isinstance(arguments, dict) and
+            ('reference_sha256' in arguments or 'profile_journal' in arguments)):
         return route['default_timeout_seconds']
     return route['timeout_seconds']
 

@@ -204,6 +204,124 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(set(output['data']), {'material'})
         self.assertEqual(output['attachment_status'], 'attached')
 
+    def configured_journals(self, *, offset='+03:00', window=True):
+        from src.techexpert.profile_resources import upgrade_profile
+
+        selected = self.root / (PRIVATE + '-jr')
+        shutil.copytree(ROOT / 'tests/fixtures/native-jr', selected)
+        self.source.write_text(
+            '2026-11-15T09:10:00.000000-10,CALL,1,Usr=' + PRIVATE + '\n'
+            '2026-11-15T09:11:00.000000-20,CALL,1,Usr=' + PRIVATE + '\n', encoding='utf-8')
+        sources = [dict(id='private-tj', type='tj', path=str(self.source), host='', base_ids=['file'],
+                        settings=dict(platform_version='8.3.27.1989', utc_offset=offset)),
+                   dict(id='private-jr', type='jr', path=str(selected), host='', base_ids=['file'],
+                        settings=dict(platform_version='8.3.27.1989', utc_offset='+03:00'))]
+        saved = profiles.save_profile(self.state, upgrade_profile(dict(self.profile, sources=sources)), expected_revision=1)
+        episode = dict(start='2026-11-15T09:10:00', end='2026-11-15T09:11:00', utc_offset='+03:00') if window else {}
+        self.doc = investigations.create(self.state, dict(task=PRIVATE, episode=episode))
+        self.iid = self.doc['investigation_id']
+        return selected, saved
+
+    def configured_request(self, operation, key, *, revision=1, source=None, sha=None):
+        args = dict(profile_journal={} if source is None else dict(source=source))
+        if sha is not None:
+            args['preview_sha256'] = sha
+        request = self.request(operation, args, key)
+        request['context']['expected_revision'] = revision
+        return request
+
+    def configured_call(self, operation, key, **selection):
+        request = self.configured_request(operation, key, **selection)
+        return self.cli('context-intake', self.write_request(request))
+
+    def test_configured_sources_supply_the_saved_window_without_paths_and_replay_after_rotation(self):
+        from src.techexpert.profile_resources import upgrade_profile
+
+        selected, saved = self.configured_journals()
+        profiles.save_profile(self.state, upgrade_profile(self.profile), expected_revision=saved['revision'])
+        code, listed = self.configured_call('source.check', 'list-journals')
+        self.assertEqual(code, 0, listed)
+        self.assertEqual([(x['source'], x['kind']) for x in listed['data']['journal_sources']], [('j1', 'tj'), ('j2', 'jr')])
+        code, before = self.configured_call('source.check', 'planned-tj', source='j1')
+        self.assertEqual(code, 0, before)
+        preview = before['data']['journal_preview']
+        self.assertFalse(preview['source_bytes_read'])
+        self.assertEqual(preview['window'], dict(start='2026-11-15T06:10:00+00:00', end='2026-11-15T06:11:00+00:00'))
+        self.assertEqual(preview['window_basis'], 'saved_episode')
+        self.assertFalse((self.state / 'cases').exists())
+        capture = dict(source='j1', sha=preview['preview_sha256'])
+        code, tj = self.configured_call('case.analyze', 'configured-tj', **capture)
+        self.assertEqual(code, 0, tj)
+        report = storage.verified_case(self.state, tj['data']['material']['id'])
+        self.assertEqual(report['sources'][0]['reference_capture']['selected_records'], 1)
+        self.assertEqual(tj['attachment']['revision'], 2)
+        self.source.unlink()
+        code, replay = self.configured_call('case.analyze', 'configured-tj', **capture)
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], tj['attachment'])
+
+        code, before = self.configured_call('source.check', 'planned-jr', source='j2', revision=2)
+        self.assertEqual(code, 0, before)
+        preview = before['data']['journal_preview']
+        self.assertEqual(preview['kind'], 'jr')
+        self.assertEqual(preview['capture_scope'], 'selected_jr_group')
+        self.assertFalse(preview['source_bytes_read'])
+        jr_selection = dict(source='j2', revision=2, sha=preview['preview_sha256'])
+        code, jr = self.configured_call('jr.import', 'configured-jr', **jr_selection)
+        self.assertEqual(code, 0, jr)
+        self.assertEqual(jr['attachment']['revision'], 3)
+        selected.rename(self.root / 'rotated-jr')
+        code, replay = self.configured_call('jr.import', 'configured-jr', **jr_selection)
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay['replayed'])
+        self.assertEqual(replay['attachment'], jr['attachment'])
+
+    def test_configured_capture_rejects_changed_file_and_unprotected_invocation(self):
+        self.configured_journals()
+        code, view = self.configured_call('source.check', 'approved-tj', source='j1')
+        self.assertEqual(code, 0, view)
+        sha = view['data']['journal_preview']['preview_sha256']
+        request = self.configured_request('case.analyze', 'private-only', source='j1', sha=sha)
+        code, _ = self.cli('operation-run', self.write_request(request))
+        self.assertEqual(code, 2)
+        with self.source.open('ab') as stream:
+            stream.write(b'\n')
+        code, capture = self.configured_call('case.analyze', 'changed-tj', source='j1', sha=sha)
+        self.assertEqual(code, 2, capture)
+        self.assertEqual(capture['stop_reason'], 'journal_preview_changed')
+        self.assertFalse((self.state / 'cases').exists())
+
+    def test_configured_preview_requires_known_source_time_and_an_episode_window(self):
+        self.configured_journals(offset='', window=False)
+        code, view = self.configured_call('source.check', 'missing-window', source='j2')
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['journal_preview']['status'], 'window_required')
+        request = self.configured_request('source.check', 'missing-offset', source='j1')
+        request['arguments']['profile_journal']['window'] = dict(start='2026-11-15T09:10:00+03:00', end='2026-11-15T09:11:00+03:00')
+        code, view = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['journal_preview']['status'], 'offset_required')
+        self.assertNotIn('preview_sha256', view['data']['journal_preview'])
+
+    def test_configured_jr_preview_is_bound_to_the_window_and_file_group(self):
+        selected, _ = self.configured_journals()
+        code, view = self.configured_call('source.check', 'approved-jr', source='j2')
+        self.assertEqual(code, 0, view)
+        sha = view['data']['journal_preview']['preview_sha256']
+        request = self.configured_request('jr.import', 'other-window', source='j2', sha=sha)
+        request['arguments']['profile_journal']['window'] = dict(start='2026-11-15T09:09:00+03:00', end='2026-11-15T09:11:00+03:00')
+        code, refusal = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 2, refusal)
+        self.assertEqual(refusal['stop_reason'], 'journal_preview_changed')
+        member = next(selected.glob('*.lgp'))
+        with member.open('ab') as stream:
+            stream.write(b'\n')
+        code, refusal = self.configured_call('jr.import', 'changed-jr', source='j2', sha=sha)
+        self.assertEqual(code, 2, refusal)
+        self.assertEqual(refusal['stop_reason'], 'journal_preview_changed')
+        self.assertFalse((self.state / 'artifacts').exists())
+
     def test_legacy_key_is_not_reused_as_a_protected_intake(self):
         original = operations.run(self.state, self.request())
         self.assertEqual(original['status'], 'succeeded')

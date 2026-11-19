@@ -66,10 +66,25 @@ def chain(path):
 def signature(info):return info.st_dev,info.st_ino,info.st_size,info.st_mtime_ns
 
 
-def read(path,maximum,*,keep=False,expected=None):
+def _observation(ancestry, info):
+    from .operation_state import digest
+
+    if not stat.S_ISREG(info.st_mode) or not info.st_ino:
+        raise InputError('ordinary input with observable identity required')
+    return dict(device=str(info.st_dev), inode=str(info.st_ino), bytes=info.st_size,
+                mtime_ns=str(info.st_mtime_ns), ctime_ns=str(info.st_ctime_ns), chain_sha256=digest(ancestry))
+
+
+def observe(path):
+    return _observation(chain(path), path.lstat())
+
+
+def read(path,maximum,*,keep=False,expected=None,observed=None):
     path=Path(path);before_chain=chain(path);before=path.lstat()
     if not stat.S_ISREG(before.st_mode) or before.st_size>maximum:raise InputError('input file exceeds supported type or byte limit')
-    descriptor=os.open(path,os.O_RDONLY|getattr(os,'O_BINARY',0)|getattr(os,'O_NOFOLLOW',0));parts=[];digest=hashlib.sha256();count=0
+    if observed is not None and _observation(before_chain, before) != observed:
+        raise InputError('input identity or metadata changed since preview')
+    descriptor=os.open(path,os.O_RDONLY|getattr(os,'O_BINARY',0)|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_NONBLOCK',0));parts=[];digest=hashlib.sha256();count=0
     with os.fdopen(descriptor,'rb') as stream:
         if signature(os.fstat(stream.fileno()))!=signature(before):raise InputError('input changed before reading')
         while True:
@@ -81,6 +96,8 @@ def read(path,maximum,*,keep=False,expected=None):
             if keep:parts.append(data)
         if signature(os.fstat(stream.fileno()))!=signature(before):raise InputError('input changed while reading')
     if chain(path)!=before_chain or signature(path.lstat())!=signature(before) or count!=before.st_size:raise InputError('input changed while reading')
+    if observed is not None and observe(path) != observed:
+        raise InputError('input identity or metadata changed while reading')
     value=dict(bytes=count,sha256=digest.hexdigest())
     if expected is not None and value!=expected:raise InputError('input changed since preview')
     return (b''.join(parts) if keep else None),value
