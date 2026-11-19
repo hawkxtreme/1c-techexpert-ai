@@ -12,7 +12,7 @@ from src.techexpert.readiness import _inventory,canonical,MANIFEST
 KNOWLEDGE=('cases/SC01-time-boundaries.md','cases/SC01-native-tj-boundaries.md',
            'cases/SC01-job-lifecycle.md','playbooks/slow-background-job.md')
 CONTROLLERS={'scripts/sc01_blind.py','scripts/sc01_kit.py','scripts/sc01_trial.py','scripts/generate_bundle_manifest.py',
-             'scripts/sc01_experiment_plan.py','scripts/sc01_experiment_report.py'}
+             'scripts/sc01_experiment_plan.py','scripts/sc01_experiment_report.py','scripts/sc01_verification.py'}
 BOUNDARY=('\n\nEvaluation workspace: use the supplied skills, references, general knowledge, intake and '
     'captured data. Run techexpert.py as an executable tool; do not inspect its implementation. '
     'Do not search outside this workspace, consult other chats, open external links or use network services. '
@@ -39,6 +39,9 @@ def diagnosis_schema():
 
 def verification_schema():
     diagnosis=diagnosis_schema();text=dict(type='string',minLength=1,maxLength=8192)
+    evidence = diagnosis['properties']['evidence']
+    case_id = evidence['items']['properties']['case_id']
+    evidence['items']['properties']['case_id'] = dict(anyOf=[case_id, dict(const='comparison')])
     properties=dict(status=dict(enum=['completed','partial','error','cancelled']),summary=text,
         cause_state=dict(enum=['confirmed','hypothesis','insufficient_data']),
         comparison_id=dict(anyOf=[dict(type='string',pattern='^[a-f0-9]{32}$'),dict(type='null')]),
@@ -46,7 +49,7 @@ def verification_schema():
         business_result=dict(enum=['matches_expected','mismatch','not_verified']),
         goal=dict(enum=['reached','not_reached','unknown']),
         recurrence=dict(enum=['observed','not_observed_in_window','unknown']),
-        evidence=diagnosis['properties']['evidence'],limitations=diagnosis['properties']['limitations'],
+        evidence=evidence,limitations=diagnosis['properties']['limitations'],
         mechanism=diagnosis['properties']['cause_hypothesis'],next_steps=diagnosis['properties']['next_steps'])
     return {'$schema':diagnosis['$schema'],'type':'object','additionalProperties':False,
         'required':['status','summary','cause_state','comparison_id','effect','business_result','goal','recurrence','evidence','limitations'],

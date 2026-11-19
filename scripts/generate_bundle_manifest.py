@@ -18,7 +18,7 @@ def canonical(data):
 def generate():
     groups=dict(runtime=['techexpert.py','.codex-plugin/plugin.json','plugin.json','mcp.json','.mcp.json','.agents/plugins/marketplace.json',
         'scripts/sc01_blind.py','scripts/sc01_kit.py','scripts/sc01_trial.py','scripts/generate_bundle_manifest.py',
-        'scripts/sc01_experiment_plan.py','scripts/sc01_experiment_report.py'],instructions=['AGENTS.md'],
+        'scripts/sc01_experiment_plan.py','scripts/sc01_experiment_report.py','scripts/sc01_verification.py'],instructions=['AGENTS.md'],
         catalogues=[],knowledge=[],demo=['examples/sc01/case.json','examples/sc01/events.jsonl'])
     for relative,category in (('src/techexpert','runtime'),('skills','instructions')):
         for current,dirs,files in os.walk(ROOT/relative,followlinks=False):

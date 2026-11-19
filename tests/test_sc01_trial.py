@@ -63,6 +63,59 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(comparison['performance']['status'],'inconclusive')
         self.assertEqual(self.api.status(self.trial)['release_status'],'released')
 
+    def test_finalize_verifies_the_released_pairs_and_replays_the_frozen_answer(self):
+        self.prepare()
+        self.api.release(self.trial, self.answer(insufficient=True))
+        kit = self.trial / 'diagnosis'
+        intake = json.loads((kit / 'verification/intake.json').read_text(encoding='utf-8'))
+        before, after = [self.cli('analyze', kit / name)['case_id']
+                         for name in intake['before'] + intake['after']]
+        comparison = self.cli('compare', '--before', before, '--after', after)
+        reversed_comparison = self.cli('compare', '--before', after, '--after', before)
+        proof = [dict(case_id=before, id='s1:1', observation='Initial measurement')]
+        answer = dict(status='completed', summary='One measured pair.', cause_state='hypothesis',
+                      effect='inconclusive', business_result=comparison['result_correctness']['status'],
+                      goal='reached', recurrence='unknown', evidence=proof, limitations=[])
+        response = kit / 'verification/answer.json'
+        seal = self.trial / 'verification-result.json'
+
+        def finalize(comparison_id):
+            answer['comparison_id'] = comparison_id
+            answer['evidence'] = proof + [dict(case_id='comparison', id=comparison_id, observation='Saved comparison')]
+            response.write_text(json.dumps(answer), encoding='utf-8-sig')
+            return invoke()
+
+        def invoke():
+            return subprocess.run([sys.executable, '-B', '-X', 'utf8', str(ROOT / 'scripts/sc01_blind.py'),
+                                   'finalize', '--output', str(self.trial)], cwd=kit, capture_output=True, timeout=30)
+
+        refused = finalize(reversed_comparison['comparison_id'])
+        self.assertEqual(refused.returncode, 2)
+        self.assertIn('released pair', json.loads(refused.stdout)['message'])
+        self.assertFalse(seal.exists())
+        accepted = finalize(comparison['comparison_id'])
+        self.assertEqual(accepted.returncode, 0, (accepted.stdout + accepted.stderr).decode('utf-8'))
+        self.assertEqual(json.loads(accepted.stdout)['status'], 'verification_recorded')
+        frozen = seal.read_bytes()
+        payload = json.loads(frozen)['result']
+        self.assertEqual(payload['answer_utf8'].encode('utf-8'), response.read_bytes())
+        self.assertEqual(payload['comparison']['before'][0]['case_id'], before)
+        self.assertEqual(payload['claims']['goal'], dict(reported='reached', observed='unknown', check='unsupported'))
+        self.assertEqual(payload['claims']['effect']['check'], 'matches')
+        self.assertTrue(payload['requires_independent_quality_review'])
+
+        response.write_text('altered after sealing', encoding='utf-8')
+        replay = invoke()
+        self.assertEqual(replay.returncode, 0, (replay.stdout + replay.stderr).decode('utf-8'))
+        self.assertTrue(json.loads(replay.stdout)['replayed'])
+        self.assertEqual(seal.read_bytes(), frozen)
+        retained = kit / 'state/cases' / before / 'sources/s1.bin'
+        with retained.open('ab') as stream:
+            stream.write(b'changed')
+        failed = invoke()
+        self.assertEqual(failed.returncode, 2)
+        self.assertEqual(seal.read_bytes(), frozen)
+
     def test_disclosure_reads_private_snapshots_after_originals_disappear(self):
         source=self.folder/'originals';source.mkdir();paths=[]
         for name in ('baseline','cached'):
@@ -264,6 +317,14 @@ class TrialTests(unittest.TestCase):
         self.assertEqual(prepared['status'],'prepared');self.assertFalse((self.trial/'diagnosis/state').exists())
         released=invoke('release','--output',self.trial,'--response',self.answer(insufficient=True))
         self.assertEqual(released['status'],'released');self.assertEqual(invoke('status','--output',self.trial)['status'],'released')
+        incomplete = dict(status='partial', summary='Awaiting comparable observations.', cause_state='insufficient_data',
+                          comparison_id=None, effect='inconclusive', business_result='not_verified', goal='unknown',
+                          recurrence='unknown', evidence=[], limitations=['No comparison yet.'])
+        response = self.trial / 'diagnosis/verification/answer.json'
+        response.write_text(json.dumps(incomplete), encoding='utf-8')
+        result = invoke('finalize', '--output', self.trial)
+        self.assertEqual(result['status'], 'verification_recorded')
+        self.assertEqual(result['structured_check'], 'incomplete')
 
 
 if __name__=='__main__':unittest.main()

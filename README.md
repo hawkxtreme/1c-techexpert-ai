@@ -187,6 +187,8 @@ python techexpert.py comparison COMPARISON_ID
 
 `python scripts/sc01_experiment_plan.py prepare --before BEFORE_MANIFESTS --after AFTER_MANIFESTS --seed SEED --output PRIVATE_DIRECTORY` готовит по пять независимых повторов для CLI, прямого MCP и Code Mode в каждой из двух серий. `check --output PRIVATE_DIRECTORY` сверяет начальное состояние всех папок. Отчёт `scripts/sc01_experiment_report.py` читает созданное расписание и отдельно переданные квитанции прогонов.
 
+`python scripts/sc01_blind.py finalize --output TRIAL_DIRECTORY` сохраняет точный итоговый ответ, сверяет все выпущенные пары замеров и ссылки на доказательства. Повтор команды проверяет сохранённый результат. Обоснованность причины оценивается независимо.
+
 ## Дополнительные наблюдения
 
 ```powershell

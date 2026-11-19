@@ -159,24 +159,32 @@ def verify_prepared(output):
     return doc
 
 
+def _answer_text(value):
+    return (isinstance(value, str) and 1 <= len(value) <= 8192 and bool(value.strip())
+            and all(ord(char) >= 32 or char in '\r\n\t' for char in value))
+
+
+def _evidence_reference(ref, *, comparison=False):
+    return (isinstance(ref, dict) and set(ref) == {'case_id', 'id', 'observation'}
+            and isinstance(ref['case_id'], str)
+            and (re.fullmatch('[a-f0-9]{32}', ref['case_id']) or comparison and ref['case_id'] == 'comparison')
+            and isinstance(ref['id'], str) and 1 <= len(ref['id']) <= 128 and _answer_text(ref['observation']))
+
+
 def _answer(raw):
     doc=json_value(raw.decode('utf-8-sig'),reject_duplicates=True)
     required={'status','cause_hypothesis','proposed_change','evidence','limitations'}
     if not isinstance(doc,dict) or not required<=doc.keys() or set(doc)-required-{'next_steps'}:raise InputError('invalid diagnosis answer schema')
     if doc['status'] not in ('confirmed','hypothesis','insufficient_data'):raise InputError('invalid diagnosis answer status')
-    def text(value):return isinstance(value,str) and 1<=len(value)<=8192 and bool(value.strip()) and all(ord(c)>=32 or c in '\r\n\t' for c in value)
     for key in ('cause_hypothesis','proposed_change'):
-        if doc[key] is not None and not text(doc[key]) or doc['status']!='insufficient_data' and not text(doc[key]):raise InputError('a substantive interpretation/change is required')
+        if doc[key] is not None and not _answer_text(doc[key]) or doc['status']!='insufficient_data' and not _answer_text(doc[key]):raise InputError('a substantive interpretation/change is required')
     for key in ('limitations','next_steps'):
         values=doc.get(key,[])
-        if not isinstance(values,list) or len(values)>32 or any(not text(v) for v in values):raise InputError('invalid answer text list')
+        if not isinstance(values,list) or len(values)>32 or any(not _answer_text(v) for v in values):raise InputError('invalid answer text list')
     if doc['status']=='insufficient_data' and not doc.get('next_steps'):raise InputError('insufficient data requires a useful continuation')
     refs=doc['evidence']
     if not isinstance(refs,list) or len(refs)>32 or doc['status']!='insufficient_data' and not refs:raise InputError('diagnosis evidence required')
-    for ref in refs:
-        if (not isinstance(ref,dict) or set(ref)!={'case_id','id','observation'} or not isinstance(ref['case_id'],str)
-            or not re.fullmatch('[a-f0-9]{32}',ref['case_id']) or not isinstance(ref['id'],str) or not 1<=len(ref['id'])<=128
-            or not text(ref['observation'])):raise InputError('invalid diagnosis evidence reference')
+    if any(not _evidence_reference(ref) for ref in refs):raise InputError('invalid diagnosis evidence reference')
     return doc
 
 
@@ -225,6 +233,7 @@ def release(output,response_path):
             'в verification/intake.json, пути указаны от этой рабочей папки. Исходники теперь доступны. '
             'Через навык самостоятельно проверь соответствие изменения гипотезе, сопоставимость, эффект и правильность результата. '
             'Используй все прогоны, сохрани старые случаи и ссылки; при противоречиях или нехватке повторов не объявляй успех. '
+            'Для ссылки на сохранённое сравнение укажи case_id="comparison" и id, равный comparison_id. '
             'Ответь по-русски в verification/answer.json по verification/answer-schema.json.\n',encoding='utf-8')
         result=dict(schema=2,release_status='released',workspace=str(output/'diagnosis'),prompt='verification/prompt.txt',
             state_dir='state',frozen_diagnosis_sha256=digest(raw),sources=entries,inventory=inventory(target,participant=True),
@@ -235,7 +244,13 @@ def release(output,response_path):
 
 
 def status(output):
-    output=fs.safe(output);doc=verify_prepared(output);stage=_head(output)
+    output=fs.safe(output)
+    verify_prepared(output)
+    return _release_status(output)
+
+
+def _release_status(output):
+    stage=_head(output)
     result=dict(schema=2,workspace=str(output/'diagnosis'),release_status='withheld' if stage=='prepared' else stage,
         material_integrity='verified',security_boundary=False,model_launched_by_controller=False,participant_state_checked=False)
     if stage=='released':
