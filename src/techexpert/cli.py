@@ -142,6 +142,15 @@ def main(argv=None):
     for command in (knowledge, card, use):
         command.add_argument('--expected-knowledge-digest')
     review=commands.add_parser('knowledge-review');review.add_argument('target_id');review.add_argument('--kind',choices=('artifact','investigation'),default='investigation');review.add_argument('--revision',type=int);review.add_argument('--environment',type=Path)
+    proposal_prepare = commands.add_parser('knowledge-proposal-prepare', help='save a private editorial draft from the displayed incident preview')
+    proposal_prepare.add_argument('request', type=Path)
+    proposal = commands.add_parser('knowledge-proposal', help='read a retained editorial revision')
+    proposal.add_argument('proposal_id')
+    proposal.add_argument('--revision', type=int)
+    proposal_review = commands.add_parser('knowledge-proposal-review', help='record a reported editor decision on a retained revision')
+    proposal_review.add_argument('proposal_id')
+    proposal_review.add_argument('request', type=Path)
+    proposal_review.add_argument('--expected-sha256', required=True)
     apdex = commands.add_parser('apdex')
     apdex.add_argument('measurements',type=Path)
     apdex_mode = apdex.add_mutually_exclusive_group(required=True)
@@ -670,6 +679,17 @@ def main(argv=None):
         elif args.command=='source-read':
             from .source_code import read_source
             result=read_source(args.state_dir,args.artifact_id,args.path,start=args.start,limit=args.limit)
+        elif args.command in ('knowledge-proposal-prepare', 'knowledge-proposal', 'knowledge-proposal-review'):
+            from . import knowledge_proposals as proposals
+            if args.command == 'knowledge-proposal':
+                result = proposals.show(args.state_dir, args.proposal_id, revision=args.revision)
+            else:
+                from .inputs import json_value, read_snapshot
+                request = json_value(read_snapshot(args.request, proposals.REQUEST_LIMIT).decode('utf-8-sig'), reject_duplicates=True)
+                if args.command == 'knowledge-proposal-prepare':
+                    result = proposals.prepare(args.state_dir, request)
+                else:
+                    result = proposals.record_review(args.state_dir, args.proposal_id, request, expected_sha256=args.expected_sha256)
         elif args.command=='knowledge-card':
             from .knowledge import get_card
             if args.offset<0 or not 1<=args.limit<=8192:raise InputError('knowledge-card requires offset>=0 and limit1..8192')
