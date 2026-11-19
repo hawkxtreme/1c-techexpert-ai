@@ -10,6 +10,7 @@ import json
 import re
 
 from .inputs import InputError
+from .native_tj import FORMATS as TJ_FORMATS
 
 FIELDS=('base_alias','node_alias','node_identity','cluster_identity','infobase_identity',
     'database_mode','connection_method','dbms_instance_identity','sql_database_name',
@@ -17,7 +18,7 @@ FIELDS=('base_alias','node_alias','node_identity','cluster_identity','infobase_i
     'extensions','source_commit','journal_identity','process_identity','session_identity',
     'clock_alignment','recorded_run')
 KINDS={'native-jr':'jr','onec_source':'source','postgresql':'sql','sqlserver':'sql','rac':'rac','os_metrics':'os','apdex':'apdex','client_ui':'client'}
-CASE_KINDS={'1c-tj-text-v1':'tj','1c-source-text-v1':'source','normalized-events-v1':'normalized_events'}
+CASE_KINDS={**dict.fromkeys(TJ_FORMATS,'tj'),'1c-source-text-v1':'source','normalized-events-v1':'normalized_events'}
 
 
 def digest(value):return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,allow_nan=False,separators=(',',':')).encode()).hexdigest()
@@ -143,7 +144,7 @@ def _passport(profile,binding,attachment,target):
     if kind=='sql' and result.get('status')=='observed':observed('sql_database_name',result.get('database'),'/result/database')
     if attachment['kind']=='case':
         link=target.get('job_correlation',{}).get('native_link',{})
-        if link.get('status')=='established' and any(s['id']==link.get('identity',{}).get('source') and s['format']=='1c-tj-text-v1' for s in sources):
+        if link.get('status')=='established' and any(s['id']==link.get('identity',{}).get('source') and s['format'] in TJ_FORMATS for s in sources):
             observed('recorded_run',link['identity'],'/job_correlation/native_link/identity')
     reported=_object(binding.get('reported',{}),FIELDS)
     for key,value in reported.items():

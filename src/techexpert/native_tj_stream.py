@@ -1,4 +1,4 @@
-"""Bounded binary framing; quoted newlines never become recovery boundaries."""
+"""Bounded framing for native text records and one-object-per-line JSON."""
 from itertools import chain,islice
 
 MAX_CHUNK_BYTES=65536
@@ -80,7 +80,30 @@ class Frames:
             yield dict(byte_start=start,byte_end=position,line=first_line,end_line=line,terminated=False,open_quote=quote is not None and not pending_quote,raw=None if oversized else bytes(payload))
 
 
-def summarize_frames(stream, *, size, max_records=100000, max_record_bytes=262144, point=None):
+class JSONLines(Frames):
+    def __iter__(self):
+        start = end = self.start
+        line = 1
+        payload = bytearray()
+
+        def frame(terminated):
+            return dict(byte_start=start, byte_end=end, line=line, end_line=line, terminated=terminated,
+                        open_quote=False, raw=bytes(payload) if end-start == len(payload) else None)
+
+        for char in chain(self.prefix, self._bytes_iterator):
+            end += 1
+            if end-start <= self.record_limit:
+                payload.append(char)
+            if char == 10:
+                yield frame(True)
+                start = end
+                line += 1
+                payload.clear()
+        if end > start:
+            yield frame(False)
+
+
+def summarize_frames(stream, *, size, max_records=100000, max_record_bytes=262144, point=None, json_lines=False):
     """Bounded framing only; a terminated frame is not an accepted native event.
 
     The caller owns whole-source hash verification, including unframed bytes.
@@ -90,7 +113,8 @@ def summarize_frames(stream, *, size, max_records=100000, max_record_bytes=26214
         or type(max_record_bytes) is not int or not 1 <= max_record_bytes <= 16*1024**2
         or point is not None and (type(point) is not int or not 0 <= point < size)):
         raise ValueError('invalid framing summary bounds')
-    frames = Frames(stream, chunk_size=65536, max_input_bytes=size, max_record_bytes=max_record_bytes)
+    frame_type = JSONLines if json_lines else Frames
+    frames = frame_type(stream, chunk_size=65536, max_input_bytes=size, max_record_bytes=max_record_bytes)
     frames.initialize()
     cursor = terminated = frames.start
     tail = selected = None
@@ -109,7 +133,8 @@ def summarize_frames(stream, *, size, max_records=100000, max_record_bytes=26214
     finally:
         iterator.close()
         frames.close()
-    result = dict(boundary_basis='quote_aware_frame_not_valid_event', terminated_prefix_bytes=terminated,
+    basis = 'physical_line_not_valid_event' if json_lines else 'quote_aware_frame_not_valid_event'
+    result = dict(boundary_basis=basis, terminated_prefix_bytes=terminated,
         incomplete_tail=tail, complete_scan=cursor == size, unframed_bytes=size-cursor,
         frame_attempts=count, max_records=max_records, max_record_bytes=max_record_bytes)
     if point is not None:

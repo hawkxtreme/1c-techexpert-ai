@@ -264,15 +264,29 @@ def _samples(root, suffixes):
     return chosen, limited or bool(pending)
 
 
+def _json_header_seen(raw):
+    first, newline, _ = raw.partition(b'\n')
+    if not newline:
+        return False
+    try:
+        text = first.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        return False
+    return text.lstrip().startswith('{') and native_tj.json_record_seen(text)
+
+
 def _tj(path, directory, row):
     files, limited = _samples(path, {'.log', '.txt'}) if directory else ([path], False)
     row.update(files_observed=len(files), sampling_limited=limited)
     seen = set()
     recognized = 0
     for member in files:
-        prefix = _read_header(row, member).decode('utf-8-sig', errors='replace')
+        raw = _read_header(row, member)
+        prefix = raw.decode('utf-8-sig', errors='replace')
         line = next((value for value in prefix.splitlines() if value.strip()), '')
         matches = {name for name, header in native_tj.HEADERS.items() if header.match(line)}
+        if not matches and _json_header_seen(raw):
+            matches.add(native_tj.JSON_ISO)
         if matches:
             seen.update(matches)
             recognized += 1

@@ -16,6 +16,7 @@ PREVIEW = 'source.check'
 CAPTURES = {'case.analyze': 'tj', 'jr.import': 'jr'}
 OPERATIONS = {PREVIEW, *CAPTURES}
 HOURLY_MINUTE = logcfg_observation.HOURLY_MINUTE
+TIMESTAMP_FORMATS = logcfg_observation.TIMESTAMP_FORMATS
 FIXED_PREFIX = 'fixed_prefix'
 PREFIX_PLAN = 'tj_prefix_plan'
 PREFIX_FAILURES = dict(source_truncated='journal_prefix_truncated', source_replaced='journal_prefix_replaced',
@@ -33,8 +34,8 @@ def schema(cap, operation):
     preview = operation == PREVIEW
     selector = dict(source=cap.string(4, pattern='j[1-9][0-9]{0,2}'), window=cap.WINDOW)
     if operation != 'jr.import':
-        selector['timestamp_profile'] = cap.string(16, enum=[HOURLY_MINUTE],
-            description='Declare short timestamps and one-hour rotation verified for this source and window.')
+        selector['timestamp_profile'] = cap.string(16, enum=list(TIMESTAMP_FORMATS),
+            description='Choose the confirmed reader: one-hour native text with short timestamps or native JSON lines.')
         selector['read_mode'] = cap.string(16, enum=[FIXED_PREFIX],
             description='Use a fixed byte boundary per selected TJ file, allowing append-only growth.')
         selector['logcfg_id'] = dict(cap.CASE,
@@ -108,8 +109,8 @@ def _configuration_status(source, timestamp_profile=None):
         return 'offset_required'
     kind = source['type']
     declared = settings.get('timestamp_format')
-    if timestamp_profile == HOURLY_MINUTE:
-        if kind != 'tj' or declared not in (None, '', 'minute'):
+    if timestamp_profile in TIMESTAMP_FORMATS:
+        if kind != 'tj' or declared not in (None, '', TIMESTAMP_FORMATS[timestamp_profile]):
             return 'timestamp_profile_conflict'
     elif kind == 'tj':
         if declared == 'minute':
@@ -189,7 +190,8 @@ def _hourly_members(files, window, offset):
         except ValueError as error:
             raise InputError('hourly_filename_required') from error
         if first_hour <= candidate <= last:
-            chosen[file] = dict(timestamp_format='minute', file_hour=candidate.isoformat(), rotation_hours=1)
+            chosen[file] = dict(format=native_tj.FORMAT, timestamp_format='minute',
+                                file_hour=candidate.isoformat(), rotation_hours=1)
     return chosen
 
 
@@ -210,7 +212,7 @@ def _tj_review(root, profiles, selection, settings, window, state, manifest_path
     retained = min(MAX_FILE_BYTES, MAX_TOTAL_BYTES // len(profiles))
     nested = any(path != root and path.parent != root for path in profiles)
     placement = settings.get('placement') or ('folders' if nested else 'plain')
-    specs = [dict(path=str(path), format=native_tj.FORMAT, platform_version=settings['platform_version'],
+    specs = [dict(path=str(path), platform_version=settings['platform_version'],
                   encoding='utf-8', placement=placement, external_window=dict(window, max_retained_bytes=retained),
                   **profile) for path, profile in profiles.items()]
     manifest = dict(schema=2, origin='provided', sources=specs, incident_window=window)
@@ -224,7 +226,7 @@ def _tj_review(root, profiles, selection, settings, window, state, manifest_path
     return raw, review
 
 
-def _plan(state, output, binding, source, public, window, selection, *, logcfg_reference=None, log_location=None):
+def _plan(state, output, binding, source, public, window, selection, *, timestamp_profile, logcfg_reference, log_location):
     kind = source['type']
     root = profile_files._ordinary_path(source['path'])
     profile_files._chain(root)
@@ -244,14 +246,17 @@ def _plan(state, output, binding, source, public, window, selection, *, logcfg_r
             plan['logcfg_observation'] = logcfg_reference
             settings = dict(settings, placement='folders')
         offset = settings['utc_offset']
-        if logcfg_reference is not None or selection.get('timestamp_profile') == HOURLY_MINUTE:
+        if timestamp_profile == HOURLY_MINUTE:
             profiles = _hourly_members(files, window, offset)
             public.update(timestamp_profile=HOURLY_MINUTE, files_outside_window=len(files) - len(profiles),
                           hour_basis='filename_and_requested_year_with_declared_offset')
             if not profiles:
                 raise InputError('no_hour_files_in_window')
         else:
-            profiles = dict.fromkeys(files, dict(timestamp_format='iso', utc_offset=offset))
+            format = native_tj.JSON_FORMAT if timestamp_profile == native_tj.JSON_ISO else native_tj.FORMAT
+            profiles = dict.fromkeys(files, dict(format=format, timestamp_format='iso', utc_offset=offset))
+            if format == native_tj.JSON_FORMAT:
+                public.update(timestamp_profile=timestamp_profile, format=format)
         files = list(profiles)
         if log_location is not None:
             logcfg_observation.check_layout(files, log_location)
@@ -396,9 +401,9 @@ def execute(operation, args, state, output, binding, *, stop):
     logcfg_reference = log_location = None
     logcfg_id = selection.get('logcfg_id')
     if logcfg_id is not None and source and source['type'] == 'tj':
-        status, logcfg_reference, log_location = logcfg_observation.select(state, binding, ref, logcfg_id)
+        status, logcfg_reference, log_location, timestamp_profile = logcfg_observation.select(state, binding, ref, logcfg_id)
         if status == 'configured':
-            status = _configuration_status(source, HOURLY_MINUTE)
+            status = _configuration_status(source, timestamp_profile)
     elif logcfg_id is not None:
         status = 'logcfg_source_unsupported'
     else:
@@ -421,7 +426,8 @@ def execute(operation, args, state, output, binding, *, stop):
     if status == 'configured':
         try:
             plan, path, raw, review = _plan(state, output, binding, source, public, window, selection,
-                                           logcfg_reference=logcfg_reference, log_location=log_location)
+                                           timestamp_profile=timestamp_profile, logcfg_reference=logcfg_reference,
+                                           log_location=log_location)
         except profile_files._ObservationError as error:
             public['status'] = {'separate_access_required': 'separate_access_required',
                                 'absolute_path_required': 'absolute_path_required', 'linked_path': 'linked_or_special_journal',
@@ -468,7 +474,7 @@ def partial_reason(operation, args, data):
             return 'journal_prefix_bounded'
     if data['source_coverage']['status'] == 'observations_available':
         return None
-    if args['profile_journal'].get('timestamp_profile') == HOURLY_MINUTE or 'logcfg_observation' in data:
+    if args['profile_journal'].get('timestamp_profile') in TIMESTAMP_FORMATS or 'logcfg_observation' in data:
         parse_states = {source['reference_capture']['original_parse_status'] for source in data['sources']}
         if 'invalid' in parse_states and parse_states <= {'invalid', 'empty'}:
             return 'journal_parse_failed'

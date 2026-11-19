@@ -8,6 +8,7 @@ from . import check_history, context_excerpt, context_intake, context_program, f
 from . import apdex_preparation
 from .context_disclosure import APDEX_VIEW, VIEW_READER_CAPABILITIES
 from .inputs import InputError, json_value, read_snapshot
+from . import logcfg_observation, native_tj
 
 
 FORMATS = dict(profiles=[1,2], cases=[1], artifacts=[1,2], comparisons=[1],
@@ -21,7 +22,7 @@ _ERRORS = (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionEr
 
 
 def supports(metadata, observed, *, case_retirement_schemas=(), report_retirement_schemas=(),
-             tj_reference_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
+             tj_reference_schemas=(), tj_json_schemas=(), context_disclosure_schemas=(), context_intake_schemas=(),
              context_program_schemas=(), report_reference_schemas=(), investigation_progress_schemas=(),
              check_history_schemas=(), investigation_task_schemas=(), os_observation_schemas=(), jr_lgd_schemas=(),
              fix_verification_schemas=(), apdex_preparation_schemas=()):
@@ -50,6 +51,7 @@ def supports(metadata, observed, *, case_retirement_schemas=(), report_retiremen
             and set(observed.get('fix-verification', ())) <= set(fix_verification_schemas)
             and set(observed.get('apdex-preparation', ())) <= set(apdex_preparation_schemas)
             and set(observed.get('tj-reference-windows', ())) <= set(tj_reference_schemas)
+            and set(observed.get('tj-json', ())) <= set(tj_json_schemas)
             and set(observed.get('context-disclosure', ())) <= set(context_disclosure_schemas)
             and set(observed.get('context-intake', ())) <= set(context_intake_schemas)
             and set(observed.get('context-program', ())) <= set(context_program_schemas))
@@ -78,6 +80,7 @@ def inspect_state(state):
     schemas['fix-verification'] = set()
     schemas['apdex-preparation'] = set()
     schemas['tj-reference-windows'] = set()
+    schemas['tj-json'] = set()
     schemas['context-disclosure'] = set()
     schemas['context-intake'] = set()
     schemas['context-program'] = set()
@@ -227,6 +230,12 @@ def inspect_state(state):
                     schema(kind,report)
                     if kind == 'cases':
                         schemas['tj-reference-windows'].update(saved_reference_formats(report))
+                        sources = [*report.get('sources', []), *report.get('source_acquisition', [])]
+                        if any(source.get('format') == native_tj.JSON_FORMAT for source in sources):
+                            schemas['tj-json'].add(native_tj.JSON_READER)
+                    if (kind == 'artifacts' and report.get('kind') == logcfg_observation.KIND
+                            and report['result']['observation']['timestamp_profile'] == native_tj.JSON_ISO):
+                        schemas['tj-json'].add(native_tj.JSON_READER)
                     if (kind=='artifacts' and report.get('kind')=='native-jr'
                             and report['result'].get('profile')==native_jr_sqlite.PROFILE):
                         schemas['jr-lgd'].add(native_jr_sqlite.READER_FORMAT)

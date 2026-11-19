@@ -1,4 +1,4 @@
-"""Repeated fixed-prefix observation for one explicit native text TJ file.
+"""Repeated fixed-prefix observation for one explicitly selected native TJ file.
 
 This is not an atomic filesystem or multi-file snapshot. In-place/ABA writes
 that evade both observations cannot be excluded. No writer is paused and no
@@ -71,15 +71,16 @@ def _read(stream, boundary, *, keep):
     return b''.join(parts) if keep else None, checksum.hexdigest()
 
 
-def _framing(data, max_records, max_record_bytes):
-    result = summarize_frames(io.BytesIO(data), size=len(data), max_records=max_records, max_record_bytes=max_record_bytes)
+def _framing(data, max_records, max_record_bytes, *, json_lines):
+    result = summarize_frames(io.BytesIO(data), size=len(data), max_records=max_records,
+                              max_record_bytes=max_record_bytes, json_lines=json_lines)
     tail = result['incomplete_tail']
     if tail is not None:
         tail['sha256'] = hashlib.sha256(memoryview(data)[tail['byte_start']:tail['byte_end']]).hexdigest()
     return result
 
 
-def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_record_bytes=MAX_RECORD_BYTES):
+def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_record_bytes=MAX_RECORD_BYTES, json_lines=False):
     for value, lower, upper in ((max_bytes, 0, MAX_FILE_BYTES), (max_records, 0, MAX_EVENTS), (max_record_bytes, 1, MAX_RECORD_BYTES)):
         if type(value) is not int or not lower <= value <= upper:
             raise InputError('TJ prefix budget outside supported bounds')
@@ -127,5 +128,5 @@ def read_prefix(path, max_bytes=MAX_FILE_BYTES, *, max_records=MAX_EVENTS, max_r
         collection_coverage='unknown', writer_protocol='not_verified_against_running_platform',
         limitations=['Appended suffix is outside this snapshot.', 'Repeated byte equality cannot exclude an unobserved in-place rewrite/ABA, later writes, dropped events or a missing node.',
                      'Each file is observed separately; no atomic multi-file snapshot or database/run ownership is established.'],
-        framing=_framing(data, max_records, max_record_bytes))
+        framing=_framing(data, max_records, max_record_bytes, json_lines=json_lines))
     return data, acquisition

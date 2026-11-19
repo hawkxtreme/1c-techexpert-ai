@@ -11,6 +11,7 @@ from .inputs import InputError
 
 KIND = 'logcfg_observation'
 HOURLY_MINUTE = 'hourly_minute'
+TIMESTAMP_FORMATS = {HOURLY_MINUTE: 'minute', native_tj.JSON_ISO: 'iso'}
 NS = logcfg_xml.NS + '}'
 EVENT_NAMES = {*logcfg.EVENTS, 'VRSREQUEST', 'VRSRESPONSE'}
 OPERATORS = {NS + part for part in ('eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like')}
@@ -139,15 +140,14 @@ def _describe(document, source, target, info):
     if not known_version:
         info['reader_status'] = 'version_unsupported' if configured.get('platform_version') else 'version_required'
         return location
-    reader_settings = (settings['format'], settings['placement'], settings['rotation'],
-                       settings.get('rotation_hours'), settings['compression'])
-    if (not unsupported and not events['unrecognized_children']
-            and reader_settings == ('text', 'folders', 'period', 1, 'none')):
+    reader = {'text': HOURLY_MINUTE, 'json': native_tj.JSON_ISO}.get(settings['format'])
+    layout = (settings['placement'], settings['rotation'], settings.get('rotation_hours'), settings['compression'])
+    if reader and not unsupported and not events['unrecognized_children'] and layout == ('folders', 'period', 1, 'none'):
         if (configured.get('placement') not in (None, '', 'folders')
-                or configured.get('timestamp_format') not in (None, '', 'minute')):
+                or configured.get('timestamp_format') not in (None, '', TIMESTAMP_FORMATS[reader])):
             info['reader_status'] = 'logcfg_profile_conflict'
         else:
-            info.update(timestamp_profile=HOURLY_MINUTE, reader_status='supported_profile')
+            info.update(timestamp_profile=reader, reader_status='supported_profile')
     return location
 
 
@@ -207,13 +207,14 @@ def select(state, binding, reference, identifier):
         fs.inventory(fs.safe(artifacts.artifact_folder(state, identifier)))
         report = artifacts.load_artifact(state, identifier)
         if report['kind'] != KIND or report['result']['binding'] != _scope(binding, reference):
-            return 'logcfg_scope_mismatch', None, None
+            return 'logcfg_scope_mismatch', None, None, None
         info = report['result']['observation']
-        if info['timestamp_profile'] != HOURLY_MINUTE:
-            return info['reader_status'], None, None
-        return 'configured', dependency(report), Path(report['result']['location'])
+        reader = info['timestamp_profile']
+        if reader not in TIMESTAMP_FORMATS:
+            return info['reader_status'], None, None, None
+        return 'configured', dependency(report), Path(report['result']['location']), reader
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
-        return 'logcfg_snapshot_unavailable', None, None
+        return 'logcfg_snapshot_unavailable', None, None, None
 
 
 def check_layout(files, location):

@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__
 from .analysis import analyze_events,parse_time
 from .inputs import InputError, load_manifest, read_snapshot, json_value, WHOLE_JSON_FORMATS,open_verified_snapshot
-from .native_tj import iter_tj
+from .native_tj import FORMATS as TJ_FORMATS, JSON_FORMAT as TJ_JSON, iter_tj
 from .observations import summarize_native, preview_record, native_report, with_evidence
 from .job_correlation import correlate_job, record_matches_link
 from .order_load import analyze_order_load
@@ -124,10 +124,10 @@ def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None,
         result['logcfg_observation'] = logcfg_observation
     if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
         result['order_load']=analyze_order_load(bundle,result)
-    native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']
+    native_sources = [s for s in bundle['sources'] if s['format'] in TJ_FORMATS]
     formats = {s['format'] for s in bundle['manifest']['sources']}
     contract = next(iter(formats)) if len(formats) == 1 else 'mixed-v1'
-    if '1c-tj-text-v1' in formats:
+    if formats.intersection(TJ_FORMATS):
         result['native_observations'] = summarize_native(bundle['native_events'])
         if has_correlation:
             result['native_observations']['job_correlation'] = 'see_job_correlation_for_bounded_subset'
@@ -144,7 +144,8 @@ def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None,
                   created_at=datetime.now(timezone.utc).isoformat(), origin=bundle['manifest']['origin'],
                   input_contract=contract, native_1c_compatibility_verified=False,
                   native_compatibility_scope=('controlled_file_job_markers_8.3.27.1989_only_not_sc01_regression'
-                    if has_correlation else 'supported_TJ_text_profile_only_no_runtime_ownership' if generic
+                    if has_correlation else 'supported_TJ_observation_profiles_only_no_runtime_ownership' if TJ_JSON in formats
+                    else 'supported_TJ_text_profile_only_no_runtime_ownership' if generic
                     else 'text_parser_only_not_sc01_end_to_end' if native_sources else 'not_checked'),
                   symptom=bundle['manifest'].get('symptom', ''),
                   baseline=dict(reported_seconds=bundle['manifest'].get('reported_normal_seconds'),
@@ -217,7 +218,7 @@ def read_evidence(state_dir, case_id, evidence_id):
     source = next((s for s in report['sources'] if s['id'] == match[1]), None)
     if source is None:
         raise InputError('unknown evidence source')
-    if source['format']=='1c-tj-text-v1':
+    if source['format'] in TJ_FORMATS:
         found=None
         with open_verified_snapshot(case_source_path(state_dir,case_id,match[1]),source['sha256'],expected_size=source.get('size')) as stream:
             scan=iter_tj(stream,source['profile'],max_records=source['record_budget'])
@@ -276,7 +277,7 @@ def list_native_events(state_dir, case_id, *, source_id=None, event=None, proper
                 if not re.fullmatch(r's[1-9][0-9]*',source['id']):raise InputError('invalid saved evidence source')
                 with open_verified_snapshot(case_source_path(state_dir,case_id,source['id']),source['sha256'],expected_size=source.get('size')):pass
                 verified_sources.append(source['id'])
-    sources = [s for s in report['sources'] if s['format']=='1c-tj-text-v1']
+    sources = [s for s in report['sources'] if s['format'] in TJ_FORMATS]
     if source_id is not None:
         sources = [s for s in sources if s['id']==source_id]
         if not sources:

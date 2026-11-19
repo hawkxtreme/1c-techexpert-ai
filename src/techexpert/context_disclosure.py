@@ -9,6 +9,7 @@ import uuid
 from . import context_coverage, context_excerpt, context_fields as fields, context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
+from .native_tj import FORMATS as TJ_FORMATS
 
 
 FIX_VIEW = 'fix-summary'
@@ -204,7 +205,7 @@ def _project(state, attachment, args, aliases):
             raise InputError('selected artifact is not an APDEX preparation')
         return fields.apdex_setup(report['result'])
     if kind == 'tj-events':
-        if not any(s['format'] == '1c-tj-text-v1' for s in report['sources']):
+        if not any(s['format'] in TJ_FORMATS for s in report['sources']):
             raise InputError('no supported native TJ is present')
         result = storage.list_native_events(state, target, offset=offset, limit=limit,
             source_id=args.get('source'), event=args.get('event'), window=args.get('window'),
@@ -219,7 +220,7 @@ def _project(state, attachment, args, aliases):
                          for item in result['source_statuses']], clock_alignment='not_verified')
     if kind == 'tj-evidence':
         source_id = args['record'].split(':', 1)[0]
-        if not any(s['format'] == '1c-tj-text-v1' and s['id'] == source_id for s in report['sources']):
+        if not any(s['format'] in TJ_FORMATS and s['id'] == source_id for s in report['sources']):
             raise InputError('selected evidence belongs to a different evidence format')
         result = storage.read_evidence(state, target, args['record'])
         if storage.load_case(state, target) != report:

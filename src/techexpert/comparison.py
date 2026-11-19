@@ -12,6 +12,7 @@ import statistics
 import uuid
 
 from .sample_statistics import describe_values
+from .native_tj import FORMATS as TJ_FORMATS
 
 
 MAX_CASES = 20
@@ -122,7 +123,7 @@ def _case(value, group, index):
         issues.append('missing_platform_profile')
     else:
         profiles = [_mapping(s.get('profile')) for s in sources if isinstance(s,dict) and
-                    s.get('format') in ('1c-tj-text-v1','1c-job-runtime-v1')]
+                    s.get('format') in (*TJ_FORMATS,'1c-job-runtime-v1')]
         if not profiles or any(profile.get('platform_version') != PLATFORM for profile in profiles):
             issues.append('unsupported_platform_profile')
     seconds, bounds = life.get('execution_seconds'), life.get('execution_bounds_seconds')

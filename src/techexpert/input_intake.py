@@ -11,6 +11,7 @@ import uuid
 from . import input_files as files,input_zip
 from .artifacts import save_artifact,load_artifact
 from .inputs import InputError,read_snapshot,json_value,AUXILIARY_FORMATS,runtime_profile
+from .native_tj import FORMATS as TJ_FORMATS, validate_profile
 from .operation_state import private,digest
 
 
@@ -130,7 +131,7 @@ def analyze(state,output,manifest,input_plan):
         from .inputs import _manifest_profile
         _manifest_profile(requested)
     if type(requested) is not dict or type(requested.get('sources')) is not list or not 1<=len(requested['sources'])<=32:raise InputError('selected case requires1..32 explicit member sources')
-    formats=set(AUXILIARY_FORMATS)|{'1c-tj-text-v1','1c-job-runtime-v1','normalized-events-v1'}
+    formats={*AUXILIARY_FORMATS,*TJ_FORMATS,'1c-job-runtime-v1','normalized-events-v1'}
     if any(type(s) is not dict or type(s.get('format')) is not str or s['format'] not in formats or type(s.get('path')) is not str for s in requested['sources']):raise InputError('unsupported selected diagnostic format or member')
     ids=[s['path'] for s in requested['sources']];selection=selected_members(plan,ids)
     for source,member in zip(requested['sources'],selection):
@@ -138,8 +139,7 @@ def analyze(state,output,manifest,input_plan):
         if source.get('read_mode','stable')!='stable':raise InputError('catalogue member analysis requires stable read mode; TJ prefix reads use explicit original paths')
         if plan['result']['roots'][member['root']]['kind']=='zip' and source['format']=='1c-source-text-v1':raise InputError('source-code archives are excluded')
         try:
-            if source['format']=='1c-tj-text-v1':
-                from .native_tj import validate_profile
+            if source['format'] in TJ_FORMATS:
                 validate_profile(source,member['relative_path'])
             elif source['format']=='1c-job-runtime-v1':runtime_profile(source)
         except ValueError as exc:raise InputError('unsupported selected source profile') from exc

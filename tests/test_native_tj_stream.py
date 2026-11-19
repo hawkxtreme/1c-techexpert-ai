@@ -10,6 +10,8 @@ from src.techexpert import native_tj as api
 
 PROFILE=dict(format='1c-tj-text-v1',platform_version='8.3.27.1989',encoding='utf-8',placement='folders',timestamp_format='minute',file_hour='2026-11-16T09:00:00+03:00',rotation_hours=1)
 GOOD=b'04:05.123456-250000,SCALL,2,level=INFO,process=rphost\n'
+JSON_PROFILE=dict(format='1c-tj-json-v1', platform_version='8.3.27.1989', encoding='utf-8',
+                  placement='folders', timestamp_format='iso', utc_offset='+03:00')
 
 
 class BoundedReader(io.BytesIO):
@@ -94,6 +96,40 @@ class NativeTJStreamTests(unittest.TestCase):
             reader=BoundedReader(GOOD,7)
             with self.subTest(limits=limits),self.assertRaises(ValueError):api.iter_tj(reader,self.profile,**limits)
             self.assertEqual(reader.bytes_read,0)
+
+    def test_native_json_preserves_physical_ranges_and_repeated_properties(self):
+        first = ('{"ts":"2026-11-16T09:04:05.123456","duration":"250000","name":"SDBL","depth":"2",'
+                 '"Func":"First","Func":"Second","Note":"Строка\\r\\nдва"}\r\n').encode()
+        second = b'{"ts":"2026-11-16T09:04:06.000000","duration":"1","name":"EXCP","depth":"1"}\n'
+        for size in (1, 7, 4096):
+            with self.subTest(size=size):
+                data = b'\xef\xbb\xbf' + first + second
+                reader = BoundedReader(data, size)
+                scan = api.iter_tj(reader, JSON_PROFILE, chunk_size=size)
+                row = next(scan)
+                self.assertEqual(scan.raw_record, first)
+                self.assertEqual(row['timestamp_utc'], '2026-11-16T06:04:05.123456+00:00')
+                self.assertEqual(row['properties'], {'Note': 'Строка\r\nдва'})
+                self.assertEqual(row['ambiguous_properties'], {'Func': ['First', 'Second']})
+                self.assertEqual((row['line'], row['end_line'], row['byte_start'], row['byte_end']), (1, 1, 3, 3+len(first)))
+                self.assertEqual([(r['line'], r['event']) for r in scan], [(2, 'EXCP')])
+                self.assertEqual(reader.bytes_read, len(data))
+                self.assertEqual([r['code'] for r in scan.summary['limitations']], ['ambiguous_property'])
+
+    def test_native_json_refuses_ambiguous_headers_and_recovers_at_a_physical_newline(self):
+        header = b'{"ts":"2026-11-16T09:04:06.000000","duration":"1","name":"EXCP","depth":"1"'
+        good = header + b'}\n'
+        bad_records = (header + b',"name":"SDBL"}\n', header + b',"v":"\\ud800"}\n',
+                       header + b',"v":{}}\n', b'[' + good.rstrip() + b']\n', b'{"v":"broken\n',
+                       header + b',"v":"' + b'x' * 240 + b'"}\n')
+        before = b''.join(bad_records)
+        data = before + good + good[:-1]
+        scan = api.iter_tj(BoundedReader(data, 3), JSON_PROFILE, chunk_size=3, max_record_bytes=180)
+        rows = list(scan)
+        self.assertEqual([(r['event'], r['line'], r['byte_start']) for r in rows], [('EXCP', 7, len(before))])
+        self.assertEqual(scan.summary['records_seen'], 8)
+        self.assertEqual([r['code'] for r in scan.summary['limitations']],
+                         ['invalid_record'] * 5 + ['record_too_large', 'truncated_record'])
 
     def test_read_error_never_exposes_a_completed_summary(self):
         class Broken(BoundedReader):

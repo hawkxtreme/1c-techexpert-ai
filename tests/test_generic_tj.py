@@ -59,6 +59,27 @@ class GenericTJTests(unittest.TestCase):
         self.assertEqual(coverage['scope'],'native_TJ_only');self.assertFalse(coverage['original_paths_read'])
         self.assertEqual((folder/'report.json').read_bytes(),saved_report)
 
+    def test_supplied_native_json_keeps_original_bytes_and_replays_direct_evidence(self):
+        raw = (b'\xef\xbb\xbf{"ts":"2026-11-18T09:01:00.000001","duration":"17","name":"SDBL",'
+               b'"depth":"3","Func":"One","Func":"Two","OSThread":"2"}\r\n')
+        self.log.write_bytes(raw)
+        source = dict(PROFILE, path=str(self.log), format='1c-tj-json-v1')
+        self.write(dict(self.doc, sources=[source], incident_window=WINDOW))
+        case = self.case()
+        case_id = case['case_id']
+        self.assertEqual(case['input_contract'], '1c-tj-json-v1')
+        self.assertEqual(case['native_observations']['event_count'], 1)
+        self.assertEqual(storage.case_source_path(self.state, case_id, 's1').read_bytes(), raw)
+        self.log.unlink()
+        self.assertEqual(storage.list_native_events(self.state, case_id, window=WINDOW)['matched_count'], 1)
+        proof = storage.read_evidence(self.state, case_id, 's1:1')
+        self.assertEqual((proof['byte_start'], proof['byte_end']), (3, len(raw)))
+        self.assertIn('"Func":"One","Func":"Two"', proof['text'])
+        coverage = source_coverage.inspect_case(self.state, case_id, window=WINDOW, required_fields=['Func'])
+        self.assertEqual(coverage['snapshot_sources_verified'], ['s1'])
+        self.assertEqual(coverage['sources'][0]['requirements']['fields']['Func']['status'], 'only_ambiguous_or_empty')
+        self.assertFalse(coverage['can_establish_absence'])
+
     def test_manifest_v2_refuses_special_profiles_and_other_formats_before_source_io(self):
         invalid=[dict(self.doc,selection={}),dict(self.doc,scenario='SC-01'),dict(self.doc,correlation_profile='1c-file-job-markers-v1'),
             dict(self.doc,workload_profile='sc01-order-load-v1'),dict(self.doc,schema=True),dict(self.doc,unknown=True),

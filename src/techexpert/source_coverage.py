@@ -9,7 +9,7 @@ import stat
 from . import __version__
 from .analysis import parse_time
 from .inputs import InputError,load_manifest,read_snapshot,MAX_FILE_BYTES,MAX_TOTAL_BYTES,MAX_EVENTS,MAX_RECORD_BYTES
-from .native_tj import parse_tj
+from .native_tj import FORMATS as TJ_FORMATS, parse_tj
 from .observations import with_evidence
 
 EVENT=re.compile(r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}\Z')
@@ -85,7 +85,7 @@ def summarize_bundle(bundle,*,window=None,required_events=(),required_fields=())
     attempts=bundle.get('source_attempts') or [dict(id=s['id'],availability='captured',path=s.get('path'),format=s['format']) for s in bundle['sources']]
     results=[]
     for attempt in attempts:
-        source=sources.get(attempt['id']);native=attempt.get('format')=='1c-tj-text-v1'
+        source=sources.get(attempt['id']);native=attempt.get('format') in TJ_FORMATS
         result=dict(attempt,assessment='not_assessed_by_tj_check' if not native else 'insufficient_data',
                     continuity='unknown',clock_alignment='not_verified')
         if not source or attempt['availability']!='captured':results.append(result);continue
@@ -199,7 +199,7 @@ def inspect_case(state_dir,case_id,*,window=None,required_events=(),required_fie
         elif isinstance(collection,dict) and collection.get('status')=='user_declared_not_verified':
             source['collection']=validate_collection({k:v for k,v in collection.items() if k!='status'})
         else:raise InputError('invalid saved collection declaration')
-        if source.get('format')=='1c-tj-text-v1':
+        if source.get('format') in TJ_FORMATS:
             require_available(state_dir,case_id,source_id)
             data=read_snapshot(_case_member(folder,'sources/'+source_id+'.bin'),min(MAX_FILE_BYTES,MAX_TOTAL_BYTES-total));total+=len(data)
             if len(data)!=source.get('size') or hashlib.sha256(data).hexdigest()!=source.get('sha256'):raise InputError('saved TJ snapshot integrity mismatch')

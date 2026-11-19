@@ -148,8 +148,8 @@ def _tj_coverage(state, report, args, window):
             or any(type(row) is not dict or fields.identifier(row.get('id'), fields.SOURCE_ID) is None
                    for row in metadata + attempts)):
         raise InputError('invalid saved source catalogue')
-    saved = {row['id']: row for row in metadata if row['format'] == native_tj.FORMAT}
-    acquisition = {row['id']: row for row in attempts if row.get('format') == native_tj.FORMAT}
+    saved = {row['id']: row for row in metadata if row['format'] in native_tj.FORMATS}
+    acquisition = {row['id']: row for row in attempts if row.get('format') in native_tj.FORMATS}
     if (any(type(row.get('size')) is not int or not 0 <= row['size'] <= MAX_FILE_BYTES for row in saved.values())
             or sum(row['size'] for row in saved.values()) > MAX_TOTAL_BYTES):
         raise InputError('invalid saved TJ byte budget')
@@ -160,7 +160,8 @@ def _tj_coverage(state, report, args, window):
     rows = []
     remaining = MAX_EVENTS
     for source_id in page:
-        row = dict(source=source_id, format=native_tj.FORMAT, snapshot_verified=False, assessment='insufficient_data')
+        format = (saved.get(source_id) or acquisition[source_id])['format']
+        row = dict(source=source_id, format=format, snapshot_verified=False, assessment='insufficient_data')
         if source_id not in saved:
             capture = acquisition[source_id]
             row.update(availability=fields.enum(capture['availability'], ACQUISITION_STATES),
@@ -236,7 +237,7 @@ def verify_view(state, attachment, kind, data):
     report = _pinned_report(state, attachment)
     if kind == 'tj-coverage':
         used = {row['source'] for row in data.get('sources', []) if row['snapshot_verified']}
-        sources = {row['id']: row for row in report['sources'] if row['format'] == native_tj.FORMAT}
+        sources = {row['id']: row for row in report['sources'] if row['format'] in native_tj.FORMATS}
         for source_id in sorted(used):
             with _tj_file(state, report['case_id'], sources[source_id]):
                 pass

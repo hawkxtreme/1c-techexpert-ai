@@ -13,6 +13,8 @@ import re
 import uuid
 from datetime import datetime, timezone
 
+from .native_tj import FORMATS as TJ_FORMATS
+
 
 VERSION = '8.3.27.1989'
 REVISION = 'sc01-catalog-v1'
@@ -172,7 +174,7 @@ def _identity(bundle, report):
     if _uuid(identity.get('job_uuid')) != job or identity.get('process_label') != '1cv8':
         raise _Issue('job_identity_or_process_conflict')
     native = sources.get(_text(identity.get('source'), 256))
-    if not isinstance(native, dict) or native.get('format') != '1c-tj-text-v1':
+    if not isinstance(native, dict) or native.get('format') not in TJ_FORMATS:
         raise _Issue('native_identity_source_missing')
     raw, native_ref = _read(native, 16 * MAX_BYTES)
     if _hash(identity.get('sha256')) != native_ref['sha256']:

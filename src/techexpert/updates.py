@@ -173,6 +173,7 @@ def _staged(state, release_id):
                 fix_verification_schemas=archive['fix_verification_schemas'],
                 apdex_preparation_schemas=archive['apdex_preparation_schemas'],
                 tj_reference_schemas=archive['tj_reference_schemas'],
+                tj_json_schemas=archive['tj_json_schemas'],
                 context_disclosure_schemas=archive['context_disclosure_schemas'],
                 context_intake_schemas=archive['context_intake_schemas'],
                 context_program_schemas=archive['context_program_schemas'])
@@ -191,6 +192,7 @@ def _supports(package, observed):
                     fix_verification_schemas=package['fix_verification_schemas'],
                     apdex_preparation_schemas=package['apdex_preparation_schemas'],
                     tj_reference_schemas=package['tj_reference_schemas'],
+                    tj_json_schemas=package['tj_json_schemas'],
                     context_disclosure_schemas=package['context_disclosure_schemas'],
                     context_intake_schemas=package['context_intake_schemas'],
                     context_program_schemas=package['context_program_schemas'])

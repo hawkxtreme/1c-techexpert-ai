@@ -1,18 +1,23 @@
-"""Bounded text TJ observations for one explicitly declared platform profile.
+"""Bounded text and JSON TJ observations for explicitly declared profiles.
 
-Text grammar: 1C 8.3.27 Administrator Guide, section 3.24.3.4.
+Grammar: 1C 8.3.27 Administrator Guide, section 3.24.3.4.
 UTF-8 and single-hour context for minute timestamps are adapter constraints,
 not universal platform claims. Physical placement does not choose timestamp
 grammar. A header timestamp is not universally confirmed to mean event finish;
 therefore no operation-start or background-job milestones are inferred here.
 """
 
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
 
 
 FORMAT = '1c-tj-text-v1'
+JSON_FORMAT = '1c-tj-json-v1'
+FORMATS = (FORMAT, JSON_FORMAT)
+JSON_ISO = 'json_iso'
+JSON_READER = 1
 PLATFORM_VERSION = '8.3.27.1989'
 MAX_INPUT_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_SCAN_BYTES = 256 * 1024 * 1024
@@ -22,11 +27,17 @@ BOM = b'\xef\xbb\xbf'
 OFFSET = re.compile(r'([+-])([0-9]{2}):([0-9]{2})\Z')
 HOUR = re.compile(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:00(?::00(?:\.0{1,6})?)?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z')
 HOUR_FILENAME = re.compile(r'(?:.+_[0-9]+_)?(?P<hour>[0-9]{8})\.log', re.IGNORECASE)
-HEAD_TAIL = r'-(?P<duration>[0-9]{1,20}),(?P<event>[A-Za-z_][A-Za-z0-9_.:-]{0,63}),(?P<depth>[0-9]{1,10})(?P<separator>,|$)'
+LOCAL_ISO = r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6}'
+EVENT_NAME = r'[A-Za-z_][A-Za-z0-9_.:-]{0,63}'
+DURATION = r'[0-9]{1,20}'
+DEPTH = r'[0-9]{1,10}'
+HEAD_TAIL = rf'-(?P<duration>{DURATION}),(?P<event>{EVENT_NAME}),(?P<depth>{DEPTH})(?P<separator>,|$)'
 HEADERS = {
     'minute': re.compile(r'(?P<time>[0-9]{2}:[0-9]{2}\.[0-9]{6})' + HEAD_TAIL),
-    'iso': re.compile(r'(?P<time>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{6})' + HEAD_TAIL),
+    'iso': re.compile(rf'(?P<time>{LOCAL_ISO})' + HEAD_TAIL),
 }
+JSON_HEADER = {key: re.compile(pattern) for key, pattern in
+               dict(ts=LOCAL_ISO, name=EVENT_NAME, duration=DURATION, depth=DEPTH).items()}
 
 
 def _offset(value):
@@ -43,7 +54,10 @@ def validate_profile(spec, path):
     """Validate declarations, without reading the path or guessing clock context."""
     if not isinstance(spec, dict):
         raise ValueError('native TJ profile must be an object')
-    for field, expected in (('format', FORMAT), ('platform_version', PLATFORM_VERSION), ('encoding', 'utf-8')):
+    format = spec.get('format')
+    if format not in FORMATS:
+        raise ValueError('format must select a supported native TJ representation')
+    for field, expected in (('platform_version', PLATFORM_VERSION), ('encoding', 'utf-8')):
         if spec.get(field) != expected:
             raise ValueError(f'{field} must be explicitly {expected}')
     placement = spec.get('placement')
@@ -52,6 +66,8 @@ def validate_profile(spec, path):
     timestamp_format = spec.get('timestamp_format')
     if not isinstance(timestamp_format, str) or timestamp_format not in HEADERS:
         raise ValueError('timestamp_format must be explicitly minute or iso, independently of placement')
+    if format == JSON_FORMAT and (timestamp_format != 'iso' or spec.keys() & {'file_hour', 'rotation_hours'}):
+        raise ValueError('native JSON TJ requires full local timestamps and an explicit UTC offset')
     result = {key: spec[key] for key in ('format', 'platform_version', 'encoding', 'placement', 'timestamp_format')}
     result.update(duration_unit='microseconds', start_time_inference='disabled_pending_event_semantics',
                   timestamp_rule='recorded_time_only; no operation-finish or job-boundary inference',
@@ -109,30 +125,35 @@ def _token(text, position, delimiter):
     return text[start:position], position
 
 
-def _properties(text, position):
-    properties, ambiguous = {}, {}
+def _text_properties(text, position):
     while position < len(text):
         name, position = _token(text, position, '=')
         if not name or position >= len(text) or text[position] != '=':
             raise ValueError('property name must be followed by equals')
         value, position = _token(text, position + 1, ',')
+        yield name, value
+        if position == len(text):
+            return
+        if text[position] != ',':
+            raise ValueError('quoted value must end at a property boundary')
+        position += 1
+        if position == len(text):
+            raise ValueError('trailing property separator')
+
+
+def _properties(pairs):
+    properties, ambiguous = {}, {}
+    for name, value in pairs:
         if name in ambiguous:
             ambiguous[name].append(value)
         elif name in properties:
             ambiguous[name] = [properties.pop(name), value]
         else:
             properties[name] = value
-        if position == len(text):
-            return properties, ambiguous
-        if text[position] != ',':
-            raise ValueError('quoted value must end at a property boundary')
-        position += 1
-        if position == len(text):
-            raise ValueError('trailing property separator')
     return properties, ambiguous
 
 
-def _record(text, profile):
+def _text_record(text, profile):
     header = HEADERS[profile['timestamp_format']].match(text)
     if not header:
         raise ValueError('record header does not match the declared text profile')
@@ -144,9 +165,45 @@ def _record(text, profile):
         timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=_offset(profile['utc_offset']))
     if header['separator'] == ',' and header.end() == len(text):
         raise ValueError('missing property after separator')
-    properties, ambiguous = _properties(text, header.end())
-    return dict(raw_time=raw_time, event=header['event'], duration_us=int(header['duration']),
-                depth=int(header['depth']), properties=properties, ambiguous_properties=ambiguous,
+    properties, ambiguous = _properties(_text_properties(text, header.end()))
+    return _record(raw_time, timestamp, header['event'], header['duration'], header['depth'], properties, ambiguous)
+
+
+def _json_properties(pairs):
+    for name, value in pairs:
+        if not name or type(value) is not str:
+            raise ValueError('native JSON TJ requires named string properties')
+        # JSON escapes can otherwise introduce lone surrogates despite valid UTF-8 input.
+        name.encode('utf-8')
+        value.encode('utf-8')
+    return _properties(pairs)
+
+
+def _json_record(text, profile):
+    parsed = json.loads(text, object_pairs_hook=_json_properties)
+    if type(parsed) is not tuple:
+        raise ValueError('native JSON TJ requires one object per line')
+    properties, ambiguous = parsed
+    if any(not pattern.fullmatch(properties.get(key, '')) for key, pattern in JSON_HEADER.items()):
+        raise ValueError('native JSON TJ header is missing, repeated or invalid')
+    raw_time = properties.pop('ts')
+    timestamp = datetime.fromisoformat(raw_time).replace(tzinfo=_offset(profile['utc_offset']))
+    return _record(raw_time, timestamp, properties.pop('name'), properties.pop('duration'), properties.pop('depth'),
+                   properties, ambiguous)
+
+
+def json_record_seen(text):
+    """Recognize the grammar of one complete sampled line without reporting its values."""
+    try:
+        _json_record(text, {'utc_offset': '+00:00'})
+    except (ValueError, OverflowError, RecursionError):
+        return False
+    return True
+
+
+def _record(raw_time, timestamp, event, duration, depth, properties, ambiguous):
+    return dict(raw_time=raw_time, event=event, duration_us=int(duration),
+                depth=int(depth), properties=properties, ambiguous_properties=ambiguous,
                 timestamp=timestamp.isoformat(timespec='microseconds'),
                 timestamp_utc=timestamp.astimezone(timezone.utc).isoformat(timespec='microseconds'),
                 start_timestamp_utc=None)
@@ -154,14 +211,17 @@ def _record(text, profile):
 
 class _TJScan:
     def __init__(self,stream,profile,max_records,max_record_bytes,chunk_size,max_input_bytes):
-        from .native_tj_stream import Frames,MAX_CHUNK_BYTES
+        from .native_tj_stream import Frames, JSONLines, MAX_CHUNK_BYTES
         if type(max_records) is not int or not 0<=max_records<=MAX_RECORDS:raise ValueError('max_records must be an integer from 0 through 100000')
         if type(max_record_bytes) is not int or not 1<=max_record_bytes<=MAX_RECORD_BYTES:raise ValueError('max_record_bytes must be an integer from 1 through 16777216')
         if type(chunk_size) is not int or not 1<=chunk_size<=MAX_CHUNK_BYTES:raise ValueError('chunk_size must be an integer from 1 through 65536')
         if type(max_input_bytes) is not int or not 1<=max_input_bytes<=MAX_REFERENCE_SCAN_BYTES:raise ValueError('TJ scan byte limit is outside supported bounds')
         if not callable(getattr(stream,'read',None)):raise ValueError('TJ input requires a binary stream')
         self.profile=validate_profile(profile,'');self.max_records=max_records;self.max_record_bytes=max_record_bytes
-        self.frames=Frames(stream,chunk_size=chunk_size,max_input_bytes=max_input_bytes,max_record_bytes=max_record_bytes)
+        self.json_lines = self.profile['format'] == JSON_FORMAT
+        frame_type = JSONLines if self.json_lines else Frames
+        self.decode_record = _json_record if self.json_lines else _text_record
+        self.frames=frame_type(stream,chunk_size=chunk_size,max_input_bytes=max_input_bytes,max_record_bytes=max_record_bytes)
         self.records_seen=0;self.accepted=0;self.limitations=[];self.omitted=0;self.omitted_by_code={}
         self.raw_record=None;self.incomplete_frame=None;self._summary=None;self._iterator=self._scan()
 
@@ -194,13 +254,13 @@ class _TJScan:
                 try:text=frame['raw'].decode('utf-8',errors='strict')
                 except UnicodeDecodeError:
                     self.limited('invalid_utf8','Record does not satisfy the declared strict UTF-8 profile.',**location);continue
-                if '\ufeff' in text:
+                if text.startswith('\ufeff') or (not self.json_lines and '\ufeff' in text):
                     self.limited('unexpected_bom','A BOM is only accepted at byte zero of the file.',**location);continue
                 if not frame['terminated']:
                     self.limited('ambiguous_record_boundary' if frame['open_quote'] else 'truncated_record','Final record is incomplete or lacks a terminating newline; it was not accepted.',**location);continue
                 text=text[:-2] if text.endswith('\r\n') else text[:-1]
-                try:record=_record(text,self.profile)
-                except (ValueError,OverflowError):
+                try:record=self.decode_record(text,self.profile)
+                except (ValueError,OverflowError,RecursionError):
                     self.limited('invalid_record','Record header, time or property grammar is invalid.',**location);continue
                 record.update(location)
                 if record['ambiguous_properties']:self.limited('ambiguous_property','Repeated properties retained separately; no value selected.',**location)

@@ -5,6 +5,8 @@ import hmac
 import math
 import re
 
+from .native_tj import FORMATS as TJ_FORMATS
+
 
 TJ_NAMES = ('CALL', 'SCALL', 'EXCP', 'TLOCK', 'TTIMEOUT', 'TDEADLOCK', 'SDBL', 'DBMSSQL',
             'DBPOSTGRS', 'DBV8DBEng', 'CONN', 'PROC', 'SESN', 'CLSTR', 'LOCK', 'QERR', 'EXCPCNTX')
@@ -19,7 +21,7 @@ TJ_ALIASES = {
     'operation': ('Method', 'Func'),
     'application': ('AppID', 'Appl'),
 }
-SOURCE_FORMATS = ('1c-tj-text-v1', 'normalized-events-v1', '1c-job-runtime-v1',
+SOURCE_FORMATS = (*TJ_FORMATS, 'normalized-events-v1', '1c-job-runtime-v1',
                   'sc01-http-service-v1', 'sc01-run-capture-v1')
 PARSE_STATES = ('empty', 'not_parsed', 'invalid', 'partial', 'parsed', 'complete', 'skipped')
 RECORD_ID = re.compile(r's[1-9][0-9]{0,2}:r?[1-9][0-9]{0,8}')

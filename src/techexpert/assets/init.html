@@ -637,7 +637,7 @@
         check_unavailable:'Проверка не завершилась. Проверьте адрес и доступ.'
       };
       function describeFileCheck(row) {
-        const formats={tj_minute:'ТЖ с минутным временем',tj_iso:'ТЖ с датой и временем',jr_sequential:'LGF/LGP',jr_sqlite:'LGD · заголовок SQLite'};
+        const formats={tj_minute:'ТЖ с минутным временем',tj_iso:'ТЖ с датой и временем',tj_json_iso:'ТЖ в JSON',jr_sequential:'LGF/LGP',jr_sqlite:'LGD · заголовок SQLite'};
         const details=[fileCheckLabels[row.status] || fileCheckLabels.check_unavailable];
         if(formats[row.format])details.push(formats[row.format]);
         if(row.status==='partial_headers')details.push('распознано '+row.recognized_headers+' из '+row.headers_checked);

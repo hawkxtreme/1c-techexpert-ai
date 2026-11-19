@@ -21,7 +21,7 @@ from .analysis import parse_time
 from .case_retention import SnapshotRetirement, case_writers
 from .inputs import InputError, json_value, open_verified_snapshot
 from .job_correlation import record_matches_link
-from .native_tj import FORMAT, MAX_RECORDS, iter_tj
+from .native_tj import FORMATS, MAX_RECORDS, iter_tj
 from .observations import preview_record, with_evidence
 from .profiles import profile_writer, require_unconfigured_path
 
@@ -60,8 +60,8 @@ def _read(state, case_id, source_id):
         fs.safe(folder / name)
     report, digest = storage.load_case(state, case_id, with_digest=True)
     source = retained_resources.selected(report, dict(kind='case', source_id=source_id))
-    if source['format'] != FORMAT:
-        raise InputError('event index requires a saved native text TJ source')
+    if source['format'] not in FORMATS:
+        raise InputError('event index requires a saved native TJ source')
     return report, digest, source
 
 

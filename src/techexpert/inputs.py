@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from .analysis import SCOPE_KEYS
-from .native_tj import validate_profile, parse_tj
+from .native_tj import FORMATS as TJ_FORMATS, JSON_FORMAT as TJ_JSON, validate_profile, parse_tj
 
 MAX_FILE_BYTES = 16 * 1024 * 1024
 MAX_TOTAL_BYTES = 64 * 1024 * 1024
@@ -159,7 +159,7 @@ def _manifest_profile(manifest,*,tolerant_sources=False):
         if not valid:raise InputError('reported normal must be finite positive seconds or unknown')
     sources=manifest.get('sources')
     if (not isinstance(sources,list) or not 1<=len(sources)<=32
-        or any(not isinstance(s,dict) or s.get('format')!='1c-tj-text-v1' for s in sources)):
+        or any(not isinstance(s,dict) or s.get('format') not in TJ_FORMATS for s in sources)):
         raise InputError('schema=2 requires1..32 native TJ sources; other adapters use their own explicit contracts')
     if not tolerant_sources:
         for source in sources:_schema2_source(source)
@@ -215,6 +215,7 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
         references = {item['id']: item for item in reference_review['sources']}
     elif reference_sha256 is not None or prefix_review is not None:
         raise InputError('reference preview can only be used with an external TJ capture')
+    supported_formats = {*AUXILIARY_FORMATS, *TJ_FORMATS, 'normalized-events-v1', '1c-job-runtime-v1'}
     events, native_events, sources, limits, seen, total = [], [], [], [], {}, 0
     lifecycle_documents=[]
     attempts=[];seen_ids={}
@@ -225,7 +226,7 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
             path=spec.get('path') if isinstance(spec,dict) and isinstance(spec.get('path'),str) else None,availability='not_attempted')
         attempts.append(attempt)
         if (not isinstance(spec,dict) or not isinstance(spec.get('format'),str)
-            or spec['format'] not in (set(AUXILIARY_FORMATS)|{'normalized-events-v1','1c-tj-text-v1','1c-job-runtime-v1'})):
+            or spec['format'] not in supported_formats):
             if tolerant_sources:
                 attempt['availability']='unsupported_format'
                 continue
@@ -253,7 +254,7 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
         # Profile validation does not touch the path; inspection must not open an unsupported declaration.
         try:
             if manifest['schema']==2:_schema2_source(spec)
-            profile = validate_profile(spec, source_path) if spec['format'] == '1c-tj-text-v1' else None
+            profile = validate_profile(spec, source_path) if spec['format'] in TJ_FORMATS else None
             job_profile=runtime_profile(spec) if is_runtime else None
             collection=validate_collection(spec.get('collection'))
             read_mode=spec.get('read_mode','stable')
@@ -299,7 +300,8 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
                     max_records=MAX_EVENTS - records_seen, should_stop=should_stop, fixed_prefix=prefix_review is not None)
             elif read_mode=='tj-prefix-v1':
                 from .tj_capture import read_prefix
-                data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen))
+                data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen),
+                                             json_lines=spec['format']==TJ_JSON)
             else:data = read_snapshot(source_path,maximum)
             total += len(data)
         except (OSError, InputError) as exc:

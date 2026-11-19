@@ -6,6 +6,7 @@ import zlib
 
 from .inputs import InputError, MAX_RECORD_BYTES, open_verified_snapshot
 from . import operation_state as fs
+from .native_tj import FORMATS as TJ_FORMATS, JSON_FORMAT as TJ_JSON, validate_profile
 from .native_tj_stream import summarize_frames
 from .retained_resources import selected as _selected, binding as _binding, check_plan as _check_plan, context as _context
 
@@ -81,15 +82,15 @@ def _bytes(left, right):
 
 def _framing(item, point=None):
     source = item['source']
-    if source.get('format') != '1c-tj-text-v1':
+    if source.get('format') not in TJ_FORMATS:
         return dict(status='not_applicable')
-    from .native_tj import validate_profile
     try:
         validate_profile(source['profile'], source['path'])
     except (KeyError, ValueError, TypeError) as exc:
         raise InputError('unsupported saved TJ framing profile') from exc
     with open_verified_snapshot(item['path'], source['sha256'], expected_size=source['size']) as stream:
-        result = summarize_frames(stream, size=source['size'], max_record_bytes=MAX_RECORD_BYTES, point=point)
+        result = summarize_frames(stream, size=source['size'], max_record_bytes=MAX_RECORD_BYTES,
+                                  point=point, json_lines=source['format']==TJ_JSON)
     return dict(result, status='framed' if result['complete_scan'] else 'partial')
 
 

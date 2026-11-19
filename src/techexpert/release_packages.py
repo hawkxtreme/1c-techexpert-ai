@@ -23,6 +23,7 @@ JR_LGD_FORMAT = 'src/techexpert/assets/jr-lgd-format.json'
 FIX_VERIFICATION_FORMAT = 'src/techexpert/assets/fix-verification-format.json'
 APDEX_PREPARATION_FORMAT = 'src/techexpert/assets/apdex-preparation-format.json'
 TJ_REFERENCE_FORMAT = 'src/techexpert/assets/tj-reference-format.json'
+TJ_JSON_FORMAT = 'src/techexpert/assets/tj-json-format.json'
 CONTEXT_DISCLOSURE_FORMAT = 'src/techexpert/assets/context-disclosure-format.json'
 CONTEXT_INTAKE_FORMAT = 'src/techexpert/assets/context-intake-format.json'
 CONTEXT_PROGRAM_FORMAT = 'src/techexpert/assets/context-program-format.json'
@@ -140,6 +141,7 @@ def read_package(path):
         fix_verification_schemas=_additional_schemas(contents, listed, FIX_VERIFICATION_FORMAT, 'fix_verification'),
         apdex_preparation_schemas=_additional_schemas(contents, listed, APDEX_PREPARATION_FORMAT, 'apdex_preparation'),
         tj_reference_schemas=_additional_schemas(contents, listed, TJ_REFERENCE_FORMAT, 'external_tj_windows'),
+        tj_json_schemas=_additional_schemas(contents, listed, TJ_JSON_FORMAT, 'native_tj_json'),
         context_disclosure_schemas=_additional_schemas(contents, listed, CONTEXT_DISCLOSURE_FORMAT, 'context_disclosure'),
         context_intake_schemas=_additional_schemas(contents, listed, CONTEXT_INTAKE_FORMAT, 'context_intake'),
         context_program_schemas=_additional_schemas(contents, listed, CONTEXT_PROGRAM_FORMAT, 'context_program'))

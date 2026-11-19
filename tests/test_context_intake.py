@@ -528,7 +528,7 @@ class ContextIntakeTests(unittest.TestCase):
         self.configured_journals(tj_path=path, window=False)
         config = self.root / 'logcfg.xml'
         location = quoteattr(str(destination))
-        selected = f'<log location={location} format="json"><event/></log>'
+        selected = f'<log location={location} format="json" placement="plain"><event/></log>'
         unrelated = f'<log location={quoteattr(str(self.root / "unrelated"))}/>'
         prefix = '<config xmlns="http://v8.1c.ru/v8/tech-log">'
         cases = {
@@ -559,6 +559,67 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(code, 1, view)
         self.assertEqual(view['data']['logcfg']['status'], 'invalid_or_unsupported_xml')
         self.assertEqual(view['snapshots'], [])
+
+    def test_native_json_logcfg_drives_fixed_prefix_and_linked_coverage(self):
+        destination = self.root / (PRIVATE + '-json-tj')
+        path = destination / '1cv8_123' / '26111509.log'
+        path.parent.mkdir(parents=True)
+        self.configured_journals(tj_path=path)
+        outside = b'{"ts":"2026-11-15T09:09:59.999999","duration":"1","name":"CALL","depth":"1"}\r\n'
+        inside = (f'{{"ts":"2026-11-15T09:10:00.000000","duration":"2","name":"SDBL","depth":"1",'
+                  f'"Func":"Query","Func":"{PRIVATE}","OSThread":"42"}}\r\n').encode()
+        original = b'\xef\xbb\xbf' + outside + inside
+        path.write_bytes(original)
+        config = self.root / 'logcfg.xml'
+        config.write_text(
+            f'<config xmlns="http://v8.1c.ru/v8/tech-log"><log location={quoteattr(str(destination))} format="json">'
+            '<event><eq property="name" value="SDBL"/></event><property name="all"/></log></config>', encoding='utf8')
+        args = dict(profile_journal=dict(source='j1', logcfg_file=str(config)))
+        code, inspection = self.cli('context-intake', self.write_request(self.request('source.check', args, 'json-logcfg')))
+        self.assertEqual(code, 0, inspection)
+        info = inspection['data']['logcfg']
+        self.assertEqual(info['timestamp_profile'], 'json_iso')
+        config.unlink()
+
+        args = dict(profile_journal=dict(source='j1', read_mode='fixed_prefix', logcfg_id=info['id']))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check', args, 'json-prefix')))
+        self.assertEqual(code, 0, view)
+        preview = view['data']['journal_preview']
+        self.assertEqual(preview['timestamp_profile'], 'json_iso')
+        self.assertFalse(preview['source_bytes_read'])
+        self.assertEqual(preview['source_bytes'], len(original))
+        path.write_bytes(original + inside)
+        request = self.request('case.analyze', dict(args, preview_id=preview['preview_id'],
+                              preview_sha256=preview['preview_sha256']), 'json-capture')
+        code, capture = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 1, capture)
+        self.assertEqual(capture['stop_reason'], 'journal_prefix_bounded')
+        case_id = capture['data']['material']['id']
+        self.assertEqual(storage.case_source_path(self.state, case_id, 's1').read_bytes(), inside)
+        report = storage.verified_case(self.state, case_id)
+        self.assertEqual(report['input_contract'], '1c-tj-json-v1')
+        self.assertEqual(capture['data']['prefix_captures'][0]['unread_appended_bytes'], len(inside))
+        row, = storage.list_native_events(self.state, case_id)['records']
+        self.assertEqual(row['ambiguous_property_names'], ['Func'])
+        self.assertEqual(row['properties'], {'OSThread': '42'})
+        evidence = storage.read_evidence(self.state, case_id, 's1:1')
+        self.assertEqual(evidence['original_location']['byte_start'], len(original) - len(inside))
+        self.assertIn('"Func":"Query","Func":"' + PRIVATE, evidence['text'])
+        path.unlink()
+        self.assertEqual(self.cli('context-intake', self.write_request(request))[1]['attachment'], capture['attachment'])
+        revision = capture['attachment']['revision']
+        gate = (self.iid, '--revision', revision)
+        code, plan = self.cli('context-policy-plan', *gate, '--allow', 'tj')
+        self.assertEqual(code, 0, plan)
+        code, policy = self.cli('context-policy-save', *gate, '--allow', 'tj', '--expected-sha256', plan['plan_sha256'])
+        self.assertEqual(code, 0, policy)
+        code, coverage = self.cli('context-read', *gate, 'tj-coverage', '--attachment', capture['attachment']['id'],
+                                  '--start', preview['window']['start'], '--end', preview['window']['end'])
+        self.assertIn(code, (0, 1), coverage)
+        source, = coverage['data']['sources']
+        self.assertEqual(source['format'], '1c-tj-json-v1')
+        self.assertEqual(source['records_in_window'], 1)
+        self.assertFalse(coverage['data']['can_establish_absence'])
 
     def test_reviewed_tj_prefix_rejects_changed_window_truncation_and_replacement(self):
         self.configured_journals()
