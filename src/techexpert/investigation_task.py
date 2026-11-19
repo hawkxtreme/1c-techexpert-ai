@@ -6,6 +6,7 @@ from .inputs import InputError
 
 
 FORMAT = 1
+OCCURRENCE_FORMAT = 2
 MAX_REQUEST = 64 * 1024
 MAX_NOTES = 64
 ACTION = 'context-task'
@@ -43,7 +44,10 @@ def argument_schema():
         variant=cap.string(64),
         time_mode=cap.string(12, enum=['unknown', 'past', 'current', 'reproduce']),
         scale=cap.string(12, enum=['one', 'several', 'all', 'background', 'unknown']),
-        episode=dict(cap.obj(fields), description='Include only supplied details. Null clears a previously set field.')),
+        episode=dict(cap.obj(fields), description='Include only supplied details. Null clears a previously set field.'),
+        occurrence=dict(cap.obj(dict(source=cap.string(24, enum=['user', 'external_monitoring']),
+            started_at=cap.string(128),ended_at=cap.string(128)), ('source',)),
+            description='Save the wording as an occurrence notice in this investigation. Omit unknown endpoints.')),
         ('operation_key',))
 
 
@@ -66,6 +70,17 @@ def normalize(value):
         raise InputError('Task note text is empty.')
     if text is None and ('context' in request or 'template_id' not in request):
         raise InputError('Supply the wording from the chat or select a template for a new task.')
+    if 'occurrence' in request:
+        if 'context' not in request or not text or set(request) & set(EDITABLE):
+            raise InputError('An occurrence notice requires an existing investigation and its wording.')
+        from .analysis import parse_time
+        bounds = [request['occurrence'][name] for name in ('started_at','ended_at') if name in request['occurrence']]
+        try:
+            dates = [parse_time(value) for value in bounds if not value.endswith('-00:00')]
+        except (ValueError, OverflowError) as exc:
+            raise InputError('Occurrence times require explicit known offsets.') from exc
+        if len(dates)!=len(bounds) or len(dates)==2 and dates[1]<dates[0]:
+            raise InputError('Occurrence bounds require known offsets and chronological order.')
     if len(fs.encode(request)) > MAX_REQUEST:
         raise InputError('Task note exceeds its byte limit.')
     return request
@@ -78,13 +93,22 @@ def saved(doc):
     from .investigations import _text
 
     if (type(value) is not dict or set(value) != {'schema_version', 'entries'}
-        or type(value['schema_version']) is not int or value['schema_version'] != FORMAT
+        or type(value['schema_version']) is not int or value['schema_version'] not in (FORMAT,OCCURRENCE_FORMAT)
         or type(value['entries']) is not list or not 1 <= len(value['entries']) <= MAX_NOTES):
         raise InputError('Invalid saved task note history.')
     previous = 0
     keys = set()
+    has_occurrence = False
     for entry in value['entries']:
-        if (type(entry) is not dict or set(entry) != {'key_sha256', 'request_sha256', 'revision', 'text'}
+        if type(entry) is not dict:
+            raise InputError('Invalid saved task note identity.')
+        fields = {'key_sha256', 'request_sha256', 'revision', 'text'}
+        if 'kind' in entry:
+            if entry['kind'] != 'occurrence' or value['schema_version'] != OCCURRENCE_FORMAT:
+                raise InputError('Invalid saved task note kind.')
+            fields.add('kind')
+            has_occurrence = True
+        if (set(entry) != fields
             or type(entry['revision']) is not int or not previous < entry['revision'] <= doc['revision']
             or not all(type(entry[name]) is str and SHA256.fullmatch(entry[name])
                        for name in ('key_sha256', 'request_sha256')) or entry['key_sha256'] in keys):
@@ -95,8 +119,12 @@ def saved(doc):
                 raise InputError('Invalid saved task note text.')
         elif entry['revision'] != 1:
             raise InputError('A clarification requires saved text.')
+        if 'kind' in entry and entry['revision']==1:
+            raise InputError('An occurrence notice belongs to an existing task.')
         keys.add(entry['key_sha256'])
         previous = entry['revision']
+    if has_occurrence != (value['schema_version']==OCCURRENCE_FORMAT):
+        raise InputError('Saved task note version does not match its entries.')
     return value['entries']
 
 
@@ -104,10 +132,15 @@ def append(doc, entry):
     earlier = saved(doc)
     if len(earlier) >= MAX_NOTES:
         raise TaskError('task_notes_limit', 'This investigation reached its saved task note limit.')
-    doc['task_notes'] = dict(schema_version=FORMAT, entries=[*earlier, entry])
+    version = OCCURRENCE_FORMAT if entry.get('kind')=='occurrence' else doc.get('task_notes',{}).get('schema_version',FORMAT)
+    doc['task_notes'] = dict(schema_version=version, entries=[*earlier, entry])
 
 
 def _update(fields, previous=None):
+    if 'occurrence' in fields:
+        data = dict(started_at=None,ended_at=None,evidence=[])
+        data.update(fields['occurrence'])
+        return dict(occurrence=dict(data,message=fields['text']))
     result = {key: fields[key] for key in EDITABLE if key in fields}
     if 'episode' in result:
         episode = dict(previous or {})
@@ -125,6 +158,9 @@ def _view(doc, recorded, *, replayed):
                 replayed=replayed, template_id=doc['template']['id'], time_mode=doc['time_mode'], scale=doc['scale'],
                 profile_available=doc['profile_sha256'] is not None, task_notes=len(saved(doc)),
                 episode_fields=sorted(key for key, value in doc['episode'].items() if value is not None))
+    if doc.get('occurrence'):
+        from .occurrence_resume import public_gaps
+        data.update(occurrence_status=doc['occurrence']['status'], source_gaps=public_gaps(doc))
     return dict(status='succeeded', operation=OPERATION, data=data)
 
 
@@ -138,6 +174,8 @@ def record(state, value):
     identifier = context['investigation_id'] if context else key[:32]
     expected = context['expected_revision'] if context else 0
     note = dict(key_sha256=key, request_sha256=fs.digest(request), revision=expected+1, text=request.get('text'))
+    if 'occurrence' in request:
+        note['kind'] = 'occurrence'
     state = fs.safe(state)
     directory = fs.safe(investigations.revision_folder(state, identifier, 1).parent.parent)
     with writer(state, identifier):

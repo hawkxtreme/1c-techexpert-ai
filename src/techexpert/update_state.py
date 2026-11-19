@@ -212,8 +212,12 @@ def inspect_state(state):
                                 schemas['report-references'].add(version)
                             if 'stage_decision' in report:
                                 schemas['investigation-progress'].add(investigation_progress.FORMAT)
+                            if 'source_gaps' in report or (report.get('observation_plan') or {}).get('status')=='evidence_unavailable':
+                                from .occurrence_resume import READER_CAPABILITY, gaps
+                                gaps(report)
+                                schemas['investigation-progress'].add(READER_CAPABILITY)
                             if investigation_task.saved(report):
-                                schemas['investigation-task'].add(investigation_task.FORMAT)
+                                schemas['investigation-task'].add(report['task_notes']['schema_version'])
                 else:
                     report = document(folder/'report.json')
                     schema(kind,report)

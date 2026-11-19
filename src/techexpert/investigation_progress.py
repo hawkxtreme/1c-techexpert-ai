@@ -206,7 +206,7 @@ def _phase(doc, rows, complete):
 
 
 def view(state, investigation_id):
-    from . import context_policy, investigations
+    from . import context_policy, investigations, occurrence_resume
 
     state = fs.safe(state)
     head = investigations._read_head(state, investigation_id)
@@ -247,6 +247,7 @@ def view(state, investigation_id):
                 recent_checks=recent, more_checks=len(rows)>len(recent), last_recorded_at=last, observed_at=fs.stamp(),
                 collection_state=collection, occurrence_status=occurrence_status,
                 occurrence_window=_occurrence_window(occurrence),
+                source_gaps=occurrence_resume.public_gaps(doc),
                 available_facts=dict(saved=len(doc['facts']), with_tool_measurement=sum('measurement' in row for row in doc['facts']),
                                      evidence_references=len(doc['evidence'])),
                 scope='context-bound local operations and saved report metadata',

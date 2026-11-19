@@ -117,7 +117,7 @@ def tools(profile='full'):
     if CONTEXT_TASK in controls:
         result.append(dict(name=CONTEXT_TASK,title=investigation_task.OPERATION,
             inputSchema=investigation_task.argument_schema(),outputSchema=responses.schema(),
-            description='Save the task from the current chat, or add a clarification to an exact investigation revision. Returns identifiers and metadata. No source access.',
+            description='Save a task, clarification or occurrence notice from this chat. A notice checks retained attachments and returns bounded identifiers and status.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     if OS_OBSERVATION in controls:
         result.append(dict(name=OS_OBSERVATION,title=os_observation.OPERATION,

@@ -15,7 +15,7 @@ import re
 import uuid
 
 from . import __version__
-from . import investigation_progress, investigation_task, report_references
+from . import investigation_progress, investigation_task, occurrence_resume, report_references
 from .artifacts import load_artifact,artifact_evidence,encoded
 from .incident_templates import catalogue as templates,plan as template_plan
 from .inputs import InputError,json_value,read_snapshot
@@ -81,27 +81,35 @@ def _pointer(value,pointer):
     if isinstance(value,(list,dict)) or (isinstance(value,str) and len(value)>8192):raise InputError('measurement must select one bounded scalar')
     return value
 
+def _verify_attachment(state_dir, doc, item):
+    _object(item, ('id','kind','target_id','report_sha256','source_origin','scope'), ('id','kind','target_id'))
+    if doc['schema_version']==2:
+        from .operations import _guard_dependency_paths
+        kinds = dict(case='cases',artifact='artifacts',comparison='comparisons')
+        if item['kind'] not in kinds:
+            raise InputError('unsupported investigation attachment kind')
+        _guard_dependency_paths(state_dir, kinds[item['kind']], item['target_id'])
+    target = _target(state_dir, item)
+    digest = _digest(target)
+    if item.get('report_sha256', digest)!=digest:
+        raise InputError('investigation attachment integrity mismatch')
+    if target.get('kind')=='fix_verification' and item['kind']=='artifact':
+        from .fix_verification import require_parent
+        require_parent(target, doc)
+        if item.get('scope','fix_verification')!='fix_verification':
+            raise InputError('invalid fix verification attachment scope')
+        item['scope'] = 'fix_verification'
+    elif 'scope' in item:
+        raise InputError('unexpected investigation attachment scope')
+    origin = target.get('origin',target.get('result',{}).get('origin','not_established'))
+    if item.get('source_origin', origin)!=origin:
+        raise InputError('attachment origin disagrees with saved tool report')
+    item.update(report_sha256=digest,source_origin=origin)
+    return target
+
 def _verify_evidence(state_dir,doc):
-    attachments=_list(doc['attachments'],16);aids=_ids(attachments,'A');targets={}
-    for item in attachments:
-        _object(item,('id','kind','target_id','report_sha256','source_origin','scope'),('id','kind','target_id'))
-        if doc['schema_version']==2:
-            from .operations import _guard_dependency_paths
-            kinds=dict(case='cases',artifact='artifacts',comparison='comparisons')
-            if item['kind'] not in kinds:raise InputError('unsupported investigation attachment kind')
-            _guard_dependency_paths(state_dir,kinds[item['kind']],item['target_id'])
-        target=_target(state_dir,item);digest=_digest(target)
-        if item.get('report_sha256',digest)!=digest:raise InputError('investigation attachment integrity mismatch')
-        if target.get('kind')=='fix_verification' and item['kind']=='artifact':
-            from .fix_verification import require_parent
-            require_parent(target,doc)
-            if item.get('scope','fix_verification')!='fix_verification':raise InputError('invalid fix verification attachment scope')
-            item['scope']='fix_verification'
-        elif 'scope' in item:
-            raise InputError('unexpected investigation attachment scope')
-        origin=target.get('origin',target.get('result',{}).get('origin','not_established'))
-        if item.get('source_origin',origin)!=origin:raise InputError('attachment origin disagrees with saved tool report')
-        item.update(report_sha256=digest,source_origin=origin);targets[item['id']]=target
+    attachments=_list(doc['attachments'],16);aids=_ids(attachments,'A')
+    targets={item['id']:_verify_attachment(state_dir,doc,item) for item in attachments}
     evidence=_list(doc['evidence'],200);eids=_ids(evidence,'E')
     for item in evidence:
         _object(item,('id','attachment','record','proof'),('id','attachment','record'))
@@ -167,6 +175,7 @@ def _validate(state_dir,doc):
         elif value is not None:_text(value)
     if doc['episode'].get('database_mode','unknown') not in ('file','server','unknown'):raise InputError('invalid database mode')
     aids,eids,targets=_verify_evidence(state_dir,doc)
+    occurrence_resume.check_restored(doc)
     source_links=set()
     if doc['schema_version']==2:
         from .source_passports import normalize_bindings,normalize_links
@@ -232,7 +241,7 @@ def _validate(state_dir,doc):
         for key in ('responsible','rollback','verification'):_text(plan[key])
         if type(plan['duration_seconds']) not in (int,float) or not 0<plan['duration_seconds']<=7*86400 or not math.isfinite(plan['duration_seconds']):raise InputError('invalid observation duration')
         if type(plan['max_bytes']) is not int or not 0<plan['max_bytes']<=64*1024*1024:raise InputError('invalid observation byte limit')
-        if plan['status'] not in ('proposed','configured_reported','data_verified','cancelled'):raise InputError('invalid observation status')
+        if plan['status'] not in ('proposed','configured_reported','data_verified','evidence_unavailable','cancelled'):raise InputError('invalid observation status')
         _references(plan.get('evidence',[]),eids,required=plan['status']=='data_verified')
         if plan.get('collection_state','unknown') not in COLLECTION_STATES:raise InputError('invalid collection state')
         if plan.get('collection_state')=='receiving_data':_references(plan.get('evidence',[]),eids,required=True)
@@ -388,6 +397,8 @@ def render(doc):
     for item in doc['contradictions']:lines.append('- '+item['id']+' ['+item['status']+']: '+_md(item['text']))
     lines+=['','## Доказательства','']
     for item in doc['attachments']:lines.append('- '+item['id']+': '+item['kind']+' / '+item['target_id']+'; origin='+_md(item['source_origin'])+'; report_sha256='+item['report_sha256'])
+    for gap in occurrence_resume.public_gaps(doc):
+        lines.append('- Материал '+gap['attachment']+' в ревизии '+str(gap['revision'])+' требует повторной проверки доступности.')
     for item in doc['evidence']:lines.append('- '+item['id']+': '+item['attachment']+', '+_md(item['record'])+'; '+_md(json.dumps(item['proof'],ensure_ascii=False)))
     lines+=['','## Следующие проверки','']+['- '+_md(x) for x in doc['open_questions']]
     if doc['assessment']:
@@ -555,9 +566,15 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
         with lock.open('x',encoding='ascii') as stream:stream.write(str(os.getpid()))
     except FileExistsError as exc:raise InputError('investigation writer is active or interrupted; inspect its lock before retrying') from exc
     try:
-        previous = read_for_display(state_dir, investigation_id)
-        previous.pop('reproducibility', None)
-        if previous['revision']!=expected_revision:raise InputError('investigation revision changed; reload before editing')
+        from .context_policy import selected_investigation
+        if _read_head(state_dir, investigation_id)['revision']!=expected_revision:
+            raise InputError('investigation revision changed; reload before editing')
+        notice = occurrence_resume.is_notice(patch)
+        if notice:
+            previous = selected_investigation(state_dir, investigation_id, expected_revision)
+        else:
+            previous = read_for_display(state_dir, investigation_id, revision=expected_revision)
+            previous.pop('reproducibility', None)
         if expected_revision>=1000:raise InputError('investigation revision limit reached; retain history and start a linked investigation')
         doc=deepcopy(previous);changes=deepcopy(patch)
         doc['schema_version']=2;doc.setdefault('source_bindings',[]);doc.setdefault('source_links',[])
@@ -567,6 +584,9 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
             _object(occurrence,('source','message','started_at','ended_at','evidence','link_basis'),('source','message','started_at','ended_at','evidence'))
             occurrence.update(id=uuid.uuid4().hex,reported_at=datetime.now(timezone.utc).isoformat())
             changes.setdefault('workflow_stage','analyze_episode')
+            if notice:
+                occurrence_resume.retain_available(state_dir, doc, previous)
+                changes['execution_status'] = 'partial'
         if 'template_id' in changes or 'template_revision' in changes or 'variant' in changes:
             tid=changes.pop('template_id',previous['template']['id'])
             number=changes.pop('template_revision',None)
