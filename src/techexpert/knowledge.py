@@ -7,6 +7,7 @@ import stat
 from urllib.parse import urlsplit
 
 from .inputs import InputError,read_snapshot,json_value
+from .knowledge_search import search
 from .storage import ROOT
 
 MAX_CARDS=256
@@ -194,20 +195,3 @@ def get_card(card_id,*,root=None):
     if card is None:raise InputError('unknown knowledge card')
     return dict(card,knowledge_revision=library['revision'],sources_metadata=[library['sources'][s] for s in card['sources']],
         untrusted_reference_content=True,**card_review(library,card_id))
-
-def search(query,*,limit=5,root=None):
-    if not isinstance(query,str) or not 1<=len(query.strip())<=500:raise InputError('knowledge query must contain 1..500 characters')
-    if type(limit) is not int or not 1<=limit<=20:raise InputError('knowledge limit must be 1..20')
-    library=load_library(root);terms=re.findall(r'[\w-]+',query.casefold())[:30];matches=[]
-    for card in library['cards']:
-        if card['lifecycle']['state']=='withdrawn' or card['status']=='deprecated':continue
-        title=card['title'].casefold();body=card['body'].casefold();tags=' '.join(card['signs']).casefold()
-        score=sum(4*(term in title)+2*(term in tags)+(term in body) for term in terms)
-        if score:
-            matches.append(dict(id=card['id'],title=card['title'],status=card['status'],type=card['type'],
-                applicability=card['applicability'],path=str((ROOT/'knowledge' if root is None else Path(root))/card['path']),
-                score=score,related=card['related'],sources=[library['sources'][s] for s in card['sources']],
-                excerpt=card['body'][:6000],truncated=len(card['body'])>6000,
-                untrusted_reference_content=True,diagnosis_for_current_case_established=False,**card_review(library,card['id'])))
-    return dict(knowledge_revision=library['revision'],knowledge_digest=library['digest'],scope='bundled_offline_cards',
-        matches=sorted(matches,key=lambda m:(-m['score'],m['id']))[:limit],requires_applicability_check=True,technical_truth_judged=False)

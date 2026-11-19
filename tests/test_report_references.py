@@ -58,9 +58,11 @@ class ReportReferencesTests(unittest.TestCase):
         self.assertEqual(discussion['checks'], [dict(hypothesis='H-1', status='supported',
             harness_status='supported', incident_evidence=['E-local'])])
         card = knowledge['pinned_card']
+        snapshot = self.card['result']['cards'][0]
         self.assertEqual((card['id'], card['revision'], card['artifact_id'], card['source_id']),
-                         ('SC01-ORDER-LOAD', 1, self.card['artifact_id'], 's1'))
-        saved_urls = [row['url'] for row in self.card['result']['cards'][0]['sources_metadata']]
+                         ('SC01-ORDER-LOAD', snapshot['card']['revision'], self.card['artifact_id'], 's1'))
+        self.assertEqual(card['content_sha256'], snapshot['content_sha256'])
+        saved_urls = [row['url'] for row in snapshot['sources_metadata']]
         self.assertEqual([row['url'] for row in card['sources']], saved_urls)
         self.assertEqual(old, OLD_REFERENCE)
         folder = investigations.revision_folder(self.state, self.iid, 2)

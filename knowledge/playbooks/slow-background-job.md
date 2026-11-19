@@ -1,9 +1,4 @@
----
-id: PLAYBOOK-SLOW-BACKGROUND-JOB
-title: "Длительное выполнение фонового задания"
-status: draft
-tags: ["background-job", "performance", "tech-log", "event-log", "sql"]
----
+# Порядок расследования медленного фонового задания
 
 # Вход
 

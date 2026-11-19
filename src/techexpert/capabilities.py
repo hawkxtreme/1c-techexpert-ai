@@ -30,6 +30,7 @@ OS['properties']['port'].pop('default')
 OS['properties']['max_bytes'].pop('default')
 from .input_files import LIMITS as _INPUT_LIMITS
 from .input_adapters import fields as _input_fields
+from .knowledge_search import schema as _knowledge_schema
 INPUTS=obj(dict(inputs=dict(type='array',minItems=1,maxItems=16,items=obj(dict(path=FILE,kind=string(16,enum=['file','directory','zip'])),['path','kind'])),
     limits=dict(obj({k:integer(0 if k=='max_depth' else 1,v,v) for k,v in _INPUT_LIMITS.items()}),default={})),['inputs'])
 SAVED_SOURCE=obj(dict(kind=string(16,enum=['case','artifact']),id=CASE,source_id=string(16,pattern='s(?:[1-9]|[12][0-9]|3[0-2])')),['kind','id','source_id'])
@@ -61,7 +62,8 @@ ROUTES={
  'comparison.show':route(dict(comparison_id=CASE),['comparison_id'],['verified saved comparison and case inputs'],'read saved comparison',['comparison_id','input_reports']),
  'source.check':route(dict(manifest=FILE,reference_preview=dict(type='boolean'),**COVERAGE),['manifest'],
      ['explicitly selected manifest and TJ'],'read-only inspection or metadata-only external reference preview',['sources','limitations']),
- 'knowledge.search':route(dict(query=string(500),limit=integer(1,20,5)),['query'],['bundled offline knowledge'],'candidate references only; no source fetch',['knowledge_revision','matches']),
+ 'knowledge.search':route(dict(query=string(500),limit=integer(1,20,5),**_knowledge_schema(_sys.modules[__name__])),
+     ['query'],['bundled offline knowledge'],'retrieve candidate references by symptom, events and reported environment; no source fetch',['knowledge_revision','matches']),
  'knowledge.card':route(dict(card_id=string(128),offset=integer(0,65536,0),limit=integer(1,8192,6000)),['card_id'],['bundled authored card'],
      'bounded authored note; no independent diagnosis',['id','body','content_sha256']),
  'os.collect':dict(route(OS['properties'],[],['explicit node and existing local/SSH/WinRM access'],

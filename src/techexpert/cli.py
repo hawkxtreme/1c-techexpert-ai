@@ -131,6 +131,12 @@ def main(argv=None):
     init.add_argument('--entrypoint-sha256')
     knowledge = commands.add_parser('knowledge')
     knowledge.add_argument('query')
+    knowledge.add_argument('--environment',type=Path)
+    knowledge.add_argument('--event',action='append',default=[])
+    knowledge.add_argument('--limit',type=int,default=5)
+    knowledge.add_argument('--offset',type=int,default=0)
+    knowledge.add_argument('--excerpt-chars',type=int,default=6000)
+    knowledge.add_argument('--expected-knowledge-digest')
     card=commands.add_parser('knowledge-card');card.add_argument('card_id');card.add_argument('--offset',type=int,default=0);card.add_argument('--limit',type=int,default=6000)
     use=commands.add_parser('knowledge-use');use.add_argument('card_ids',nargs='+');use.add_argument('--purpose',choices=('recommendation','reference'),default='recommendation');use.add_argument('--environment',type=Path)
     review=commands.add_parser('knowledge-review');review.add_argument('target_id');review.add_argument('--kind',choices=('artifact','investigation'),default='investigation');review.add_argument('--revision',type=int);review.add_argument('--environment',type=Path)
@@ -668,22 +674,24 @@ def main(argv=None):
             result=get_card(args.card_id);body=result['body'];result['body']=body[args.offset:args.offset+args.limit]
             result.update(body_offset=args.offset,body_total_characters=len(body),body_truncated=args.offset>0 or args.offset+args.limit<len(body),
                           content_sha256_scope='complete_card_before_display_pagination')
-        elif args.command in ('knowledge-use','knowledge-review'):
-            from .knowledge_review import pin_use,review_use,review_investigation
+        elif args.command in ('knowledge','knowledge-use','knowledge-review'):
             environment=None
             if args.environment is not None:
                 from .inputs import read_snapshot,json_value
                 environment=json_value(read_snapshot(args.environment,16*1024).decode('utf-8-sig'),reject_duplicates=True)
-            if args.command=='knowledge-use':result=pin_use(args.state_dir,args.card_ids,purpose=args.purpose,environment=environment)
-            elif args.kind=='artifact':
-                if args.revision is not None:raise InputError('artifact snapshots do not have investigation revisions')
-                result=review_use(args.state_dir,args.target_id,environment=environment)
+            if args.command=='knowledge':
+                from .knowledge import search
+                result=search(args.query,environment=environment,events=args.event,limit=args.limit,offset=args.offset,
+                              excerpt_chars=args.excerpt_chars,expected_knowledge_digest=args.expected_knowledge_digest)
             else:
-                from .investigations import load
-                result=review_investigation(args.state_dir,load(args.state_dir,args.target_id,revision=args.revision),environment=environment)
-        else:
-            from .knowledge import search
-            result=search(args.query)
+                from .knowledge_review import pin_use,review_use,review_investigation
+                if args.command=='knowledge-use':result=pin_use(args.state_dir,args.card_ids,purpose=args.purpose,environment=environment)
+                elif args.kind=='artifact':
+                    if args.revision is not None:raise InputError('artifact snapshots do not have investigation revisions')
+                    result=review_use(args.state_dir,args.target_id,environment=environment)
+                else:
+                    from .investigations import load
+                    result=review_investigation(args.state_dir,load(args.state_dir,args.target_id,revision=args.revision),environment=environment)
         emit(result)
         if args.command in ('rac','postgresql','sqlserver','apdex','jr-import','os-import','os-collect','client-import'):
             from .capabilities import outcome

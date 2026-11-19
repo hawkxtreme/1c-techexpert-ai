@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "revision": "2026.11.16.3",
+  "revision": "2026.11.19.1",
   "sources": [
     {
       "id": "1c-file",
@@ -308,8 +308,8 @@
       "type": "case",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
-      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "revision": 2,
+      "applicability": "Контрольный запуск на Windows и файловой ИБ 8.3.27.1989. 200 синтетических заказов и контролируемый внешний каталог.",
       "signs": [
         "фоновое задание",
         "загрузка заказов",
@@ -350,12 +350,15 @@
       "type": "case",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
-      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "revision": 2,
+      "applicability": "Синтетический пример SC-01 в normalized-events-v1. Для расчёта очереди и выполнения нужны независимые отметки.",
       "signs": [
         "фоновое задание",
         "загрузка заказов",
-        "SC-01"
+        "SC-01",
+        "очередь запуска",
+        "время ожидания",
+        "длительность выполнения"
       ],
       "steps": [
         "Установить границы запуска",
@@ -384,12 +387,17 @@
       "type": "case",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
-      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "revision": 2,
+      "applicability": "Текстовый ТЖ 8.3.27.1989, профиль 1c-tj-text-v1. Учитывать формат времени и границы снимка.",
       "signs": [
         "фоновое задание",
         "загрузка заказов",
-        "SC-01"
+        "SC-01",
+        "технологический журнал",
+        "ТЖ",
+        "EXCP",
+        "EXCPCNTX",
+        "MEM"
       ],
       "steps": [
         "Установить границы запуска",
@@ -400,7 +408,12 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      }
     },
     {
       "id": "SC01-LIFECYCLE",
@@ -418,12 +431,16 @@
       "type": "case",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
-      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "revision": 2,
+      "applicability": "Лабораторная привязка задания Windows и файловой ИБ 8.3.27.1989 по маркерам и сеансу.",
       "signs": [
         "фоновое задание",
         "загрузка заказов",
-        "SC-01"
+        "SC-01",
+        "SESN",
+        "SDBL",
+        "маркеры начала и завершения",
+        "конкретный запуск"
       ],
       "steps": [
         "Установить границы запуска",
@@ -434,7 +451,15 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "file"
+        ],
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      }
     },
     {
       "id": "PLAYBOOK-SLOW-JOB",
@@ -449,15 +474,21 @@
         "1c-file",
         "1c-server"
       ],
-      "type": "case",
+      "type": "playbook",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 2,
-      "applicability": "SC-01; inspect the card's exact Windows/file/version/synthetic or controlled-laboratory scope",
+      "revision": 3,
+      "applicability": "Порядок проверки фоновых заданий. Источники и доступные проверки зависят от режима базы, периода и фактического покрытия.",
       "signs": [
         "фоновое задание",
         "загрузка заказов",
-        "SC-01"
+        "SC-01",
+        "длительное выполнение",
+        "замедление фонового задания",
+        "очередь запуска",
+        "технологический журнал",
+        "ТЖ",
+        "ЖР"
       ],
       "steps": [
         "Установить границы запуска",
@@ -552,7 +583,7 @@
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
+      "revision": 2,
       "applicability": "PostgreSQL 16.15 observed in lab; other releases/permissions require validation",
       "signs": [
         "PostgreSQL",
@@ -577,7 +608,18 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "server"
+        ],
+        "dbms_engine": [
+          "postgresql"
+        ],
+        "dbms_version": [
+          "16.15"
+        ]
+      }
     },
     {
       "id": "KB-PG-HISTORY",
@@ -587,7 +629,7 @@
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
+      "revision": 2,
       "applicability": "PostgreSQL 16.15 observed in lab; other releases/permissions require validation",
       "signs": [
         "pg_stat_statements",
@@ -613,7 +655,18 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "server"
+        ],
+        "dbms_engine": [
+          "postgresql"
+        ],
+        "dbms_version": [
+          "16.15"
+        ]
+      }
     },
     {
       "id": "KB-APDEX",
@@ -761,7 +814,7 @@
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 2,
+      "revision": 3,
       "applicability": "Sequential LGF/LGP only; Windows file 8.3.27.1989; coverage and database ownership require independent proof",
       "signs": [
         "ЖР",
@@ -787,7 +840,15 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "file"
+        ],
+        "platform_version": [
+          "8.3.27.1989"
+        ]
+      }
     },
     {
       "id": "KB-RAS-IDENTITY",
@@ -797,7 +858,7 @@
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
+      "revision": 2,
       "applicability": "Apply only after verifying environment, source version and evidence scope",
       "signs": [
         "RAS",
@@ -824,7 +885,12 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "server"
+        ]
+      }
     },
     {
       "id": "KB-LICENSE-ENV",
@@ -834,7 +900,7 @@
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
       "date": "2026-11-16",
-      "revision": 1,
+      "revision": 2,
       "applicability": "Apply only after verifying environment, source version and evidence scope",
       "signs": [
         "лицензия",
@@ -860,7 +926,12 @@
       "lifecycle": {
         "state": "active"
       },
-      "depends_on": []
+      "depends_on": [],
+      "applicability_constraints": {
+        "database_mode": [
+          "server"
+        ]
+      }
     },
     {
       "id": "KB-EVIDENCE-CAUSE",

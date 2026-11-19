@@ -55,6 +55,16 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertTrue(by_id['A']['review_required']);self.assertTrue(by_id['B']['review_required'])
         self.assertFalse(by_id['C']['review_required'])
 
+    def test_search_applies_constraints_of_explicit_dependencies(self):
+        self.doc['cards'][1]['applicability_constraints'] = dict(database_mode=['server'])
+        self.save()
+        found = knowledge.search('slow', environment=dict(database_mode='file'), root=self.library)
+        self.assertEqual([row['id'] for row in found['matches']], ['C'])
+        excluded = {row['id']: row for row in found['excluded_matches']}
+        self.assertEqual(set(excluded), {'A', 'B'})
+        self.assertEqual(excluded['A']['reasons'][0]['card'], 'B')
+        self.assertEqual(excluded['A']['applicability_check']['status'], 'outside_recorded_scope')
+
     def test_withdrawn_tombstone_has_no_body_and_is_not_offered_by_search(self):
         self.doc['cards'][1].update(path=None,lifecycle=dict(state='withdrawn',reason='Synthetic rights request'))
         self.save()
@@ -72,6 +82,11 @@ class KnowledgeLifecycleTests(unittest.TestCase):
         self.assertTrue(selected['A']['review_required']);self.assertTrue(selected['C']['review_required'])
         self.assertEqual(selected['A']['open_conflicts'][0]['cards'],['A','C'])
         self.assertFalse(selected['A']['technical_truth_judged'])
+        page = knowledge.search('A', limit=1, root=self.library)
+        self.assertEqual([row['id'] for row in page['matches']], ['A'])
+        versions = {position['id']: position for position in page['conflicts'][0]['positions']}
+        self.assertEqual(set(versions), {'A','C'})
+        self.assertEqual(versions['A']['revision'],1)
 
     def test_link_unavailability_is_not_technical_falsehood(self):
         self.doc['sources'][0]['link']=dict(state='unavailable',checked_at='2026-11-16',reason='Synthetic offline observation')
