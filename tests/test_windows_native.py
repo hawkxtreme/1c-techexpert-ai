@@ -21,6 +21,11 @@ class WindowsNativeTests(unittest.TestCase):
             self.assertEqual(result['status'],'completed');self.assertEqual(result['exit_code'],0)
             self.assertTrue(result['tree_finished']);self.assertEqual((root/'stdout.bin').read_text().strip(),'a;$(whoami)')
 
+    def test_process_context_observes_the_current_image_and_token_account(self):
+        path, same_account = self.api.process_context(os.getpid())
+        self.assertEqual(path, Path(self.api.current_executable()))
+        self.assertIs(same_account, True)
+
     def test_managed_start_records_identity_before_resume_and_has_a_job_memory_bound(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp);started=[]

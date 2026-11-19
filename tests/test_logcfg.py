@@ -1,5 +1,6 @@
 """Offline proposals preserve unrelated bytes; rollback is conditional, never applied."""
 from pathlib import Path
+import os
 import tempfile
 import unittest
 
@@ -169,3 +170,93 @@ class LogcfgTests(unittest.TestCase):
     def test_too_large_input_is_rejected_before_xml_parsing(self):
         from src.techexpert.logcfg_xml import MAX_BYTES
         with self.assertRaisesRegex(InputError,'byte limit'): self.prepare(b' '*(MAX_BYTES+1))
+
+
+class LogcfgDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.image = self.root / '1cv8' / '8.3.27.1989' / 'bin' / '1cv8.exe'
+        self.user = self.root / 'account'
+        self.machine = self.root / 'program'
+        self.version_conf = self.image.parent / 'conf'
+        self.user_conf = self.user / '1C' / '1cv8' / 'conf'
+        self.machine_conf = self.machine / '1C' / '1cv8' / 'conf'
+
+    def find(self):
+        from src.techexpert.logcfg_discovery import find
+        return find(self.image, self.user, self.machine)
+
+    def place(self, directory, name='logcfg.xml', content=BASE):
+        target = directory / name
+        directory.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        return target
+
+    def test_logcfg_search_uses_documented_order_and_stops_at_the_first_candidate(self):
+        shared = self.root / 'shared'
+        redirect = ('ConfLocation=' + str(shared) + '\r\n').encode('utf-8-sig')
+        self.place(self.version_conf, 'conf.cfg', redirect)
+        paths = [self.place(path) for path in (self.version_conf, self.user_conf, shared, self.machine_conf)]
+        for index, tier in enumerate(('version', 'user', 'shared', 'all_users')):
+            with self.subTest(tier=tier):
+                observed = self.find()
+                self.assertEqual(observed['status'], 'found')
+                self.assertEqual(observed['tier'], tier)
+                self.assertEqual(observed['file'], paths[index])
+                self.assertEqual([row['status'] for row in observed['checked']], ['not_found'] * index + ['found'])
+                paths[index].unlink()
+        self.assertEqual(self.find()['status'], 'config_file_not_found')
+
+    def test_logcfg_search_keeps_unreadable_or_unresolved_higher_precedence(self):
+        from unittest.mock import patch
+        from src.techexpert import input_files
+
+        lower = self.place(self.machine_conf)
+        redirect = self.place(self.version_conf, 'conf.cfg', b'ConfLocation=relative-to-somewhere\n')
+        observed = self.find()
+        self.assertEqual(observed['status'], 'shared_location_unresolved')
+        self.assertNotIn('all_users', [row['tier'] for row in observed['checked']])
+
+        redirect.unlink()
+        first = self.place(self.version_conf)
+        original = input_files.observe
+        def observe(path):
+            self.assertNotEqual(path, lower)
+            if path == first:
+                raise PermissionError('synthetic inaccessible higher priority')
+            return original(path)
+        with patch.object(input_files, 'observe', side_effect=observe):
+            observed = self.find()
+        self.assertEqual(observed['status'], 'access_denied')
+        self.assertEqual(observed['checked'], [{'tier': 'version', 'status': 'access_denied'}])
+
+    def test_logcfg_search_detects_new_higher_precedence_file_during_read(self):
+        from unittest.mock import patch
+        from src.techexpert import logcfg_discovery
+
+        lower = self.place(self.user_conf)
+        current = dict(image=str(self.image), platform_version='8.3.27.1989', role='thick_client')
+        read = logcfg_discovery._read
+        def read_then_change(path, *args):
+            self.assertEqual(path, lower)
+            stored = read(path, *args)
+            self.place(self.version_conf)
+            return stored
+        with patch.object(logcfg_discovery, '_client', return_value=current), \
+                patch.object(logcfg_discovery, '_read', side_effect=read_then_change), \
+                patch.dict(os.environ, LOCALAPPDATA=str(self.user), ALLUSERSPROFILE=str(self.machine)):
+            info, snapshot = logcfg_discovery.observe(1, stop=lambda: False)
+        self.assertEqual(info['status'], 'configuration_search_changed')
+        self.assertIsNone(snapshot)
+
+    def test_logcfg_search_requires_a_known_installation_root_for_the_shared_default(self):
+        from unittest.mock import patch
+
+        expected = self.place(self.root / '1cv8' / 'conf')
+        with patch.dict(os.environ, ProgramFiles=str(self.root / 'different-programs')):
+            self.assertEqual(self.find()['status'], 'shared_location_unresolved')
+        with patch.dict(os.environ, ProgramFiles=str(self.root)):
+            observed = self.find()
+        self.assertEqual((observed['tier'], observed['file']), ('shared', expected))

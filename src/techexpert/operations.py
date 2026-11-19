@@ -235,7 +235,7 @@ def _snapshots(state,operation,args,data,*,output=None):
     selector = args.get('profile_journal', {})
     if selector.get('read_mode') == profile_journals.FIXED_PREFIX:
         profile_journals.pin_prefix(operation, args, data, add)
-    if 'logcfg_file' in selector or 'logcfg_id' in selector:
+    if {'logcfg_file', 'logcfg_process_pid', 'logcfg_id'} & selector.keys():
         profile_journals.pin_logcfg(operation, selector, data, add)
     return references
 

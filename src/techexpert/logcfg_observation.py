@@ -4,12 +4,13 @@ import os
 from pathlib import Path
 import re
 
-from . import artifacts, input_files, logcfg, logcfg_xml, native_tj, profile_files
+from . import artifacts, input_files, logcfg, logcfg_discovery, logcfg_xml, native_tj, profile_files
 from . import operation_state as fs
 from .inputs import InputError
 
 
 KIND = 'logcfg_observation'
+INSPECTION_SELECTORS = {'logcfg_file', 'logcfg_process_pid'}
 HOURLY_MINUTE = 'hourly_minute'
 TIMESTAMP_FORMATS = {HOURLY_MINUTE: 'minute', native_tj.JSON_ISO: 'iso'}
 NS = logcfg_xml.NS + '}'
@@ -152,17 +153,10 @@ def _describe(document, source, target, info):
 
 
 def inspect_copy(output, binding, reference, source, supplied, *, stop):
-    info = dict(source=reference, status='source_not_configured', journal_bytes_read=False,
-                timestamp_profile=None, reader_status='logcfg_reader_unsupported', runtime_applicability='unverified',
-                location_basis='explicit_locations_in_supplied_copy')
-    if source is None:
-        return dict(logcfg=info), []
-    if source['type'] != 'tj' or not source['path']:
-        info['status'] = 'path_required' if source['type'] == 'tj' else 'logcfg_source_unsupported'
-        return dict(logcfg=info), []
-    if source['settings'].get('transport', 'local') != 'local':
-        info['status'] = 'separate_access_required'
-        return dict(logcfg=info), []
+    info = _initial(reference, 'explicit_locations_in_supplied_copy')
+    unavailable = _source_status(source, require_path=True)
+    if unavailable is not None:
+        return dict(logcfg=dict(info, status=unavailable)), []
     if stop():
         raise InputError('configuration inspection stopped')
     try:
@@ -185,13 +179,71 @@ def inspect_copy(output, binding, reference, source, supplied, *, stop):
         info['status'] = 'config_file_unavailable'
     else:
         location = _describe(document, source, target, info)
-        if stop():
-            raise InputError('configuration inspection stopped')
-        report = artifacts.save_artifact(output, KIND, dict(path=supplied), [(str(path), raw)],
-            dict(observation=info, binding=_scope(binding, reference), location=str(location) if location else None),
-            source_names=['logcfg.xml'])
-        return report, [dict(kind='artifacts', id=report['artifact_id'])]
+        return _retain(output, binding, info, dict(path=supplied), path, raw, location, stop=stop)
     return dict(logcfg=info), []
+
+
+def inspect_process(output, binding, reference, source, pid, *, file_base, stop):
+    info = _initial(reference, logcfg_discovery.BASIS)
+    unavailable = _source_status(source, require_path=False)
+    if unavailable is not None:
+        return dict(logcfg=dict(info, status=unavailable)), []
+    if not file_base:
+        return dict(logcfg=dict(info, status='file_base_required')), []
+    try:
+        target = profile_files._ordinary_path(source['path']) if source['path'] else None
+    except profile_files._ObservationError:
+        return dict(logcfg=dict(info, status='journal_path_unsupported')), []
+    found, snapshot = logcfg_discovery.observe(pid, stop=stop)
+    info.update(found, process_base_association='caller_selected')
+    if snapshot is None:
+        return dict(logcfg=info), []
+    raw = snapshot['raw']
+    try:
+        document = logcfg_xml.inspect(raw)
+    except logcfg_xml.XmlIssue:
+        return dict(logcfg=dict(info, status='invalid_or_unsupported_xml')), []
+    observed = snapshot['process']['platform_version']
+    settings = source['settings']
+    location = None
+    if target is None:
+        info['status'] = 'path_required'
+        info['declared_log_rules'] = sum(node['depth'] == 1 and node['name'] == NS + 'log'
+                                         for node in document['nodes'])
+    else:
+        effective = dict(source, settings=dict(settings, platform_version=observed))
+        location = _describe(document, effective, target, info)
+        if settings.get('platform_version') not in (None, '', observed):
+            info.update(timestamp_profile=None, reader_status='logcfg_platform_conflict')
+    search = dict(client=snapshot['process'], conf_locator=snapshot['locator'])
+    return _retain(output, binding, info, dict(process_pid=pid), snapshot['path'], raw, location,
+                   stop=stop, process_search=search)
+
+
+def _initial(reference, basis):
+    return dict(source=reference, journal_bytes_read=False, timestamp_profile=None,
+                reader_status='logcfg_reader_unsupported', runtime_applicability='unverified', location_basis=basis)
+
+
+def _source_status(source, *, require_path):
+    if source is None:
+        return 'source_not_configured'
+    if source['type'] != 'tj':
+        return 'logcfg_source_unsupported'
+    if require_path and not source['path']:
+        return 'path_required'
+    if source['settings'].get('transport', 'local') != 'local':
+        return 'separate_access_required'
+    return None
+
+
+def _retain(output, binding, info, request, path, raw, location, *, stop, **details):
+    if stop():
+        raise InputError('configuration inspection stopped')
+    report = artifacts.save_artifact(output, KIND, request, [(str(path), raw)],
+        dict(observation=info, binding=_scope(binding, info['source']), location=str(location) if location else None,
+             **details), source_names=['logcfg.xml'])
+    return report, [dict(kind='artifacts', id=report['artifact_id'])]
 
 
 def _scope(binding, reference):
@@ -199,7 +251,11 @@ def _scope(binding, reference):
 
 
 def dependency(report):
-    return dict(id=report['artifact_id'], report_digest=fs.digest(report))
+    result = dict(id=report['artifact_id'], report_digest=fs.digest(report))
+    if 'process_search' in report['result']:
+        result.update(platform_version=report['result']['observation']['platform_version'],
+                      basis=logcfg_discovery.BASIS)
+    return result
 
 
 def select(state, binding, reference, identifier):

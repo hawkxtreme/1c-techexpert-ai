@@ -1,5 +1,6 @@
 from hashlib import sha256
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -520,6 +521,19 @@ class ContextIntakeTests(unittest.TestCase):
         code, refused = self.cli('context-intake', self.write_request(request))
         self.assertEqual(code, 2, refused)
         self.assertNotIn('attachment', refused)
+
+    def test_logcfg_process_lookup_checks_the_selected_process_without_scanning_the_host(self):
+        self.configured_journals()
+        args = dict(profile_journal=dict(source='j1', logcfg_process_pid=os.getpid()))
+        request = self.request('source.check', args, 'lookup-client')
+        code, view = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 1, view)
+        observed = view['data']['logcfg']
+        expected = 'process_not_1c_client' if os.name == 'nt' else 'process_platform_unsupported'
+        self.assertEqual(observed['status'], expected)
+        self.assertFalse(observed['journal_bytes_read'])
+        self.assertEqual(view['snapshots'], [])
+        self.assertNotIn('id', observed)
 
     def test_logcfg_preview_requires_one_explicit_matching_and_supported_rule(self):
         destination = self.root / (PRIVATE + '-tj')

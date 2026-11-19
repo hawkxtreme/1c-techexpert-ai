@@ -5,6 +5,7 @@ The caller supplies file/space budgets; these monitors are not an OS sandbox.
 """
 import ctypes as c
 from ctypes import wintypes as w
+from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path
@@ -75,6 +76,9 @@ def _kernel():
         'ResumeThread':([w.HANDLE],w.DWORD),
         'WaitForSingleObject':([w.HANDLE,w.DWORD],w.DWORD),
         'GetExitCodeProcess':([w.HANDLE,c.POINTER(w.DWORD)],w.BOOL),
+        'OpenProcess':([w.DWORD,w.BOOL,w.DWORD],w.HANDLE),
+        'GetCurrentProcess':([],w.HANDLE),
+        'QueryFullProcessImageNameW':([w.HANDLE,w.DWORD,w.LPWSTR,c.POINTER(w.DWORD)],w.BOOL),
         'InitializeProcThreadAttributeList':([c.c_void_p,w.DWORD,w.DWORD,c.POINTER(c.c_size_t)],w.BOOL),
         'UpdateProcThreadAttribute':([c.c_void_p,w.DWORD,c.c_size_t,c.c_void_p,c.c_size_t,c.c_void_p,c.c_void_p],w.BOOL),
         'DeleteProcThreadAttributeList':([c.c_void_p],None),
@@ -99,6 +103,76 @@ def current_executable():
     if not length:raise c.WinError(c.get_last_error())
     if length>=len(buffer):raise InputError('current executable path exceeds the Windows buffer')
     return buffer.value
+
+
+@contextmanager
+def _query_process(pid):
+    if type(pid) is not int or not 1 <= pid <= 0xFFFFFFFF:
+        raise InputError('invalid Windows process identifier')
+    kernel = _kernel()
+    handle = kernel.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        raise c.WinError(c.get_last_error())
+    try:
+        yield kernel, handle
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def _image_path(kernel, handle):
+    path = c.create_unicode_buffer(32768)
+    size = w.DWORD(len(path))
+    if not kernel.QueryFullProcessImageNameW(handle, 0, path, c.byref(size)):
+        raise c.WinError(c.get_last_error())
+    if not 1 <= size.value < len(path):
+        raise InputError('Windows process image path exceeds its bound')
+    return Path(path.value)
+
+
+def process_image(pid):
+    with _query_process(pid) as (kernel, handle):
+        return _image_path(kernel, handle)
+
+
+def _token_user(advapi, kernel, process):
+    token = w.HANDLE()
+    if not advapi.OpenProcessToken(process, 0x0008, c.byref(token)):  # TOKEN_QUERY
+        raise c.WinError(c.get_last_error())
+    try:
+        size = w.DWORD()
+        if advapi.GetTokenInformation(token, 1, None, 0, c.byref(size)) or c.get_last_error() != 122:
+            raise InputError('Windows process account size is unavailable')
+        if not c.sizeof(c.c_void_p) <= size.value <= 4096:
+            raise InputError('Windows process account data exceeds its bound')
+        buffer = c.create_string_buffer(size.value)
+        if not advapi.GetTokenInformation(token, 1, buffer, len(buffer), c.byref(size)):  # TokenUser
+            raise c.WinError(c.get_last_error())
+        sid = c.cast(buffer, c.POINTER(c.c_void_p))[0]
+        start = c.addressof(buffer)
+        if sid is None or not start <= sid <= start + len(buffer) - 8:
+            raise InputError('invalid Windows process account identifier')
+        length = advapi.GetLengthSid(sid)
+        if not 8 <= length <= start + len(buffer) - sid:
+            raise InputError('invalid Windows process account identifier size')
+        return c.string_at(sid, length)
+    finally:
+        kernel.CloseHandle(token)
+
+
+def process_context(pid):
+    """Read the selected image and compare token users without returning a SID."""
+    with _query_process(pid) as (kernel, handle):
+        advapi = c.WinDLL('advapi32', use_last_error=True)
+        advapi.OpenProcessToken.argtypes = [w.HANDLE, w.DWORD, c.POINTER(w.HANDLE)]
+        advapi.OpenProcessToken.restype = w.BOOL
+        advapi.GetTokenInformation.argtypes = [w.HANDLE, c.c_int, c.c_void_p, w.DWORD, c.POINTER(w.DWORD)]
+        advapi.GetTokenInformation.restype = w.BOOL
+        advapi.GetLengthSid.argtypes = [c.c_void_p]
+        advapi.GetLengthSid.restype = w.DWORD
+        image = _image_path(kernel, handle)
+        selected = _token_user(advapi, kernel, handle)
+        current = _token_user(advapi, kernel, kernel.GetCurrentProcess())
+        return image, selected == current
 
 
 def _security():

@@ -236,6 +236,9 @@ def inspect_state(state):
                     if (kind == 'artifacts' and report.get('kind') == logcfg_observation.KIND
                             and report['result']['observation']['timestamp_profile'] == native_tj.JSON_ISO):
                         schemas['tj-json'].add(native_tj.JSON_READER)
+                    if (kind == 'artifacts' and report.get('kind') == logcfg_observation.KIND
+                            and 'process_search' in report['result']):
+                        schemas['context-intake'].add(9)
                     if (kind=='artifacts' and report.get('kind')=='native-jr'
                             and report['result'].get('profile')==native_jr_sqlite.PROFILE):
                         schemas['jr-lgd'].add(native_jr_sqlite.READER_FORMAT)

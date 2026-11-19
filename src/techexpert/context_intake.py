@@ -52,6 +52,8 @@ def reader_capability(request):
     selector = request['arguments'].get('profile_journal')
     if selector is not None:
         from .native_tj import JSON_ISO
+        if 'logcfg_process_pid' in selector:
+            return 9
         if selector.get('timestamp_profile') == JSON_ISO:
             return 8
         if 'logcfg_file' in selector or 'logcfg_id' in selector:

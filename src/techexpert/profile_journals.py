@@ -43,6 +43,9 @@ def schema(cap, operation):
     if preview:
         selector['logcfg_file'] = dict(cap.FILE,
             description='Read only this absolute local logcfg.xml copy for the selected TJ. Use without window or reader options.')
+        selector['logcfg_process_pid'] = dict(type='integer', minimum=1, maximum=0xFFFFFFFF,
+            description='Locate logcfg.xml for this selected local Windows 1C client in a file-base investigation. '
+                        'Use without a window or other reader/configuration options.')
     fields = dict(profile_journal=cap.obj(selector, () if preview else ('source',)))
     if not preview:
         fields['preview_sha256'] = cap.SHA256
@@ -57,8 +60,9 @@ def normalize(cap, operation, arguments):
     selected = result['profile_journal']
     if selected and 'source' not in selected:
         raise InputError('select a journal before specifying reader or configuration options')
-    if 'logcfg_file' in selected and selected.keys() != {'source', 'logcfg_file'}:
-        raise InputError('configuration inspection only takes the selected journal and the supplied copy')
+    for option in logcfg_observation.INSPECTION_SELECTORS & selected.keys():
+        if selected.keys() != {'source', option}:
+            raise InputError('configuration inspection takes the selected journal and one input')
     if 'logcfg_id' in selected and 'timestamp_profile' in selected:
         raise InputError('choose a retained configuration or a declared timestamp profile')
     if operation == 'case.analyze' and ('preview_id' in result) != (selected.get('read_mode') == FIXED_PREFIX):
@@ -397,12 +401,19 @@ def execute(operation, args, state, output, binding, *, stop):
     source = journals.get(ref)
     if 'logcfg_file' in selection:
         return logcfg_observation.inspect_copy(output, binding, ref, source, selection['logcfg_file'], stop=stop)
+    if 'logcfg_process_pid' in selection:
+        linked = source['base_ids'] if source else ()
+        file_base = any(base['mode'] == 'file' and base['id'] in linked for base in profile['bases'])
+        return logcfg_observation.inspect_process(output, binding, ref, source, selection['logcfg_process_pid'],
+                                                  file_base=file_base, stop=stop)
     timestamp_profile = selection.get('timestamp_profile')
     logcfg_reference = log_location = None
     logcfg_id = selection.get('logcfg_id')
     if logcfg_id is not None and source and source['type'] == 'tj':
         status, logcfg_reference, log_location, timestamp_profile = logcfg_observation.select(state, binding, ref, logcfg_id)
         if status == 'configured':
+            if 'platform_version' in logcfg_reference and not source['settings'].get('platform_version'):
+                source = dict(source, settings=dict(source['settings'], platform_version=logcfg_reference['platform_version']))
             status = _configuration_status(source, timestamp_profile)
     elif logcfg_id is not None:
         status = 'logcfg_source_unsupported'
@@ -417,7 +428,7 @@ def execute(operation, args, state, output, binding, *, stop):
     public = dict(source=ref, kind=source['type'] if source else None, status=status, window=window,
                   window_basis=basis, source_bytes_read=False)
     if logcfg_reference is not None:
-        public.update(logcfg_id=logcfg_id, timestamp_profile_basis='supplied_logcfg')
+        public.update(logcfg_id=logcfg_id, timestamp_profile_basis=logcfg_reference.get('basis', 'supplied_logcfg'))
     if fixed_prefix and operation == 'case.analyze':
         if status != 'configured':
             raise PreviewChanged('configured TJ selection is unavailable')
@@ -460,7 +471,7 @@ def execute(operation, args, state, output, binding, *, stop):
 
 
 def partial_reason(operation, args, data):
-    if 'logcfg_file' in args['profile_journal']:
+    if logcfg_observation.INSPECTION_SELECTORS & args['profile_journal'].keys():
         info = data['result']['observation'] if data.get('kind') == logcfg_observation.KIND else data['logcfg']
         return None if info['status'] == 'matched' else 'logcfg_inspection_incomplete'
     preview = data.get('journal_preview')

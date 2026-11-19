@@ -2,13 +2,12 @@
 import ctypes as c
 from ctypes import wintypes as w
 import os
-from pathlib import Path
 import socket
 import struct
 
 from .inputs import InputError
 from .operation_state import process_identity
-from .windows_native import file_version
+from .windows_native import file_version, process_image
 
 
 BUILD='8.3.27.1989'
@@ -58,35 +57,16 @@ def listener(port):
     return matches[0]
 
 
-def _image_path(pid):
-    kernel=c.WinDLL('kernel32',use_last_error=True)
-    kernel.OpenProcess.argtypes=[w.DWORD,w.BOOL,w.DWORD]
-    kernel.OpenProcess.restype=w.HANDLE
-    kernel.CloseHandle.argtypes=[w.HANDLE]
-    kernel.CloseHandle.restype=w.BOOL
-    query=kernel.QueryFullProcessImageNameW
-    query.argtypes=[w.HANDLE,w.DWORD,w.LPWSTR,c.POINTER(w.DWORD)]
-    query.restype=w.BOOL
-    handle=kernel.OpenProcess(0x1000,False,pid)
-    if not handle:
-        raise InputError('selected TestClient process image unavailable')
-    try:
-        path=c.create_unicode_buffer(32768)
-        size=w.DWORD(len(path))
-        if not query(handle,0,path,c.byref(size)):
-            raise InputError('selected TestClient process image unavailable')
-        return Path(path.value)
-    finally:
-        kernel.CloseHandle(handle)
-
-
 def inspect_endpoint(port):
     selected=listener(port)
     pid=selected['pid']
     identity=process_identity(pid)
     if identity['state']!='running' or not identity['lifetime']:
         raise InputError('selected TestClient process lifetime unavailable')
-    path=_image_path(pid)
+    try:
+        path=process_image(pid)
+    except (OSError, ValueError) as error:
+        raise InputError('selected TestClient process image unavailable') from error
     if path.name.casefold()!='1cv8c.exe' or file_version(path)!=BUILD:
         raise InputError('supported Windows thin TestClient build required')
     if process_identity(pid)!=identity or listener(port)!=selected:
