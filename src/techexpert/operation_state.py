@@ -16,6 +16,7 @@ from .inputs import InputError,read_snapshot,json_value
 from .storage import write_json
 
 MAX_DOCUMENT=17*1024**2
+PROMOTION_BLOCKED = 'promotion_blocked'
 
 def stamp():return datetime.now(timezone.utc).isoformat()
 def encode(value):return (json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False,indent=2)+'\n').encode('utf-8')

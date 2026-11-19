@@ -11,6 +11,8 @@ description: "Обработать данные расследования пр�
 
 Для диагностического каталога `python techexpert.py capabilities code.execute` возвращает актуальную схему. Подготовь частный запрос и запусти `python techexpert.py --state-dir PRIVATE_STATE operation-run REQUEST.json`. Через MCP доступны `techexpert_code_execute` и `techexpert_code_inspect`. Пользователю достаточно описать задачу.
 
+Если дочерний вызов вернул `promotion_blocked`, проверь его `run_id` и факт остановки. Когда каталог доступен, заверши сохранённый результат через `operation-reconcile` или `techexpert_operation_reconcile` с тем же ID.
+
 Пример без подключения к источникам:
 
 ```json

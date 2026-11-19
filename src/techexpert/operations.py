@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import stat
 import time
 
 from . import __version__
@@ -102,6 +103,51 @@ def _verify_target(state,kind,identifier,*,inputs=None,revision=None):
     from .storage import load_comparison
     return load_comparison(state,identifier,input_state_dir=inputs)
 
+
+def _directory_identity(path):
+    info = fs.safe(path).lstat()
+    if not stat.S_ISDIR(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+        raise InputError('promotion requires an ordinary owned directory')
+    return info.st_dev, info.st_ino
+
+
+def _require_free_destination(path):
+    try:
+        fs.safe(path).lstat()
+    except FileNotFoundError:
+        return
+    raise InputError('operation product target already exists; refusing replacement')
+
+
+def _move_prepared_windows(source, destination, *, verify, stop):
+    # Delete sharing on an ordinary reader can block the directory rename. Only
+    # retry that move, with the same staged object and checked product identity.
+    watched = (source, source.parent, destination.parent)
+    identity = tuple(_directory_identity(path) for path in watched)
+    pauses = (.04, .08, .16, .32)
+    for attempt in range(len(pauses) + 1):
+        _require_free_destination(destination)
+        try:
+            os.rename(source, destination)
+            return
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) not in (5, 32):
+                raise
+            if attempt == len(pauses) or not all(inode for _, inode in identity) or stop():
+                raise InputError(fs.PROMOTION_BLOCKED) from exc
+            time.sleep(pauses[attempt])
+            if stop():
+                raise InputError(fs.PROMOTION_BLOCKED) from exc
+            _require_free_destination(destination)
+            if tuple(_directory_identity(path) for path in watched) != identity:
+                raise InputError('operation product directory identity changed before retry') from exc
+            verify()
+            if stop():
+                raise InputError(fs.PROMOTION_BLOCKED) from exc
+            if tuple(_directory_identity(path) for path in watched) != identity:
+                raise InputError('operation product directory identity changed before retry') from exc
+
+
 def _promote(state,folder,worker):
     targets=worker['targets']
     if not isinstance(targets,list) or len(targets)>1:raise InputError('unexpected operation products')
@@ -119,11 +165,22 @@ def _promote(state,folder,worker):
         else:
             guard = nullcontext()
         with guard:
-            loaded=_verify_target(root,kind,identifier,inputs=state)
-            if fs.digest(loaded)!=fs.digest(worker['data']):raise InputError('operation product disagrees with sealed worker output')
+            expected = fs.digest(worker['data'])
+
+            def verify():
+                loaded = _verify_target(root, kind, identifier, inputs=state)
+                if fs.digest(loaded) != expected:
+                    raise InputError('operation product disagrees with sealed worker output')
+
+            verify()
             if source.exists():
                 if destination.exists():raise InputError('operation product target already exists; refusing replacement')
-                fs.private(destination.parent);os.rename(source,destination)
+                fs.private(destination.parent)
+                if os.name == 'nt':
+                    _move_prepared_windows(source, destination, verify=verify,
+                                           stop=lambda: (folder/'cancel.json').exists() or kernel_context.stop())
+                else:
+                    os.rename(source, destination)
                 from .windows_native import protect_directory
                 protect_directory(destination)
             _verify_target(state,kind,identifier)
@@ -270,7 +327,7 @@ def _finish(state,folder,plan,current,worker,*,replayed=False,parent_guard=None)
             'Tool execution and source checks are not AI diagnosis or historical completeness.',
             'Executor ID is caller-reported; this is a local run registry, not an authorization service.',
             'Model/harness resources are unknown. Disk budgets are monitored, not an atomic filesystem quota.',
-            ('Managed CLI controller admission/replay/finalization is bounded and measured separately in kernel-call receipts; thin transport remains outside that process quota.' if kernel_context.current() else 'Direct internal engine: worker limits exclude admission, replay and final control-layer verification/commit.'),
+            ('Managed CLI controller admission/replay/finalization is bounded and measured separately in kernel-call receipts; thin transport remains outside that process quota.' if plan.get('kernel') else 'Direct internal engine: worker limits exclude admission, replay and final control-layer verification/commit.'),
             'Remote SSH/WinRM process stop is unknown after an interrupted connection; the remote probe has its own duration bound.',
             'Source-check and knowledge reads retain their bounded output, not an independent full source snapshot.'])
     if context_intake.protects(request):
@@ -359,6 +416,8 @@ def status(state,run_id):
         limitations=['Heartbeat age alone does not establish process completion. No request is restarted by status.'])
     if has_output!=has_receipt:
         view.update(status='partial',execution_status=current['status'],result_availability='incomplete_commit')
+    elif current.get('stop_reason')==fs.PROMOTION_BLOCKED and view['stop_verified']:
+        view['result_availability'] = 'commit_blocked'
     if context_intake.protects(plan['request']):
         view=context_intake.envelope(view,None)
     elif plan['request']['operation']==context_program.OPERATION:

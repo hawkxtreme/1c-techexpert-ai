@@ -19,7 +19,7 @@ REASONS = (
     'cancelled', 'timeout', 'output_limit', 'owned_disk_limit', 'kernel_timeout', 'kernel_admission_timeout',
     'kernel_process_failure', 'kernel_launcher_failure', 'kernel_receipt_commit_failed',
     'kernel_memory_limit', 'worker_failed_before_sealed_result', 'kernel_admission_integrity',
-    'context_intake_incomplete',
+    'context_intake_incomplete', fs.PROMOTION_BLOCKED,
 )
 SUFFIXES = ('.log', '.lgf', '.lgp', '.lgd', '.json', '.jsonl', '.txt', '.csv')
 AVAILABILITY = ('captured', 'not_found', 'access_denied', 'read_error', 'changed_during_read', 'byte_limit')

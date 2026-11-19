@@ -370,6 +370,123 @@ class ManagedOperationTests(unittest.TestCase):
         self.assertEqual(recovered['status'],'succeeded');self.assertTrue(recovered['integrity_verified'])
         self.assertEqual(len(list((self.state/'cases').iterdir())),1)
 
+    def test_recovery_preserves_the_prepared_execution_scope_across_entrypoints(self):
+        import io
+        from src.techexpert import kernel
+
+        request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
+        process=self.launch(request,crash_before_promotion=True)
+        process.communicate(timeout=10)
+        self.assertEqual(process.returncode,73)
+        run_id=hashlib.sha256(request['operation_key'].encode()).hexdigest()
+        prepared=self.state_api.folder(self.state,run_id)/'prepared-output.json'
+        original=prepared.read_bytes()
+        original_value=json.loads(original)['value']
+        call=kernel.invoke(self.state,'reconcile',dict(run_id=run_id))
+        output=io.StringIO()
+        kernel.emit(call,output)
+        recovered=json.loads(output.getvalue())
+        self.assertEqual(call['exit_code'],0,recovered.get('message'))
+        self.assertEqual(recovered['status'],'succeeded')
+        self.assertEqual(recovered['limitations'],original_value['limitations'])
+        self.assertTrue(recovered['replayed'])
+        self.assertEqual(prepared.read_bytes(),original)
+
+    @unittest.skipUnless(os.name=='nt','Requires an ordinary Windows reader that blocks directory rename')
+    def test_windows_result_move_retries_after_reader_releases_without_restarting_worker(self):
+        from src.techexpert import operation_process
+
+        request=self.request('case.analyze',manifest=str(ROOT/'tests/fixtures/order-load/baseline.json'))
+        rename=os.rename
+        moves=[]
+        blocked=[]
+        def release_after_refusal(source,target):
+            moves.append((source,target))
+            if len(moves)==1:
+                with (source/'report.json').open('rb'):
+                    try:
+                        return rename(source,target)
+                    except OSError as exc:
+                        blocked.append(exc.winerror)
+                        raise
+            return rename(source,target)
+        with patch('src.techexpert.operations.os.rename',side_effect=release_after_refusal):
+            with patch.object(operation_process,'run',wraps=operation_process.run) as worker:
+                completed=self.run_request(request)
+        self.assertEqual(blocked,[5])
+        self.assertEqual(completed['status'],'succeeded',completed.get('stop_reason'))
+        self.assertEqual(worker.call_count,1)
+        self.assertEqual(moves,[moves[0],moves[0]])
+        self.assertTrue(completed['integrity_verified'])
+        self.assertEqual(list((self.state/'cases').iterdir()),[moves[0][1]])
+
+    @unittest.skipUnless(os.name=='nt','Requires an ordinary Windows reader that blocks directory rename')
+    def test_windows_persistent_result_move_leaves_the_sealed_result_for_same_run_recovery(self):
+        request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
+        rename=os.rename
+        def keep_reader(source,target):
+            with (source/'report.json').open('rb'):
+                return rename(source,target)
+        with patch('src.techexpert.operations.os.rename',side_effect=keep_reader) as attempted:
+            blocked=self.run_request(request)
+        self.assertGreater(attempted.call_count,1)
+        self.assertLessEqual(attempted.call_count,6)
+        self.assertEqual(blocked['status'],'failed')
+        self.assertEqual(blocked['stop_reason'],'promotion_blocked')
+        self.assertEqual(blocked['result_availability'],'commit_blocked')
+        run_id=blocked['run_id']
+        folder=self.state/'operations'/run_id
+        before=(folder/'worker-receipt.json').read_bytes()
+        self.assertTrue((folder/'prepared-output.json').exists())
+        self.assertFalse((folder/'output-receipt.json').exists())
+        self.assertEqual(list((self.state/'cases').iterdir()),[])
+        with patch('src.techexpert.operation_process.run',side_effect=AssertionError('worker restarted')):
+            self.assertEqual(self.run_request(request)['result_availability'],'commit_blocked')
+            with patch.object(self.state_api,'inspect_process',return_value=dict(state='not_running')):
+                reopened=self.api.reconcile(self.state,run_id)
+        self.assertEqual(reopened['status'],'succeeded')
+        self.assertTrue(reopened['replayed'])
+        self.assertEqual((folder/'worker-receipt.json').read_bytes(),before)
+        self.assertEqual(len(list((self.state/'cases').iterdir())),1)
+
+    @unittest.skipUnless(os.name=='nt','Requires an ordinary Windows reader that blocks directory rename')
+    def test_windows_result_move_retry_rejects_changed_contents_and_an_existing_target(self):
+        rename=os.rename
+        for change in ('content','directory','target'):
+            with self.subTest(change=change):
+                request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
+                request['operation_key']='promotion-'+change
+                def disturb_after_refusal(source,target):
+                    try:
+                        with (source/'report.json').open('rb'):
+                            return rename(source,target)
+                    except OSError as exc:
+                        self.assertEqual(exc.winerror,5)
+                        if change=='content':
+                            next((source/'sources').iterdir()).write_bytes(b'changed after verification')
+                        elif change=='directory':
+                            parked=source.with_name(source.name+'-parked')
+                            self.assertTrue(source.resolve().is_relative_to(self.state.resolve()))
+                            self.assertTrue(parked.resolve().is_relative_to(self.state.resolve()))
+                            rename(source,parked)
+                            shutil.copytree(parked,source)
+                        else:
+                            target.mkdir()
+                            (target/'existing').write_bytes(b'keep')
+                        raise
+                with patch('src.techexpert.operations.os.rename',side_effect=disturb_after_refusal) as attempted:
+                    refused=self.run_request(request)
+                self.assertEqual(attempted.call_count,1)
+                self.assertEqual(refused['status'],'failed')
+                reasons=dict(content='integrity mismatch',directory='directory identity changed',target='already exists')
+                self.assertIn(reasons[change],refused['stop_reason'])
+                self.assertIsNone(refused['data'])
+                if change!='target':
+                    self.assertEqual(list((self.state/'cases').iterdir()),[])
+                else:
+                    (existing,)=list((self.state/'cases').iterdir())
+                    self.assertEqual((existing/'existing').read_bytes(),b'keep')
+
     def test_failed_final_receipt_can_be_repaired_without_repeating_the_finished_worker(self):
         request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
         real_write=self.state_api.write

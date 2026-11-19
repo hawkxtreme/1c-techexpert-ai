@@ -234,6 +234,8 @@ class Runtime:
             value=operations.run(self.state,request,parent_guard=self.guard)
             record.update(status=value['status'],snapshots=value.get('snapshots',[]),response_bytes=len(fs.encode(value)),
                 launch_state='created' if child.exists() else 'not_created',truncated=bool(value.get('truncated')),stop_verified=bool(value.get('stop_verified')))
+            if value.get('stop_reason') == fs.PROMOTION_BLOCKED:
+                record['diagnostic'] = fs.PROMOTION_BLOCKED
             self.metrics['api_response_bytes']+=record['response_bytes']
             if (child/'output.json').exists() and (child/'output-receipt.json').exists():
                 saved=fs.read(child/'output.json');receipt=fs.read(child/'output-receipt.json',8192)
