@@ -25,7 +25,7 @@ COVERAGE=dict(window=WINDOW,required_events=array(string(64)),required_fields=ar
 OS=obj(dict(transport=string(8,enum=['local','ssh','winrm'],default='local'),host=dict(type='string',maxLength=256,default=''),port=integer(1,65535,22),
     duration_seconds=dict(type='number',minimum=1,maximum=1800,default=300),interval_seconds=dict(type='number',minimum=1,maximum=60,default=1),
     max_bytes=integer(16384,8*MIB,8*MIB),node=string(256),role=string(16,enum=['onec','sql','storage','client','terminal','web','other'],default='onec'),python=string(),use_ssl=dict(type='boolean',default=False),
-    identity_file=FILE,known_hosts_file=FILE))
+    identity_file=FILE,known_hosts_file=FILE,storage_path=FILE))
 OS['properties']['port'].pop('default')
 OS['properties']['max_bytes'].pop('default')
 from .input_files import LIMITS as _INPUT_LIMITS

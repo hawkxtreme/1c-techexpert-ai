@@ -104,6 +104,31 @@ class OSObservationTests(unittest.TestCase):
         self.assertEqual(self.control('status')['remaining_runs'],2)
         self.assertFalse((self.state/'operations').exists())
 
+    def test_file_storage_path_is_derived_and_pinned_only_in_reviewed_plan(self):
+        from src.techexpert import os_storage
+
+        base = self.state.parent/'file-base'
+        profile = dict(schema_version=1,name='Storage scope',
+            bases=[dict(id='orders',name='Orders',mode='file',connection=f'File="{base}"')],
+            sources=[dict(id='disk',type='os',host='',path='',base_ids=['orders'],settings=self.settings)])
+        current = profiles.save_profile(self.state,profile,expected_revision=1)
+        self.doc = investigations.revise(self.state,self.iid,dict(profile_revision=current['revision']),
+                                         expected_revision=self.doc['revision'])
+        with patch.object(os_storage,'observe',side_effect=AssertionError('approval attempted storage I/O')):
+            before = self.control('preview')
+            selected = self.control('preview',map_file_storage=True)
+            saved = self.control('approve',map_file_storage=True,proposal_sha256=selected['proposal_sha256'])
+        self.assertNotIn('storage_selection',before['targets'][0])
+        self.assertEqual(selected['targets'][0]['storage_selection'],'profile_file_path')
+        self.assertNotIn(str(base),str(selected))
+        self.assertNotEqual(selected['proposal_sha256'],before['proposal_sha256'])
+        ledger = os_observation.read_ledger(self.state,self.iid)
+        target = ledger['approvals'][saved['approval_sha256']]['plan']['targets'][0]['collector']
+        self.assertEqual(target['storage_path'],str(base/'1Cv8.1CD'))
+        self.assertIn(2,update_state.inspect_state(self.state)['schemata']['os-observation'])
+        self.no_worker(self.collect('override-storage',saved['approval_sha256'],
+                                   arguments=dict(storage_path=str(self.state/'other'))),'argument')
+
     def test_expired_window_or_unknown_stop_blocks_a_new_run(self):
         approval = self.approve()
         with patch('src.techexpert.os_observation.now',return_value=self.now+timedelta(seconds=841)):

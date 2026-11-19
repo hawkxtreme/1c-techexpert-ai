@@ -2,7 +2,7 @@
 from hashlib import sha256
 import re
 
-from . import artifacts, context_coverage, context_fields as fields, investigation_progress, operation_state as fs
+from . import artifacts, context_coverage, context_fields as fields, investigation_progress, operation_state as fs, os_storage
 from .analysis import parse_time
 from .inputs import InputError, json_value, read_snapshot
 from .os_probe import summarize
@@ -74,7 +74,7 @@ def _counter_key(item, group):
     return group,item['instance'],device,partition if type(partition) is bool else None
 
 
-def _summaries(rows, selected, artifact_id, group_filter, aliases, *, estimate_totals):
+def _summaries(rows, selected, artifact_id, group_filter, aliases, *, estimate_totals, storage):
     devices = {}
     for index, stamp, spacing in selected:
         for metric_index,item in enumerate(rows[index]['metrics']):
@@ -96,6 +96,14 @@ def _summaries(rows, selected, artifact_id, group_filter, aliases, *, estimate_t
             else:
                 entry['known'].append((value,index,metric_index,stamp,spacing))
 
+    matched = {}
+    if storage and storage['status']=='same_boundary_observations':
+        for key in devices:
+            group,instance,device,_=key
+            candidate=os_storage.counter_key(storage['platform'],instance,device) if group=='disk' else None
+            if candidate in storage['device_keys']:
+                matched.setdefault(candidate,[]).append(key)
+    exact = {keys[0] for keys in matched.values() if len(keys)==1}
     records = []
     for key, metrics in devices.items():
         group, _, _, partition = key
@@ -119,8 +127,12 @@ def _summaries(rows, selected, artifact_id, group_filter, aliases, *, estimate_t
                 stats['estimated_total'] = sum(item[0]*item[4] for item in values) if values and estimate_totals else None
                 stats['estimated_interval_seconds'] = sum(item[4] for item in values) if values and estimate_totals else None
             counters[name] = stats
-        records.append(dict(group=group, instance=identity, reported_partition=partition, metrics=counters))
-    return sorted(records,key=lambda record:(GROUPS.index(record['group']),record['instance']))
+        record=dict(group=group, instance=identity, reported_partition=partition, metrics=counters)
+        if key in exact:
+            record['storage_match']='recorded_device'
+        records.append(record)
+    records.sort(key=lambda record:(GROUPS.index(record['group']),record.get('storage_match') is None,record['instance']))
+    return records,dict(matching_objects=len(exact),ambiguous_devices=sum(len(keys)>1 for keys in matched.values()))
 
 
 def view(state, doc, attachment, args, aliases):
@@ -146,14 +158,22 @@ def view(state, doc, attachment, args, aliases):
     rows = capture['samples']
     selected, coverage = _select(rows,window)
     group = args.get('metric_group')
-    records = _summaries(rows,selected,artifact_id,group,aliases,estimate_totals=not coverage['clock_order_issues'])
+    known=report['result'].get('storage_binding')
+    origin='reported_input' if known is None else known['origin']
+    if origin not in ('local_collector','reported_input'):
+        raise InputError('unsupported storage capture basis')
+    storage=os_storage.binding(capture,origin=origin)
+    if known is not None and storage!=known:
+        raise InputError('saved OS storage observations disagree with the report')
+    records,matching = _summaries(rows,selected,artifact_id,group,aliases,
+                                  estimate_totals=not coverage['clock_order_issues'],storage=storage)
     if context_coverage._pinned_report(state,attachment) != report:
         raise InputError('saved OS report changed during verification')
     offset, limit = args.get('offset',0),args.get('limit',8)
     page = records[offset:offset+limit]
     coverage.update(capture_samples=len(rows),plan_step_seconds=summary['plan']['interval_seconds'],
                     capture_status=fields.enum(summary['collection_status'],('completed','cancelled','timeout','byte_limit')))
-    return dict(window=window,window_basis='explicit_window' if 'window' in args else 'saved_occurrence',
+    result = dict(window=window,window_basis='explicit_window' if 'window' in args else 'saved_occurrence',
         time_basis='recorded_sample_timestamps',interval_selection='adjacent_sample_timestamps_wholly_in_half_open_window',
         clock_alignment='not_verified',can_establish_absence=False,node=aliases('os_node',summary['node']),
         role=fields.enum(summary['role'],('onec','sql','storage','client','terminal','web','other')),
@@ -163,3 +183,7 @@ def view(state, doc, attachment, args, aliases):
         metric_group=group, records=page, offset=offset, total_objects=len(records),
         next_offset=offset+len(page) if offset+len(page)<len(records) else None,
         counter_estimates='observed_rate_times_monotonic_sample_spacing',attribution='not_established')
+    if storage is not None:
+        result['storage_binding']=dict(status=storage['status'],origin=storage['origin'],
+                                       observed_devices=len(storage['device_keys']),**matching)
+    return result

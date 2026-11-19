@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import re
 
-from . import operation_state as fs, reader_scope
+from . import operation_state as fs, os_storage, reader_scope
 from .inputs import InputError
 from .os_metrics import PROBE, validate_request
 
@@ -41,6 +41,7 @@ def argument_schema():
         base_id=cap.string(80), source_ids=dict(type='array', items=cap.string(80), minItems=1, maxItems=8),
         max_runs=integer(1,MAX_RUNS),max_seconds=integer(1,7*86400),
         max_bytes=integer(16384,64*1024**2),min_gap_seconds=integer(0,86400),
+        map_file_storage=dict(type='boolean'),
         proposal_sha256=cap.SHA256),('mode','context'))
 
 
@@ -63,7 +64,7 @@ def normalize(value):
     mode = request['mode']
     common = {'mode','context'}
     selected = {'base_id','source_ids','max_runs','max_seconds','max_bytes'}
-    allowed = common if mode=='status' else common|selected|{'min_gap_seconds'}
+    allowed = common if mode=='status' else common|selected|{'min_gap_seconds','map_file_storage'}
     if mode=='approve':
         allowed=allowed|{'proposal_sha256'}
         selected=selected|{'proposal_sha256'}
@@ -120,8 +121,11 @@ def _proposal(doc, request):
         raise InputError('select an environment profile before approving an OS observation')
     profile=effective_profile(validate_profile(doc['profile_snapshot']))
     base=request['base_id']
-    if not any(row['id']==base for row in profile['bases']):
+    selected_base=next((row for row in profile['bases'] if row['id']==base),None)
+    if selected_base is None:
         raise InputError('unknown selected base')
+    map_storage=request.get('map_file_storage',False)
+    storage_path=os_storage.file_base_target(selected_base) if map_storage else None
     start,end=_window(doc,request['source_ids'])
     observed=doc['observation_plan']
     if request['max_seconds']>observed['duration_seconds'] or request['max_bytes']>observed['max_bytes']:
@@ -136,16 +140,21 @@ def _proposal(doc, request):
         settings['host']=source['host'] if settings['transport']!='local' else ''
         settings['duration_seconds']=min(settings['duration_seconds'],request['max_seconds'])
         settings['max_bytes']=min(settings['max_bytes'],request['max_bytes'])
+        if storage_path is not None and settings['transport']=='local' and settings['role'] in ('storage','onec'):
+            settings['storage_path']=storage_path
         targets.append(dict(source_id=identifier,collector=_collector(settings)))
     domain=None
     if any(row['collector']['transport']=='local' for row in targets):
         domain=reader_scope.observe()
         if domain['status']!='observed':
             raise InputError('local observation cannot verify its execution domain')
-    return dict(schema_version=FORMAT,investigation_id=doc['investigation_id'],profile_sha256=doc['profile_sha256'],
+    plan = dict(schema_version=FORMAT,investigation_id=doc['investigation_id'],profile_sha256=doc['profile_sha256'],
                 base_id=base,window=dict(start=start.isoformat(),end=end.isoformat()),targets=targets,
                 budgets={key:request[key] for key in QUOTAS},probe_sha256=sha256(PROBE.read_bytes()).hexdigest(),
                 local_execution_domain=domain,delivery='direct_managed_os_summary')
+    if map_storage:
+        plan.update(schema_version=os_storage.READER_CAPABILITY,storage_reader_sha256=os_storage.reader_digest())
+    return plan
 
 
 def _folder(state, identifier):
@@ -169,10 +178,15 @@ def read_ledger(state, identifier, *, read=fs.read):
             plan=entry['plan'];charges=entry['reservations'];quota=plan['budgets']
             if (type(digest) is not str or not SHA256.fullmatch(digest) or fs.digest(plan)!=digest
                 or set(entry)!={'plan','reservations'} or plan['investigation_id']!=identifier
-                or plan['schema_version']!=FORMAT or type(charges) is not list
+                    or plan['schema_version'] not in (FORMAT,os_storage.READER_CAPABILITY) or type(charges) is not list
                 or not 0<=len(charges)<=quota['max_runs']<=MAX_RUNS):
                 raise InputError('invalid observation approval')
             targets={row['source_id']:row['collector'] for row in plan['targets']}
+            if plan['schema_version']==os_storage.READER_CAPABILITY:
+                if not SHA256.fullmatch(plan['storage_reader_sha256']):
+                    raise InputError('invalid storage reader identity')
+            elif 'storage_reader_sha256' in plan or any('storage_path' in col for col in targets.values()):
+                raise InputError('storage observations require a matching saved plan')
             for charge in charges:
                 rid=charge['run_id'];target=targets[charge['source_id']]
                 if (set(charge)!=RESERVATION_FIELDS or charge['approval_sha256']!=digest
@@ -280,6 +294,9 @@ def _show(plan):
     targets=[dict(source_id=row['source_id'],
                   **{k:row['collector'][k] for k in ('transport','host','port','role','duration_seconds','interval_seconds','max_bytes')})
              for row in plan['targets']]
+    if plan['schema_version']==os_storage.READER_CAPABILITY:
+        for view,row in zip(targets,plan['targets']):
+            view['storage_selection']='profile_file_path' if 'storage_path' in row['collector'] else 'unavailable_for_source'
     return dict(base_id=plan['base_id'],window=plan['window'],budgets=plan['budgets'],
                 targets=targets,delivery=plan['delivery'],probe_sha256=plan['probe_sha256'],
                 local_execution_domain=plan['local_execution_domain'])
@@ -290,13 +307,17 @@ def _effective_window(doc, plan, sources):
     return max(start,_date(plan['window']['start'])),min(end,_date(plan['window']['end']))
 
 
+def _same_reader(plan):
+    return (sha256(PROBE.read_bytes()).hexdigest()==plan['probe_sha256']
+            and (plan['schema_version']==FORMAT or os_storage.reader_digest()==plan['storage_reader_sha256']))
+
+
 def _availability(doc, plan):
     try:
         start,end=_effective_window(doc,plan,[])
     except InputError:
         return dict(window_status='inactive',eligible_source_ids=[])
-    if (doc['profile_sha256']!=plan['profile_sha256'] or start>=end
-        or sha256(PROBE.read_bytes()).hexdigest()!=plan['probe_sha256']):
+    if doc['profile_sha256']!=plan['profile_sha256'] or start>=end or not _same_reader(plan):
         return dict(window_status='inactive',eligible_source_ids=[])
     current=now()
     eligible=[row['source_id'] for row in plan['targets'] if row['source_id'] in doc['observation_plan']['sources']]
@@ -366,7 +387,7 @@ def prepare_run(state, request, context, run_id):
     if target is None:
         raise InputError('collector source is outside the approved observation')
     doc=_doc(state,request['context'])
-    if doc['profile_sha256']!=plan['profile_sha256'] or sha256(PROBE.read_bytes()).hexdigest()!=plan['probe_sha256']:
+    if doc['profile_sha256']!=plan['profile_sha256'] or not _same_reader(plan):
         raise InputError('observation profile or collector changed; review a new proposal')
     start,end=_effective_window(doc,plan,[source])
     settings=_collector(dict(target,**request['arguments']))

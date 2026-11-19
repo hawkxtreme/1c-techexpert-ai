@@ -8,6 +8,7 @@ from . import check_history, context_excerpt, context_intake, context_program, f
 from . import apdex_preparation
 from .context_disclosure import APDEX_VIEW, VIEW_READER_CAPABILITIES
 from .context_os_window import READER_CAPABILITY as OS_WINDOW_READER
+from .os_storage import READER_CAPABILITY as OS_STORAGE_READER
 from .inputs import InputError, json_value, read_snapshot
 from . import logcfg_observation, native_tj
 
@@ -143,8 +144,12 @@ def inspect_state(state):
                     plan = document(folder/'plan.json')
                     fs.checked_plan(folder,plan,document(folder/'plan-receipt.json'))
                     request = plan['request']
+                    storage_collect = request.get('operation')=='os.collect' and 'storage_path' in request['arguments']
                     if request.get('operation') == context_program.OPERATION:
                         schema('context-program',plan)
+                    elif storage_collect:
+                        # This plan extension is governed by the OS observation reader.
+                        schemas['os-observation'].add(OS_STORAGE_READER)
                     elif not (context_intake.protects(request) and 'retained_tj' in request['arguments']):
                         # The protected correction plan is covered by its intake reader
                         # capability below; the normal operation status stays schema 1.
@@ -155,6 +160,8 @@ def inspect_state(state):
                             schemas['check-history'].add(binding['schema_version'])
                     if 'observation' in plan['request']:
                         schemas['os-observation'].add(os_observation.FORMAT)
+                    if 'storage_path' in (plan.get('os_observation') or {}).get('collector',{}):
+                        schemas['os-observation'].add(OS_STORAGE_READER)
                     if 'presentation' in plan['request']:
                         if not context_intake.protects(plan['request']):
                             raise InputError('unknown retained operation presentation')
@@ -321,6 +328,9 @@ def inspect_state(state):
                 raise InputError('unexpected observation registry entry')
             ledger=os_observation.read_ledger(state,folder.name,read=document)
             schema('os-observation',ledger)
+            if ledger is not None:
+                for entry in ledger['approvals'].values():
+                    schema('os-observation',entry['plan'])
         managed(state/'operations','operations',_RUN)
         managed(state/'kernel-calls','kernel-calls',_ID)
     except _ERRORS:

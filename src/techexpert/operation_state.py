@@ -56,6 +56,8 @@ def plan(folder):
 def plan_schema(request):
     if request.get('operation') == 'case.analyze' and 'retained_tj' in request['arguments']:
         return 2
+    if request.get('operation') == 'os.collect' and 'storage_path' in request['arguments']:
+        return 2
     if request.get('operation') != 'code.context':
         return 1
     from .context_disclosure import VIEW_READER_CAPABILITIES

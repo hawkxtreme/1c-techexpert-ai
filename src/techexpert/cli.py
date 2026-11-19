@@ -184,6 +184,7 @@ def main(argv=None):
         os_command.add_argument('--use-ssl',action='store_true')
         os_command.add_argument('--identity-file')
         os_command.add_argument('--known-hosts-file')
+        os_command.add_argument('--storage-path')
     os_import=commands.add_parser('os-import')
     os_observation=commands.add_parser('os-observation',help='preview, approve or inspect a saved OS observation')
     os_observation.add_argument('request',type=Path)
@@ -494,6 +495,7 @@ def main(argv=None):
             if args.python is not None:request['python']=args.python
             if args.identity_file is not None:request['identity_file']=args.identity_file
             if args.known_hosts_file is not None:request['known_hosts_file']=args.known_hosts_file
+            if args.storage_path is not None:request['storage_path']=args.storage_path
             request=validate_request(request)
             result=(dict(status='planned_not_started',request=request,
                          prerequisites='Existing SSH/WinRM access and Python on remote nodes; no service or permission changes are automatic.')
