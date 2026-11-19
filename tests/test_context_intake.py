@@ -531,6 +531,44 @@ class ContextIntakeTests(unittest.TestCase):
         recaptured = storage.read_evidence(self.state, derived['case_id'], 's1:1')
         self.assertEqual(recaptured['original_location'], evidence['original_location'])
 
+    def test_live_file_base_observation_is_optional_and_bound_to_the_reviewed_prefix(self):
+        from src.techexpert import artifacts
+        from src.techexpert.update_state import inspect_state
+
+        path = self.root / '26111509.log'
+        path.write_bytes(b'10:00.000000-2,SCALL,1\n')
+        self.configured_journals(tj_path=path)
+        selector = dict(source='j1',timestamp_profile='hourly_minute',read_mode='fixed_prefix',file_process_base='b1')
+        args = dict(profile_journal=selector)
+        code, reply = self.cli('context-intake',self.write_request(self.request('source.check',args,'file-process-review')))
+        if os.name!='nt':
+            self.assertEqual(code,1,reply)
+            self.assertEqual(reply['data']['journal_preview']['status'],'file_process_platform_unsupported')
+            self.assertFalse(reply['data']['journal_preview']['source_bytes_read'])
+            return
+        self.assertEqual(code,0,reply)
+        public=reply['data']['journal_preview']
+        self.assertEqual(public['file_process_base'],'b1')
+        self.assertFalse(public['source_bytes_read'])
+        preview=artifacts.load_artifact(self.state,public['preview_id'])
+        self.assertEqual(Path(preview['result']['plan']['file_process_path']),self.root/'1Cv8.1CD')
+        self.assertNotIn('process_capture',preview['result']['plan'])
+        capture_args=dict(args,preview_id=public['preview_id'],preview_sha256=public['preview_sha256'])
+        request=self.request('case.analyze',capture_args,'file-process-capture')
+        code, captured=self.cli('context-intake',self.write_request(request))
+        self.assertIn(code,(0,1),captured)
+        self.assertEqual(captured['attachment_status'],'attached')
+        self.assertEqual(captured['data']['prefix_captures'][0]['file_process'],'unavailable')
+        case=storage.verified_case(self.state,captured['data']['material']['id'])
+        process=case['sources'][0]['reference_capture']['file_process']
+        self.assertEqual(process['before']['status'],'base_unavailable')
+        self.assertEqual(process['after']['status'],'base_unavailable')
+        self.assertIn(3,inspect_state(self.state)['schemata']['tj-reference-windows'])
+        path.unlink()
+        _, again=self.cli('context-intake',self.write_request(request))
+        self.assertTrue(again['replayed'])
+        self.assertEqual(again['data'],captured['data'])
+
     def test_retained_logcfg_supplies_parser_for_an_explicitly_selected_hourly_tj(self):
         from src.techexpert import artifacts
 

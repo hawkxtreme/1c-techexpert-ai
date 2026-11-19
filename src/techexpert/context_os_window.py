@@ -182,10 +182,14 @@ def _process_window(capture, known, window, aliases):
                 recorded_interval_seconds=sum((end-start).total_seconds() for _,start,end,_ in intervals)),coverage
 
 
-def view(state, doc, attachment, args, aliases):
+def _window(doc, args):
     window = args.get('window') or investigation_progress._occurrence_window(doc.get('occurrence') or {})
     if window is None:
         raise context_coverage.WindowRequired('OS samples require the incident time window')
+    return window
+
+
+def _retained_capture(state, attachment):
     from .operations import _guard_dependency_paths
     artifact_id = attachment['target_id']
     _guard_dependency_paths(state,'artifacts',artifact_id)
@@ -202,18 +206,38 @@ def view(state, doc, attachment, args, aliases):
         summary = summarize(capture)
     except AttributeError as exc:
         raise InputError('invalid saved OS metric samples') from exc
-    rows = capture['samples']
+    return report,source,capture,summary
+
+
+def process_view(state, doc, attachment, args, aliases, *, verify_identity=False):
+    window = _window(doc,args)
+    report,source,capture,summary = _retained_capture(state,attachment)
+    process,coverage = _process_window(capture,report['result'].get('process_io'),window,aliases)
+    target = None
+    if verify_identity and process.get('origin')=='local_collector':
+        request=artifacts.read_artifact_request(state,attachment['target_id'])
+        target=os_process.validate_target(request.get('process_target'))
+        if os_process.observation(target)!=capture.get('process_observation'):
+            raise InputError('retained process identity differs from the collector request')
+    if context_coverage._pinned_report(state,attachment) != report:
+        raise InputError('saved OS report changed during verification')
+    coverage.update(capture_samples=len(capture['samples']),plan_step_seconds=summary['plan']['interval_seconds'])
+    data = dict(window=window,window_basis='explicit_window' if 'window' in args else 'saved_occurrence',
+                time_basis='recorded_process_sample_timestamps',
+                interval_selection='adjacent_sample_timestamps_wholly_in_half_open_window',
+                clock_alignment='not_verified',can_establish_absence=False,node=aliases('os_node',summary['node']),
+                process_io=process,coverage=coverage,attribution='not_established',
+                source=dict(id=source['id'],sha256=source['sha256'],byte_start=0,byte_end=source['bytes']))
+    return data,target
+
+
+def view(state, doc, attachment, args, aliases):
     if args['kind']==PROCESS_VIEW:
-        process, coverage = _process_window(capture,report['result'].get('process_io'),window,aliases)
-        if context_coverage._pinned_report(state,attachment) != report:
-            raise InputError('saved OS report changed during verification')
-        coverage.update(capture_samples=len(rows),plan_step_seconds=summary['plan']['interval_seconds'])
-        return dict(window=window,window_basis='explicit_window' if 'window' in args else 'saved_occurrence',
-                    time_basis='recorded_process_sample_timestamps',
-                    interval_selection='adjacent_sample_timestamps_wholly_in_half_open_window',
-                    clock_alignment='not_verified',can_establish_absence=False,node=aliases('os_node',summary['node']),
-                    process_io=process,coverage=coverage,attribution='not_established',
-                    source=dict(id=source['id'],sha256=source['sha256'],byte_start=0,byte_end=source['bytes']))
+        return process_view(state,doc,attachment,args,aliases)[0]
+    window = _window(doc,args)
+    artifact_id = attachment['target_id']
+    report,source,capture,summary = _retained_capture(state,attachment)
+    rows = capture['samples']
     selected, coverage = _select(rows,window)
     group = args.get('metric_group')
     known=report['result'].get('storage_binding')

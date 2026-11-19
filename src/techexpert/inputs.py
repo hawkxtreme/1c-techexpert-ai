@@ -177,7 +177,7 @@ def read_manifest(path, *, tolerant_sources=False):
 
 
 def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, reference_state=None,
-                  prefix_review=None, should_stop=None, retained=None):
+                  prefix_review=None, should_stop=None, retained=None, file_process_path=None):
     path, raw, manifest = read_manifest(path, tolerant_sources=tolerant_sources)
     from .source_coverage import validate_collection
     selection = manifest.get('selection')
@@ -314,7 +314,8 @@ def load_manifest(path, *, tolerant_sources=False, reference_sha256=None, refere
             maximum=min(1024*1024 if is_runtime or is_auxiliary else MAX_FILE_BYTES, MAX_TOTAL_BYTES-total)
             if reference:
                 data, reference_capture = tj_reference.capture(source_path, reference, profile, max_retained=maximum,
-                    max_records=MAX_EVENTS - records_seen, should_stop=should_stop, fixed_prefix=prefix_review is not None)
+                    max_records=MAX_EVENTS - records_seen, should_stop=should_stop,
+                    fixed_prefix=prefix_review is not None,file_process_path=file_process_path)
             elif read_mode=='tj-prefix-v1':
                 from .tj_capture import read_prefix
                 data,acquisition=read_prefix(source_path,maximum,max_records=max(0,MAX_EVENTS-records_seen),

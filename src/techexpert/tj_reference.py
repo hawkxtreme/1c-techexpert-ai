@@ -184,7 +184,8 @@ def _prefix_path(path, expected, sizes, previous):
     return current
 
 
-def capture(path, reviewed, profile, *, max_retained, max_records, should_stop=None, fixed_prefix=False):
+def capture(path, reviewed, profile, *, max_retained, max_records, should_stop=None, fixed_prefix=False,
+            file_process_path=None):
     """Scan and hash a selected extent twice, retaining only complete window records."""
     expected = reviewed['observation']
     started = fs.stamp()
@@ -199,6 +200,11 @@ def capture(path, reviewed, profile, *, max_retained, max_records, should_stop=N
     kept = bytearray()
     spans = []
     count, line = 0, 1
+    if file_process_path is not None:
+        from . import tj_process
+        if not fixed_prefix:
+            raise InputError('file process observations require a reviewed TJ prefix')
+        process_before=tj_process.observe(file_process_path,path,expected,stop=should_stop)
     with _open(path) as stream:
         initial = _file_state(os.fstat(stream.fileno()))
         # Windows may report different ctime values for path and handle queries.
@@ -247,6 +253,10 @@ def capture(path, reviewed, profile, *, max_retained, max_records, should_stop=N
             _check(stream, initial)
             if first.digest.digest() != second.digest.digest() or _path_state(path) != expected:
                 raise InputError('external TJ contents changed during the repeated observation')
+    process = None
+    if file_process_path is not None:
+        process_after=tj_process.observe(file_process_path,path,expected,stop=should_stop)
+        process=tj_process.capture(file_process_path,process_before,process_after)
     meta = dict(method=PREFIX_METHOD if fixed_prefix else METHOD, window=reviewed['window'], original_bytes=size,
         original_sha256=first.digest.hexdigest(), file_identity=expected['identity'],
         selected_records=count, records_scanned=summary['records_seen'], original_parse_status=summary['status'],
@@ -255,6 +265,8 @@ def capture(path, reviewed, profile, *, max_retained, max_records, should_stop=N
         atomic_snapshot=False, clock_alignment='not_verified', collection_coverage='unknown')
     if fixed_prefix:
         meta.update(observed_sizes=sizes, incomplete_tail=scan.incomplete_frame)
+    if process is not None:
+        meta['file_process']=process
     return bytes(kept), meta
 
 
@@ -295,6 +307,11 @@ def validate_saved(source):
                 or type(tail['byte_start']) is not int or type(tail['byte_end']) is not int
                 or not previous_end <= tail['byte_start'] < tail['byte_end'] == size or type(tail['open_quote']) is not bool):
             raise InputError('invalid reviewed TJ prefix framing boundary')
+    if 'file_process' in meta:
+        from . import tj_process
+        if meta['method'] != PREFIX_METHOD:
+            raise InputError('file process observation belongs to a reviewed TJ prefix')
+        tj_process.status(meta)
 
 
 def saved_reference_formats(report):
@@ -307,7 +324,9 @@ def saved_reference_formats(report):
         raise InputError('saved case has no valid external TJ reference review')
     for source in selected:
         validate_saved(source)
-    return {2 if source['reference_capture']['method'] == PREFIX_METHOD else 1 for source in selected}
+    from .tj_process import REFERENCE_CAPABILITY
+    return {REFERENCE_CAPABILITY if 'file_process' in source['reference_capture']
+            else 2 if source['reference_capture']['method']==PREFIX_METHOD else 1 for source in selected}
 
 
 def has_saved_reference(report):
@@ -319,9 +338,13 @@ def prefix_summary(source):
     if capture.get('method') != PREFIX_METHOD:
         return None
     tail = capture['incomplete_tail']
-    return dict(source=source['id'], reviewed_bytes=capture['original_bytes'],
+    result = dict(source=source['id'], reviewed_bytes=capture['original_bytes'],
         unread_appended_bytes=capture['observed_sizes'][-1] - capture['original_bytes'],
         incomplete_tail_bytes=tail['byte_end'] - tail['byte_start'] if tail else 0)
+    if 'file_process' in capture:
+        from . import tj_process
+        result['file_process']=tj_process.status(capture)
+    return result
 
 
 def view(source):

@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_os_window
+from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_os_window, context_tj_process
 from . import context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
@@ -22,6 +22,7 @@ VIEWS = {
     'jr-events': ('jr', 'artifact'),
     'jr-evidence': ('jr', 'artifact'),
     context_journal_match.VIEW: ('jr', 'artifact'),
+    context_tj_process.VIEW: ('os','artifact'),
     'comparison': ('comparison', 'comparison'),
     FIX_VIEW: ('comparison', 'artifact'),
     APDEX_VIEW: ('apdex', 'artifact'),
@@ -36,6 +37,8 @@ VIEW_READER_CAPABILITIES[APDEX_VIEW] = 5
 VIEW_READER_CAPABILITIES[context_journal_match.VIEW] = context_journal_match.READER_CAPABILITY
 VIEW_READER_CAPABILITIES[context_os_window.VIEW] = context_os_window.READER_CAPABILITY
 VIEW_READER_CAPABILITIES[context_os_window.PROCESS_VIEW] = context_os_window.PROCESS_READER_CAPABILITY
+VIEW_READER_CAPABILITIES[context_tj_process.VIEW] = context_tj_process.READER_CAPABILITY
+ANCHORED_VIEWS = {context_journal_match.VIEW,context_tj_process.VIEW}
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
@@ -44,8 +47,8 @@ SUMMARY_REFERENCE = re.compile(r'view:([a-f0-9]{32}):([0-9]{20}-[a-f0-9]{32})')
 
 
 def allows_view(kind, saved):
-    if kind == context_journal_match.VIEW:
-        return {'tj','jr'} <= set(saved['categories'])
+    if kind in ANCHORED_VIEWS:
+        return {'tj',VIEWS[kind][0]} <= set(saved['categories'])
     return kind == context_excerpt.VIEW or VIEWS[kind][0] in saved['categories']
 
 
@@ -84,12 +87,16 @@ def validate_request(value):
         optional.update(('offset','limit','window','metric_group'))
     if kind == context_os_window.PROCESS_VIEW:
         optional.add('window')
-    if kind == context_journal_match.VIEW:
-        optional.update(('anchor_attachment','record','within_seconds','offset','limit'))
+    if kind in ANCHORED_VIEWS:
+        optional.update(('anchor_attachment','record'))
         if (args.get('anchor_attachment') in (None,args['attachment'])
                 or args.get('record') is None or ':r' in args['record']):
-            raise InputError('select a distinct TJ attachment and native record for the journal search')
+            raise InputError('select a distinct TJ attachment and native record')
+    if kind == context_journal_match.VIEW:
+        optional.update(('within_seconds','offset','limit'))
         args.setdefault('within_seconds', context_journal_match.DEFAULT_RADIUS)
+    if kind == context_tj_process.VIEW:
+        optional.add('window')
     if kind.endswith('-evidence'):
         optional.add('record')
         record = args.get('record')
@@ -97,7 +104,8 @@ def validate_request(value):
             raise InputError('select a record identifier for this evidence view')
     if set(args) - set(schema['required']) - optional:
         raise InputError('filters are not available for this context view')
-    if (kind in ('jr-events',context_os_window.VIEW,context_os_window.PROCESS_VIEW) or kind in context_coverage.VIEWS) and 'window' in args:
+    if (kind in ('jr-events',context_os_window.VIEW,context_os_window.PROCESS_VIEW,context_tj_process.VIEW)
+            or kind in context_coverage.VIEWS) and 'window' in args:
         from .source_coverage import validate_request as validate_window
         args['window'] = validate_window(window=args['window'])['window']
     return args
@@ -338,9 +346,10 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
             data = context_excerpt.read_view(state, doc, attachment, saved)
         else:
             aliases = fields.Aliases(saved['alias_key'], doc['investigation_id'])
-            if kind == context_journal_match.VIEW:
+            if kind in ANCHORED_VIEWS:
                 anchor = context_journal_match.anchor_ref(doc,args)
-                data = context_journal_match.view(state,doc,attachment,anchor,args,aliases)
+                reader = context_journal_match if kind==context_journal_match.VIEW else context_tj_process
+                data = reader.view(state,doc,attachment,anchor,args,aliases)
             elif kind in (context_os_window.VIEW,context_os_window.PROCESS_VIEW):
                 data = context_os_window.view(state,doc,attachment,args,aliases)
             elif kind in context_coverage.VIEWS:

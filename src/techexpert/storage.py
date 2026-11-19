@@ -98,10 +98,10 @@ def job_report(bundle):
 
 
 def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None,
-                prefix_review=None, should_stop=None, logcfg_observation=None, time_correction=None):
+                prefix_review=None, should_stop=None, logcfg_observation=None, time_correction=None, file_process_path=None):
     bundle = load_manifest(manifest_path, reference_sha256=reference_sha256,
                            reference_state=state_dir if reference_state is None else reference_state,
-                           prefix_review=prefix_review, should_stop=should_stop,
+                           prefix_review=prefix_review, should_stop=should_stop, file_process_path=file_process_path,
                            retained=time_correction['input'] if time_correction is not None else None)
     if intake is not None:
         selected=intake['selected']

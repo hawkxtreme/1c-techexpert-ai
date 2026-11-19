@@ -1,10 +1,11 @@
 """Select bounded local journals from the exact saved investigation profile."""
 
 from datetime import datetime, timedelta
+import os
 from pathlib import Path
 import stat
 
-from . import context_policy, input_files, logcfg_observation, native_jr, native_tj, profile_files, storage, tj_reference
+from . import context_policy, input_files, logcfg_observation, native_jr, native_tj, os_storage, profile_files, storage, tj_process, tj_reference
 from . import operation_state as fs
 from .inputs import InputError, MAX_FILE_BYTES, MAX_TOTAL_BYTES
 from .investigation_progress import _occurrence_window
@@ -40,6 +41,8 @@ def schema(cap, operation):
             description='Use a fixed byte boundary per selected TJ file, allowing append-only growth.')
         selector['logcfg_id'] = dict(cap.CASE,
             description='Use the supplied configuration previously read for this TJ and confirmed relevant to this window.')
+        selector['file_process_base'] = cap.string(4,pattern='b[1-9][0-9]{0,2}',
+            description='Observe the client of this linked Windows file base while capturing a reviewed TJ prefix.')
     if preview:
         selector['logcfg_file'] = dict(cap.FILE,
             description='Read only this absolute local logcfg.xml copy for the selected TJ. Use without window or reader options.')
@@ -68,6 +71,8 @@ def normalize(cap, operation, arguments):
             raise InputError('configuration inspection takes the selected journal and one input')
     if 'logcfg_id' in selected and 'timestamp_profile' in selected:
         raise InputError('choose a retained configuration or a declared timestamp profile')
+    if 'file_process_base' in selected and selected.get('read_mode')!=FIXED_PREFIX:
+        raise InputError('a file process observation requires fixed-prefix capture')
     if operation == 'case.analyze' and ('preview_id' in result) != (selected.get('read_mode') == FIXED_PREFIX):
         raise InputError('fixed-prefix capture requires the retained preview ID')
     if 'window' in selected:
@@ -233,7 +238,8 @@ def _tj_review(root, profiles, selection, settings, window, state, manifest_path
     return raw, review
 
 
-def _plan(state, output, binding, source, public, window, selection, *, timestamp_profile, logcfg_reference, log_location):
+def _plan(state, output, binding, source, public, window, selection, *, timestamp_profile, logcfg_reference, log_location,
+          file_process_path=None):
     kind = source['type']
     root = profile_files._ordinary_path(source['path'])
     profile_files._chain(root)
@@ -278,6 +284,9 @@ def _plan(state, output, binding, source, public, window, selection, *, timestam
             plan['selector'] = selection
             plan['tj']['method'] = tj_reference.PREFIX_METHOD
             public['capture_scope'] = 'reviewed_prefix_window'
+            if file_process_path is not None:
+                plan['file_process_path']=file_process_path
+                public['file_process_base']=selection['file_process_base']
     else:
         plan['jr'], count = _jr_inventory(files)
         public.update(capture_scope='selected_jr_group', source_bytes=count,
@@ -321,15 +330,18 @@ def _checked_prefix_plan(report, identifier, args):
             or type(saved.get('manifest')) is not str or type(saved.get('preview')) is not dict):
         raise PreviewChanged('a verified fixed-prefix preview is required')
     plan, preview = saved['plan'], saved['preview']
-    if (plan.get('selector') != args['profile_journal'] or preview.get('status') != 'ready'
+    selector=args['profile_journal']
+    if (plan.get('selector') != selector or preview.get('status') != 'ready'
             or preview.get('capture_scope') != 'reviewed_prefix_window'
             or preview.get('source_bytes_read') is not False or preview.get('preview_sha256') != fs.digest(plan)
+            or preview.get('file_process_base')!=selector.get('file_process_base')
+            or ('file_process_path' in plan)!=('file_process_base' in selector)
             or ('preview_sha256' in args and preview['preview_sha256'] != args['preview_sha256'])):
         raise PreviewChanged('fixed-prefix preview differs from the approved selection')
     return saved
 
 
-def _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference):
+def _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference, file_process_path):
     from .artifacts import artifact_folder, load_artifact
 
     identifier = args['preview_id']
@@ -343,13 +355,15 @@ def _capture_prefix(state, output, binding, source, window, args, stop, logcfg_r
         raise PreviewChanged('fixed-prefix preview binds another investigation revision, source or window')
     if plan.get('logcfg_observation') != logcfg_reference:
         raise PreviewChanged('configuration snapshot differs from the reviewed preview')
+    if plan.get('file_process_path') != file_process_path:
+        raise PreviewChanged('file process scope differs from the reviewed preview')
     if stop():
         raise InputError('journal capture stopped')
     path = output / 'profile-journal-manifest.json'
     with path.open('xb') as stream:
         stream.write(saved['manifest'].encode('utf-8'))
     return storage.investigate(path, output, reference_state=state, reference_sha256=fs.digest(plan['tj']),
-        prefix_review=plan['tj'], should_stop=stop, logcfg_observation=logcfg_reference)
+        prefix_review=plan['tj'], should_stop=stop, logcfg_observation=logcfg_reference,file_process_path=file_process_path)
 
 
 def pin_prefix(operation, args, data, add):
@@ -360,7 +374,9 @@ def pin_prefix(operation, args, data, add):
         return
     identifier = args['preview_id']
     saved = _checked_prefix_plan(add('artifacts', identifier), identifier, args)
-    review = saved['plan']['tj']
+    plan = saved['plan']
+    review = plan['tj']
+    selected = plan.get('file_process_path')
     if data.get('reference_plan_sha256') != fs.digest(review) or len(data['sources']) != len(review['sources']):
         raise InputError('fixed-prefix snapshot differs from the retained plan')
     for actual, planned in zip(data['sources'], review['sources']):
@@ -369,6 +385,12 @@ def pin_prefix(operation, args, data, add):
                 or capture.get('original_bytes') != planned['observation']['bytes']
                 or capture.get('file_identity') != planned['observation']['identity'] or capture.get('window') != planned['window']):
             raise InputError('captured TJ files differ from the reviewed prefixes')
+        if ('file_process' in capture)!=(selected is not None):
+            raise InputError('saved file process observation differs from its approved scope')
+        if selected is not None:
+            tj_process.status(capture)
+            if capture['file_process']['base_path_sha256']!=fs.digest(str(Path(selected))):
+                raise InputError('file process observation belongs to another base path')
 
 
 def pin_logcfg(operation, selection, data, add):
@@ -425,6 +447,14 @@ def execute(operation, args, state, output, binding, *, stop):
     fixed_prefix = selection.get('read_mode') == FIXED_PREFIX
     if fixed_prefix and status == 'configured' and source['type'] != 'tj':
         status = 'journal_read_mode_unsupported'
+    file_process_path = None
+    if 'file_process_base' in selection and status=='configured':
+        base = bases.get(selection['file_process_base'])
+        if os.name!='nt':
+            status='file_process_platform_unsupported'
+        elif (base is None or base['id'] not in source['base_ids']
+                or (file_process_path:=os_storage.file_base_target(base)) is None):
+            status='file_process_base_unavailable'
     window, basis = _window(doc, selection.get('window'))
     if status == 'configured' and window is None:
         status = 'window_required'
@@ -435,13 +465,13 @@ def execute(operation, args, state, output, binding, *, stop):
     if fixed_prefix and operation == 'case.analyze':
         if status != 'configured':
             raise PreviewChanged('configured TJ selection is unavailable')
-        report = _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference)
+        report = _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference,file_process_path)
         return report, [dict(kind='cases', id=report['case_id'])]
     if status == 'configured':
         try:
             plan, path, raw, review = _plan(state, output, binding, source, public, window, selection,
                                            timestamp_profile=timestamp_profile, logcfg_reference=logcfg_reference,
-                                           log_location=log_location)
+                                           log_location=log_location,file_process_path=file_process_path)
         except profile_files._ObservationError as error:
             public['status'] = {'separate_access_required': 'separate_access_required',
                                 'absolute_path_required': 'absolute_path_required', 'linked_path': 'linked_or_special_journal',

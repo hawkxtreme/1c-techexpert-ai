@@ -55,6 +55,9 @@ def reader_capability(request):
     if selector is not None:
         from .logcfg_observation import FILE_LOOKUP_CAPABILITY
         from .native_tj import JSON_ISO
+        if 'file_process_base' in selector:
+            from .tj_process import INTAKE_CAPABILITY
+            return INTAKE_CAPABILITY
         if 'logcfg_base' in selector:
             return FILE_LOOKUP_CAPABILITY
         if 'logcfg_process_pid' in selector:

@@ -38,7 +38,7 @@ def normalize(args):
         raise CodeError('scope_denied', 'Select each attachment and view only once.')
     for row in views:
         label, kind, anchor = _selection(row)
-        if (anchor is not None) != (kind == context_journal_match.VIEW) or anchor == label:
+        if (anchor is not None) != (kind in disclosure.ANCHORED_VIEWS) or anchor == label:
             raise CodeError('scope_denied', 'Select the distinct TJ anchor attachment in the journal view scope.')
     args['scope']['views'] = sorted(views, key=lambda row: (row['attachment'], row['kind'], row.get('anchor_attachment','')))
     return args
@@ -129,7 +129,7 @@ def verify_view(state, plan, run_id, doc, binding, record, saved):
         raise InputError('program view source or policy identity mismatch')
     if request['kind'] == context_excerpt.VIEW:
         context_excerpt.require_approval(state, target['target_id'], target['report_sha256'])
-    if request['kind'] == context_journal_match.VIEW and entry.get('anchor') != context_journal_match.anchor_ref(doc,request):
+    if request['kind'] in disclosure.ANCHORED_VIEWS and entry.get('anchor') != context_journal_match.anchor_ref(doc,request):
         raise InputError('saved journal view anchor differs from its selected investigation evidence')
     reply = saved['reply']
     if (set(reply) != {'status', 'data', 'truncated'} or reply['status'] != 'succeeded' or
