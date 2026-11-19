@@ -14,6 +14,7 @@ CATEGORIES = {
     'jr': 'Registration journal timestamps, severity, evidence coordinates and scoped aliases.',
     'comparison': 'Measured comparison statistics, pairing and outcome states.',
     'apdex': 'APDEX sample statistics and target values, and recognized configuration metadata markers. No source text or paths.',
+    'os': 'Typed OS counter statistics, recorded time coverage and evidence coordinates for saved measurements.',
 }
 DEFAULT_BYTES = 16384
 MIN_BYTES = 4096

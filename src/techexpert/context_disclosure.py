@@ -6,7 +6,8 @@ import re
 import time
 import uuid
 
-from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_policy as policy, investigations
+from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_os_window
+from . import context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
 from .native_tj import FORMATS as TJ_FORMATS
@@ -24,6 +25,7 @@ VIEWS = {
     'comparison': ('comparison', 'comparison'),
     FIX_VIEW: ('comparison', 'artifact'),
     APDEX_VIEW: ('apdex', 'artifact'),
+    context_os_window.VIEW: ('os', 'artifact'),
     context_excerpt.VIEW: (context_excerpt.CATEGORY, 'artifact'),
     **context_coverage.VIEWS,
 }
@@ -31,6 +33,7 @@ VIEW_READER_CAPABILITIES = dict.fromkeys(context_coverage.VIEWS, context_coverag
 VIEW_READER_CAPABILITIES[FIX_VIEW] = 4
 VIEW_READER_CAPABILITIES[APDEX_VIEW] = 5
 VIEW_READER_CAPABILITIES[context_journal_match.VIEW] = context_journal_match.READER_CAPABILITY
+VIEW_READER_CAPABILITIES[context_os_window.VIEW] = context_os_window.READER_CAPABILITY
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
@@ -57,6 +60,7 @@ def argument_schema():
         window=cap.WINDOW, linked_run=dict(type='boolean'),
         anchor_attachment=cap.string(62, pattern=fields.ATTACHMENT_ID.pattern),
         within_seconds=dict(type='integer', minimum=1, maximum=context_journal_match.MAX_RADIUS),
+        metric_group=cap.string(8,enum=list(context_os_window.GROUPS)),
     ), ('investigation_id', 'revision', 'attachment', 'kind'))
 
 
@@ -74,6 +78,8 @@ def validate_request(value):
         optional.add('window')
     if kind == 'tj-coverage':
         optional.update(('offset', 'limit', 'event'))
+    if kind == context_os_window.VIEW:
+        optional.update(('offset','limit','window','metric_group'))
     if kind == context_journal_match.VIEW:
         optional.update(('anchor_attachment','record','within_seconds','offset','limit'))
         if (args.get('anchor_attachment') in (None,args['attachment'])
@@ -87,7 +93,7 @@ def validate_request(value):
             raise InputError('select a record identifier for this evidence view')
     if set(args) - set(schema['required']) - optional:
         raise InputError('filters are not available for this context view')
-    if (kind == 'jr-events' or kind in context_coverage.VIEWS) and 'window' in args:
+    if (kind in ('jr-events',context_os_window.VIEW) or kind in context_coverage.VIEWS) and 'window' in args:
         from .source_coverage import validate_request as validate_window
         args['window'] = validate_window(window=args['window'])['window']
     return args
@@ -331,6 +337,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
             if kind == context_journal_match.VIEW:
                 anchor = context_journal_match.anchor_ref(doc,args)
                 data = context_journal_match.view(state,doc,attachment,anchor,args,aliases)
+            elif kind == context_os_window.VIEW:
+                data = context_os_window.view(state,doc,attachment,args,aliases)
             elif kind in context_coverage.VIEWS:
                 data = context_coverage.view(state,doc,attachment,args,aliases)
             else:

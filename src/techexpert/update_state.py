@@ -7,6 +7,7 @@ import stat
 from . import check_history, context_excerpt, context_intake, context_program, fix_verification, investigation_progress, investigation_task, native_jr_sqlite, operation_state as fs, operations, os_observation, report_references
 from . import apdex_preparation
 from .context_disclosure import APDEX_VIEW, VIEW_READER_CAPABILITIES
+from .context_os_window import READER_CAPABILITY as OS_WINDOW_READER
 from .inputs import InputError, json_value, read_snapshot
 from . import logcfg_observation, native_tj
 
@@ -306,6 +307,8 @@ def inspect_state(state):
                 schema('context-disclosure', policy)
                 if 'apdex' in policy['categories']:
                     schemas['context-disclosure'].add(VIEW_READER_CAPABILITIES[APDEX_VIEW])
+                if 'os' in policy['categories']:
+                    schemas['context-disclosure'].add(OS_WINDOW_READER)
         marker(state/'incident-drafts/write.lock','incident-drafts')
         for folder in children(state/'incident-drafts'):
             if _ID.fullmatch(folder.name):
