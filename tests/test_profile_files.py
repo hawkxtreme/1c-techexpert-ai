@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+from xml.sax.saxutils import quoteattr
 
 
 FIXTURES = Path(__file__).resolve().parent / 'fixtures'
@@ -16,6 +17,32 @@ ROOT = FIXTURES.parents[1]
 
 
 class ProfileFileTests(unittest.TestCase):
+    def test_tj_lookup_lists_only_local_declared_paths_without_reading_them(self):
+        from src.techexpert import logcfg_discovery, profile_files
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            connection = f'File="{root / "base"}";'
+            paths = [root / name for name in ('ТЖ клиента', 'second')]
+            locations = [*map(str, paths), str(paths[0]), 'relative/logs', str(root / 'token=credential')]
+            rules = ''.join(f'<log location={quoteattr(path)}/>' for path in locations)
+            raw = ('<config xmlns="http://v8.1c.ru/v8/tech-log">' + rules + '</config>').encode()
+            request = profile_files.from_bases([dict(id='ib', mode='file', connection=connection),
+                dict(id='server', mode='server', connection='Srvr=host;Ref=Orders')], kind='file_tj')
+            observed = dict(status='found', platform_version='8.3.27.1989')
+            with patch.object(logcfg_discovery, 'observe_file', return_value=(observed, dict(raw=raw))) as lookup, \
+                    patch.object(profile_files, '_chain', side_effect=AssertionError('unexpected log path probe')):
+                result = profile_files.inspect(request)
+            self.assertEqual(lookup.call_count, 1)
+            self.assertEqual(lookup.call_args.args, (connection,))
+            row, = result['items']
+            self.assertEqual(row['status'], 'logcfg_locations_found')
+            self.assertEqual(row['candidate_paths'], list(map(str, paths)))
+            self.assertEqual(row['unresolved_locations'], 2)
+            self.assertEqual(row['platform_version'], '8.3.27.1989')
+            self.assertEqual(row['headers_checked'], 0)
+            self.assertFalse(row['coverage_verified'])
+
     def test_file_journal_discovery_preserves_a_literal_directory_name(self):
         from src.techexpert import profile_files
 

@@ -69,7 +69,7 @@ def main(folder,memory_bytes):
         if action=='run':value=operations.run(state,request)
         elif action=='context-task':value=investigation_task.record(state,request)
         elif action=='os-observation':value=os_observation.control(state,request)
-        elif action=='profile-files':value=dict(status='succeeded', data=profile_files.inspect(request))
+        elif action=='profile-files':value=dict(status='succeeded', data=profile_files.inspect(request, stop=context.stop))
         elif action=='context-intake':value=context_intake.acquire(state,request)
         elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':

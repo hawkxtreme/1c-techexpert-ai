@@ -3,6 +3,7 @@
 import io
 import json
 import math
+import os
 import re
 import secrets
 import threading
@@ -205,7 +206,7 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._json(200,book)
             elif self.path == '/api/source-help':
                 from .source_help import catalogue
-                self._json(200,catalogue())
+                self._json(200,dict(catalogue(), file_tj_lookup=os.name == 'nt'))
             elif self.path == '/api/starter-location':
                 from .discovery import default_starter_path
                 path=default_starter_path();self._json(200,dict(path=str(path) if path is not None else None,checked=False))
@@ -292,6 +293,8 @@ class InitHandler(BaseHTTPRequestHandler):
                     request = profile_files.from_profile(data['profile'])
                 elif set(data) == {'bases'}:
                     request = profile_files.from_bases(data['bases'])
+                elif set(data) == {'tj_bases'}:
+                    request = profile_files.from_bases(data['tj_bases'], kind='file_tj')
                 else:
                     raise ValueError('Выберите профиль или файловые базы для локальной проверки.')
                 if not self.server.file_check_lock.acquire(blocking=False):

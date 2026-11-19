@@ -3,6 +3,7 @@ from html.parser import HTMLParser
 import importlib
 import importlib.util
 import json
+import os
 import tempfile
 import threading
 import unittest
@@ -10,6 +11,20 @@ from pathlib import Path
 
 
 class GuiHTTPTests(unittest.TestCase):
+    def test_find_file_tj_is_an_explicit_local_check_without_saving(self):
+        base = self.state_dir.parent / 'file-infobase-without-a-database'
+        request = dict(tj_bases=[dict(id='ib', mode='file', connection=str(base))])
+        self.assertEqual(self.request('POST', '/api/file-check', request, token=False)[0], 401)
+        self.assertFalse(self.state_dir.exists())
+        status, _, raw = self.request('POST', '/api/file-check', request)
+        self.assertEqual(status, 200, raw)
+        result = json.loads(raw)
+        expected = 'base_file_not_found' if os.name == 'nt' else 'process_platform_unsupported'
+        self.assertEqual([(item['id'], item['kind'], item['status']) for item in result['items']], [('ib', 'file_tj', expected)])
+        self.assertFalse(result['collection_started'])
+        self.assertFalse(result['database_opened'])
+        self.assertFalse((self.state_dir / 'profiles').exists())
+
     def test_explicit_local_check_shows_a_missing_path_without_saving_the_profile(self):
         root = self.state_dir.parent
         profile = dict(schema_version=1, name='File infobase', bases=[

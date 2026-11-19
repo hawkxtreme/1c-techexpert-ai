@@ -19,6 +19,7 @@ NS = logcfg_xml.NS + '}'
 EVENT_NAMES = {*logcfg.EVENTS, 'VRSREQUEST', 'VRSRESPONSE'}
 OPERATORS = {NS + part for part in ('eq', 'ne', 'gt', 'ge', 'lt', 'le', 'like')}
 ATTRIBUTES = {'location', 'history', 'format', 'placement', 'rotation', 'rotationperiod', 'rotationsize', 'compress'}
+LOCATION_LIMIT = 16
 
 
 def _number(value):
@@ -32,6 +33,33 @@ def _location(value):
         return Path(logcfg._remote_path(value, 'windows' if os.name == 'nt' else 'linux'))
     except InputError:
         return None
+
+
+def declared_locations(raw):
+    """Return explicit local log directory suggestions without visiting them."""
+    paths = {}
+    unresolved = 0
+    limited = False
+    for rule in logcfg_xml.inspect(raw)['nodes']:
+        if rule['depth'] != 1 or rule['name'] != NS + 'log':
+            continue
+        value = rule['attrs'].get('location')
+        path = _location(value)
+        if path is None or profile_files.credential_address(value):
+            unresolved += 1
+            continue
+        try:
+            profile_files._ordinary_path(value)
+        except profile_files._ObservationError:
+            unresolved += 1
+            continue
+        if path in paths:
+            continue
+        if len(paths) == LOCATION_LIMIT:
+            limited = True
+            break
+        paths[path] = str(path)
+    return dict(candidate_paths=list(paths.values()), unresolved_locations=unresolved, sampling_limited=limited)
 
 
 def _matching_rule(nodes, target):

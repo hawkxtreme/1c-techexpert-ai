@@ -144,6 +144,11 @@
       <div><h1>Источники для анализа</h1><p class="sub">У каждого источника свой адрес. Общий ресурс можно связать с несколькими базами.</p></div>
       <p class="hint" id="source-context"></p>
       <div id="source-suggestions" class="stack"></div>
+      <div id="file-tj-panel" class="box stack" hidden>
+        <div><button type="button" id="find-file-tj">Найти ТЖ файловых баз</button></div>
+        <p class="note">Откройте выбранные базы в клиенте 1С на этом компьютере под своей учётной записью.</p>
+        <div id="file-tj-results" class="stack" role="status" aria-live="polite"></div>
+      </div>
       <div id="file-jr-panel" class="box stack" hidden>
         <div><button type="button" id="find-file-jr">Найти ЖР файловых баз</button></div>
         <div id="file-jr-results" class="stack" role="status" aria-live="polite"></div>
@@ -190,6 +195,7 @@
       let matches = [];
       let sourceSuggestions = [];
       let fileJournalResults = [];
+      let fileTjResults = [];
       let previousFileChecks = new Map();
       let connectionEdits = {};
       let bindingOverrides = {};
@@ -216,7 +222,7 @@
       }
       function markChanged() {
         saved=null;preparedProfile=null;preparedImpact=null;matches=[];sourceSuggestions=[];
-        fileJournalResults=[];previousFileChecks.clear();q('#file-jr-results').replaceChildren();q('#preflight-results').replaceChildren();
+        fileJournalResults=[];fileTjResults=[];previousFileChecks.clear();q('#file-jr-results').replaceChildren();q('#file-tj-results').replaceChildren();q('#preflight-results').replaceChildren();
         q('#registration-panel').hidden=true;q('#source-suggestions').replaceChildren();message('');
       }
       function showChatTask() {
@@ -675,8 +681,56 @@
           box.append(card);
         }
       }
+      function fileTjTargets() {
+        const targets=new Map();
+        if(!sourceHelp?.file_tj_lookup)return targets;
+        for(const base of selectedBases()){
+          if(base.mode!=='file' || !base.connection.trim())continue;
+          const linked=state.sources.filter(source=>source.type==='tj' && source.base_ids.includes(base.id));
+          const source=linked[0];
+          if(source && (linked.length!==1 || source.base_ids.length!==1 || source.path.trim() ||
+              source.host.trim() || (source.settings.transport || 'local')!=='local'))continue;
+          targets.set(base.id,{base,source});
+        }
+        return targets;
+      }
+      function renderFileTj() {
+        const targets=fileTjTargets();
+        const box=q('#file-tj-results');box.replaceChildren();q('#file-tj-panel').hidden=!targets.size;
+        const labels={
+          logcfg_locations_found:'Каталоги из logcfg.xml. Доступ к файлам и период можно проверить отдельно.',
+          client_not_found:'Откройте эту базу в клиенте 1С и повторите поиск.',
+          client_ambiguous:'Открыто несколько клиентов этой базы. Укажите путь к ТЖ или выберите клиент в чате.',
+          base_file_not_found:'Проверьте путь к файловой базе. Файл 1Cv8.1CD не найден.',
+          process_account_differs:'Откройте базу под той же учётной записью, что и помощник.',
+          process_version_unsupported:'Для этой версии укажите путь к каталогу ТЖ вручную.',
+          config_file_not_found:'Клиент найден. Если ТЖ ещё не настроен, попросите агента помочь включить нужные события.',
+          invalid_or_unsupported_xml:'Проверьте настройки logcfg.xml вместе с агентом.',
+          logcfg_location_unknown:'В logcfg.xml нет распознанных локальных каталогов ТЖ.'
+        };
+        for(const result of fileTjResults.filter(item=>targets.has(item.id))){
+          const card=element('div',undefined,'stack');
+          card.append(element('strong',baseName(result.id)),element('p',labels[result.status] || 'Не удалось определить каталог ТЖ. Укажите путь или проверьте конфигурацию в чате.','note'));
+          if(result.sampling_limited || result.unresolved_locations)card.append(element('p','Показаны только распознанные локальные адреса в пределах проверки.','note'));
+          for(const path of result.candidate_paths || []){
+            const option=element('div',undefined,'stack');option.append(element('p',path,'note'));
+            const add=element('button',targets.get(result.id).source?'Заполнить путь к ТЖ':'Добавить найденный ТЖ');add.type='button';add.dataset.tjBase=result.id;
+            add.addEventListener('click',()=>{
+              const target=fileTjTargets().get(result.id);if(!target)return;
+              const other=fileTjResults.filter(item=>item.id!==result.id);
+              markChanged();fileTjResults=other;
+              const source=target.source || {id:nextId('source'),type:'tj',path:'',host:'',base_ids:[result.id],settings:defaults('tj')};
+              source.path=path;source.settings.platform_version ||= result.platform_version;
+              if(!target.source)state.sources.push(source);
+              renderSources(source.id);
+            });
+            option.append(add);card.append(option);
+          }
+          box.append(card);
+        }
+      }
       function renderSources(openId) {
-        renderFileJournals();
+        renderFileJournals();renderFileTj();
         const exportHelp=sourceHelp?.sources.source.export_help;const exportPanel=q('#source-export-help');exportPanel.hidden=!exportHelp;
         const exportBody=q('#source-export-help-body');exportBody.replaceChildren();
         if(exportHelp){
@@ -712,7 +766,12 @@
           const choices = element('div',undefined,'bindings');
           eligibleBases(source.type).forEach(base => {
             const label = element('label',undefined,'check'); const check = document.createElement('input'); check.type = 'checkbox'; check.checked = source.base_ids.includes(base.id); check.dataset.sourceBase = base.id;
-            check.addEventListener('change', () => { markChanged(); source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id); if(source.type==='sql')renderSources(source.id); });
+            check.addEventListener('change', () => {
+              markChanged();
+              source.base_ids = check.checked ? [...new Set([...source.base_ids,base.id])] : source.base_ids.filter(id => id !== base.id);
+              if(source.type==='sql')renderSources(source.id);
+              if(source.type==='tj')renderFileTj();
+            });
             label.append(check,element('span',baseName(base.id))); choices.append(label);
           });
           bindings.append(choices);
@@ -722,10 +781,18 @@
             : 'Это привязка в настройках. Принадлежность записей к базе проверяется отдельно при анализе.','note'));
           fields.append(bindings);
           const pathLabel = source.type === 'source' ? 'Каталог исходников или адрес Git' : source.type === 'sql' ? 'Сервер / экземпляр · БД указываются ниже' : source.type === 'rac' ? 'Адрес RAS · узел:порт' : source.type === 'os' ? 'Файл готовых метрик · если есть' : source.type === 'jr' ? 'Путь к нативному ЖР или его снимку' : 'Путь к ТЖ';
-          const pathField = field(pathLabel,source.path,value => { source.path = value; }); pathField.querySelector('input').dataset.sourcePath = source.id;
+          const pathField = field(pathLabel,source.path,value => {
+            source.path = value;
+            if(source.type==='tj')renderFileTj();
+          });
+          pathField.querySelector('input').dataset.sourcePath = source.id;
           if(help){pathField.append(element('small','Ожидается: '+(remote?help.sftp_expected_format:help.expected_format),'note'),element('small','Пример: '+(remote?help.sftp_example:help.example),'note'));}
           if(remote){pathField.querySelector('input').placeholder=source.type==='jr'?'/srv/1c/base/1Cv8Log':'/var/log/1c/tj';pathField.append(element('small','Путь на Linux-узле. Выбранные стабильные файлы агент получит по SFTP; формат журнала проверяется отдельно.','note'));}
-          const hostField = field(remote?'SSH-адрес · пользователь@узел':source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => { source.host = value; }); hostField.querySelector('input').dataset.sourceHost = source.id;
+          const hostField = field(remote?'SSH-адрес · пользователь@узел':source.type === 'os' ? 'Узел Windows / Linux' : 'Узел · если известен',source.host,value => {
+            source.host = value;
+            if(source.type==='tj')renderFileTj();
+          });
+          hostField.querySelector('input').dataset.sourceHost = source.id;
           if(!connectionId)fields.append(pathField,hostField);
           else if(source.type==='os')fields.append(pathField);
           else if(journal)fields.append(pathField);
@@ -828,6 +895,11 @@
         const bases=fileJournalBases().map(({id,mode,connection})=>({id,mode,connection}));
         if(!bases.length)return;
         const found=await api('/api/file-check',{bases});fileJournalResults=found.items;renderFileJournals();
+      }));
+      q('#find-file-tj').addEventListener('click',()=>perform(async()=>{
+        const tj_bases=[...fileTjTargets().values()].map(({base:{id,mode,connection}})=>({id,mode,connection}));
+        if(!tj_bases.length)return;
+        const found=await api('/api/file-check',{tj_bases});fileTjResults=found.items;renderFileTj();
       }));
       q('#check-profile').addEventListener('click',()=>perform(async()=>{
         validateSources();if(!preparedProfile)await prepareProfile();const result=await api('/api/check',preparedProfile);const box=q('#preflight-results');box.replaceChildren();

@@ -14,7 +14,8 @@ MAX_REQUEST = 128 * 1024
 ENTRY_LIMIT = 128
 HEADER_LIMIT = 8
 PREFIX_BYTES = 4096
-KINDS = {'file_jr', 'tj', 'jr', 'source'}
+BASE_KINDS = {'file_jr', 'file_tj'}
+KINDS = {*BASE_KINDS, 'tj', 'jr', 'source'}
 
 
 class _ObservationError(ValueError):
@@ -24,6 +25,11 @@ class _ObservationError(ValueError):
 def _text(value, maximum, *, empty=False):
     return (type(value) is str and len(value) <= maximum and (empty or bool(value.strip()))
             and all(ord(character) >= 32 and ord(character) != 127 for character in value))
+
+
+def credential_address(value):
+    return bool(re.search(r'(?i)(?:pwd|password|token|secret|authorization)\s*[=:]', value)
+                or re.search(r'://[^/]*@', value))
 
 
 def normalize(request):
@@ -37,7 +43,7 @@ def normalize(request):
         identifier, kind, path = (item[key] for key in ('id', 'kind', 'path'))
         if not _text(identifier, 80) or identifier in seen or not _text(kind, 16) or kind not in KINDS or not _text(path, 2048):
             raise InputError('invalid local source identity or path')
-        if re.search(r'(?i)(?:pwd|password|token|secret|authorization)\s*[=:]', path) or re.search(r'://[^/]*@', path):
+        if credential_address(path):
             raise InputError('select an address without credentials')
         extras = set(item) - {'id', 'kind', 'path'}
         if kind == 'jr':
@@ -53,8 +59,8 @@ def normalize(request):
     return dict(items=items)
 
 
-def from_bases(bases):
-    if type(bases) is not list or len(bases) > 100:
+def from_bases(bases, *, kind='file_jr'):
+    if kind not in BASE_KINDS or type(bases) is not list or len(bases) > 100:
         raise InputError('select file infobases in the setup helper')
     items = []
     for item in bases:
@@ -63,17 +69,18 @@ def from_bases(bases):
                 or not _text(item['connection'], 2048, empty=True)):
             raise InputError('invalid file infobase selection')
         if item['mode'] == 'file' and item['connection'].strip():
-            items.append(dict(id=item['id'], kind='file_jr', path=item['connection'].strip()))
+            path = item['connection'].strip() if kind == 'file_jr' else item['connection']
+            items.append(dict(id=item['id'], kind=kind, path=path))
     return normalize(dict(items=items))
 
 
-def from_profile(profile, *, find_journals=False):
+def from_profile(profile, *, find=None):
     from .profile_resources import effective_profile
     from .profiles import validate_profile
 
     current = effective_profile(validate_profile(profile))
-    if find_journals:
-        return from_bases([{key: row[key] for key in ('id', 'mode', 'connection')} for row in current['bases']])
+    if find:
+        return from_bases([{key: row[key] for key in ('id', 'mode', 'connection')} for row in current['bases']], kind=find)
     rows = []
     for source in current['sources']:
         kind, settings = source['type'], source['settings']
@@ -334,8 +341,24 @@ def file_base_path(value):
     return _ordinary_path(value)
 
 
-def _observe(item, row):
+def _file_tj(item, row, *, stop):
+    from . import logcfg_discovery, logcfg_observation, logcfg_xml
+
+    info, snapshot = logcfg_discovery.observe_file(item['path'], stop=stop)
+    if snapshot is None:
+        return info['status']
+    try:
+        locations = logcfg_observation.declared_locations(snapshot['raw'])
+    except logcfg_xml.XmlIssue:
+        return 'invalid_or_unsupported_xml'
+    row.update(locations, platform_version=info['platform_version'], version_status='observed_client')
+    return 'logcfg_locations_found' if row['candidate_paths'] else 'logcfg_location_unknown'
+
+
+def _observe(item, row, *, stop):
     kind = item['kind']
+    if kind == 'file_tj':
+        return _file_tj(item, row, stop=stop)
     if kind == 'file_jr':
         path = _file_journal(file_base_path(item['path']))
     else:
@@ -357,13 +380,15 @@ def _observe(item, row):
     return _source(path, directory, row, item.get('source_kind', 'catalog'))
 
 
-def inspect(request):
+def inspect(request, *, stop=lambda: None):
     rows = []
     for item in normalize(request)['items']:
+        if reason := stop():
+            raise TimeoutError(reason)
         row = dict(id=item['id'], kind=item['kind'], format=None, candidate_path=None, version_status='unknown',
                    files_observed=0, headers_checked=0, sampling_limited=False, coverage_verified=False)
         try:
-            row['status'] = _observe(item, row)
+            row['status'] = _observe(item, row, stop=stop)
         except _ObservationError as error:
             row['status'] = str(error)
         except FileNotFoundError:
@@ -373,5 +398,6 @@ def inspect(request):
         except (OSError, ValueError):
             row['status'] = 'check_unavailable'
         rows.append(row)
-    return dict(items=rows, scope='local_metadata_and_sample_headers', max_header_bytes=PREFIX_BYTES,
+    scope = 'local_configuration_and_file_observation' if any(row['kind'] == 'file_tj' for row in rows) else 'local_metadata_and_sample_headers'
+    return dict(items=rows, scope=scope, max_header_bytes=PREFIX_BYTES,
                 collection_started=False, database_opened=False)
