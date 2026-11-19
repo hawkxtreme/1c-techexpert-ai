@@ -75,6 +75,11 @@ def _binding(kind, identifier, basis, digest):
     return _target(kind, identifier), basis, digest
 
 
+def _hashes(report, digest, receipt):
+    return dict(file=digest, attachment=investigations._digest(report), normalized=fs.digest(report),
+                receipt=fs.digest(receipt))
+
+
 def _source_members(folder, kind, report):
     if kind == 'comparison':
         return []
@@ -108,15 +113,32 @@ def _inputs(kind, report):
     if 'input_intake' in details:
         intake = details['input_intake']
         result.append(_binding('artifact', intake['artifact_id'], 'normalized', intake['plan_report_digest']))
+    if kind == 'case' and 'time_correction' in details:
+        correction = details['time_correction']
+        result.append(_binding('case', correction['original_case_id'], 'attachment', correction['original_report_sha256']))
+    if kind == 'case' and 'logcfg_observation' in details:
+        observation = details['logcfg_observation']
+        result.append(_binding('artifact', observation['id'], 'normalized', observation['report_digest']))
     if kind == 'artifact' and report['kind'] == 'source_export' and details.get('source_artifact_id') is not None:
         result.append(_binding('artifact', details['source_artifact_id'], 'file', details['source_artifact_report_sha256']))
+    if kind == 'artifact' and report['kind'] in ('logcfg_rollback', 'remote_catalog', 'remote_capture'):
+        for name in {'logcfg_rollback': ('parent',), 'remote_catalog': ('plan',), 'remote_capture': ('plan', 'catalogue')}[report['kind']]:
+            source = details[name]
+            result.append(_binding('artifact', source['id'], 'normalized', source['report_digest']))
+            result.append(_binding('artifact', source['id'], 'receipt', source['receipt_digest']))
+    if kind == 'artifact' and report['kind'] == 'context_excerpt':
+        source = details['source']
+        result.append(_binding(source['kind'], source['material_id'], 'attachment', source['report_sha256']))
     if kind == 'artifact' and report['kind'] in ('apdex_preparation', 'fix_verification'):
         if report['kind'] == 'apdex_preparation':
             from .apdex_preparation import dependencies
         else:
             from .fix_verification import dependencies
         kinds = dict(artifacts='artifact', cases='case', comparisons='comparison')
-        result.extend(_binding(kinds[item['kind']], item['id'], 'normalized', item['report_digest']) for item in dependencies(report))
+        for item in dependencies(report):
+            category, identifier = kinds[item['kind']], item['id']
+            result.append(_binding(category, identifier, 'normalized', item['report_digest']))
+            result.append(_binding(category, identifier, 'receipt', item['receipt_digest']))
     return result
 
 
@@ -175,7 +197,7 @@ def _read_product(state, inventory, key):
             report, digest = read(state, identifier, with_digest=True)
         else:
             report, digest = read(state, identifier)
-        hashes = dict(file=digest, attachment=investigations._digest(report), normalized=fs.digest(report))
+        hashes = _hashes(report, digest, inventory.read_metadata(folder / 'receipt.json', 8192))
         files, inputs = _source_members(folder, kind, report), _inputs(kind, report)
         working = None
         if kind == 'artifact' and report['kind'] == 'source_export' and report['result'].get('status') == 'completed':

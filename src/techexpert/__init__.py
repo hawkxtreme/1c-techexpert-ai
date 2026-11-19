@@ -1,3 +1,3 @@
 """Local evidence tools for an AI-led 1C investigation."""
 
-__version__ = '0.85.0'
+__version__ = '0.86.0'

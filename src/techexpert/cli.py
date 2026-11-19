@@ -284,6 +284,19 @@ def main(argv=None):
     materials.add_argument('--category',choices=CATEGORIES)
     materials.add_argument('--offset',type=int,default=0)
     materials.add_argument('--limit',type=int,default=60)
+    from .investigation_export import CONTENTS
+    bundle_plan=commands.add_parser('investigation-export-plan',help='review an exact local export before writing files')
+    bundle_export=commands.add_parser('investigation-export',help='write the reviewed local investigation export')
+    for command in (bundle_plan,bundle_export):
+        command.add_argument('investigation_id')
+        command.add_argument('destination',type=Path)
+        command.add_argument('--revision',type=int,required=command is bundle_export)
+        command.add_argument('--content',choices=CONTENTS,required=True)
+        command.add_argument('--draft',help='reviewed draft ID for pseudonymized evidence')
+    bundle_export.add_argument('--expected-sha256',required=True)
+    bundle_verify=commands.add_parser('investigation-export-verify',help='check a portable investigation export offline')
+    bundle_verify.add_argument('destination',type=Path)
+    bundle_verify.add_argument('--expected-sha256')
     source_context=commands.add_parser('source-context');source_context.add_argument('investigation_id');source_context.add_argument('--revision',type=int,required=True)
     investigation_update=commands.add_parser('investigation-update');investigation_update.add_argument('investigation_id')
     investigation_update.add_argument('patch',type=Path);investigation_update.add_argument('--expected-revision',type=int,required=True)
@@ -576,6 +589,17 @@ def main(argv=None):
             from .investigation_materials import view
             result=view(args.state_dir,args.investigation_id,revision=args.revision,
                         category=args.category,offset=args.offset,limit=args.limit)
+        elif args.command in ('investigation-export-plan','investigation-export','investigation-export-verify'):
+            from . import investigation_export
+            if args.command=='investigation-export-verify':
+                result=investigation_export.verify(args.destination,expected_sha256=args.expected_sha256)
+            else:
+                options=dict(revision=args.revision,content=args.content,draft=args.draft)
+                if args.command=='investigation-export-plan':
+                    result=investigation_export.plan(args.state_dir,args.investigation_id,args.destination,**options)
+                else:
+                    result=investigation_export.execute(args.state_dir,args.investigation_id,args.destination,
+                        expected_sha256=args.expected_sha256,**options)
         elif args.command in ('investigation-create','investigation-update','investigation'):
             from .investigations import create,revise,read_for_display,revision_folder,_read_head
             from .inputs import read_snapshot,json_value
