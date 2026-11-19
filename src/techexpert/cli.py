@@ -189,6 +189,14 @@ def main(argv=None):
     os_observation=commands.add_parser('os-observation',help='preview, approve or inspect a saved OS observation')
     os_observation.add_argument('request',type=Path)
     os_import.add_argument('measurements',type=Path)
+    os_import.add_argument('--expected-sha256')
+    operator_plan=commands.add_parser('os-operator-plan',help='review or save one local collection for an operator')
+    operator_plan.add_argument('request',type=Path)
+    operator_plan.add_argument('--output',type=Path)
+    operator_plan.add_argument('--expected-sha256')
+    operator_run=commands.add_parser('os-operator-run',help='run the reviewed plan on its selected node')
+    operator_run.add_argument('plan',type=Path)
+    operator_run.add_argument('--expected-sha256',required=True)
     pg=commands.add_parser('postgresql')
     pg.add_argument('operation',choices=('capabilities','activity','locks','database_stats','statements'))
     pg.add_argument('--database',required=True)
@@ -518,9 +526,18 @@ def main(argv=None):
             call=kernel.invoke(args.state_dir,'os-observation',dict(request=str(args.request)))
             kernel.emit(call,sys.stdout)
             return call['exit_code']
+        elif args.command=='os-operator-plan':
+            from . import os_operator, operation_state
+            result=os_operator.prepare(operation_state.read(args.request,8192),output=args.output,
+                                       expected_sha256=args.expected_sha256)
+        elif args.command=='os-operator-run':
+            from .os_operator import run
+            result=run(args.state_dir,args.plan,expected_sha256=args.expected_sha256)
+            emit(result)
+            return result['exit_code']
         elif args.command=='os-import':
             from .os_metrics import import_os
-            result=import_os(args.state_dir,args.measurements)
+            result=import_os(args.state_dir,args.measurements,expected_sha256=args.expected_sha256)
         elif args.command=='postgresql':
             from .postgresql import PsqlClient,observe
             result=observe(args.state_dir,PsqlClient(database=args.database,host=args.host,port=args.port,

@@ -46,6 +46,6 @@ def import_selected(operation,args,state,output):
     path=captured[args['members'][0]]['path']
     if operation=='os.import':
         from .os_metrics import import_os
-        return import_os(output,path,intake=intake)
+        return import_os(output,path,intake=intake,expected_sha256=args.get('expected_sha256'))
     from .artifacts import import_apdex
     return import_apdex(output,path,**{k:v for k,v in args.items() if k not in ('measurements','input_plan','members')},intake=intake)

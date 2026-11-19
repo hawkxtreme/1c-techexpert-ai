@@ -1,6 +1,6 @@
 """Read-only storage observations for an explicitly selected local file or directory."""
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import re
 import stat
 
@@ -19,17 +19,18 @@ PLATFORMS = {'windows': 'windows_host', 'linux': 'linux_kernel_and_current_netwo
 REQUIRED = ('domain_sha256', 'path_identity_sha256', 'mapping_sha256')
 
 
-def local_path(value):
+def local_path(value, *, platform=None):
     """Check a local path's syntax without opening it or resolving a drive."""
     from .profile_files import credential_address
     if (type(value) is not str or not 1 <= len(value) <= 2000 or value.startswith(('\\', '//'))
             or '://' in value or any(ord(char) < 32 or ord(char) == 127 for char in value)
             or credential_address(value)):
         raise InputError('storage observation requires an explicit local filesystem path')
-    path = Path(value)
+    platform = platform or ('windows' if os.name == 'nt' else 'linux')
+    path = PureWindowsPath(value) if platform == 'windows' else PurePosixPath(value)
     if not path.is_absolute() or '..' in path.parts:
         raise InputError('storage observation requires an absolute local path without traversal')
-    if os.name == 'nt':
+    if platform == 'windows':
         if not re.fullmatch(r'[A-Za-z]:', path.drive):
             raise InputError('storage observation requires an ordinary local drive')
         for part in path.parts[1:]:

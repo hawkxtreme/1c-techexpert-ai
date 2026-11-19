@@ -89,8 +89,12 @@ Invoke-Command -ComputerName '{r['host']}' -Port {r['port']} -Authentication Neg
 """
 
 
-def import_os(state_dir,path,*,intake=None):
+def import_os(state_dir,path,*,intake=None,expected_sha256=None):
+    if expected_sha256 is not None and (not isinstance(expected_sha256,str) or not re.fullmatch('[a-f0-9]{64}',expected_sha256)):
+        raise InputError('invalid measurement SHA-256')
     data=read_snapshot(path)
+    if expected_sha256 is not None and hashlib.sha256(data).hexdigest()!=expected_sha256:
+        raise InputError('measurement SHA-256 mismatch; verify the returned file')
     document=json_value(data.decode('utf-8-sig'),reject_duplicates=True)
     result=summarize(document)
     storage=os_storage.binding(document,origin='reported_input')

@@ -12,6 +12,8 @@ from .os_metrics import PROBE, validate_request
 
 FORMAT = 1
 ROOT = 'os-observations'
+OPERATOR_ROOT = 'os-operator'
+OPERATOR_STATE_CAPABILITY = 4
 MAX_DOCUMENT = 256 * 1024
 MAX_REQUEST = 16 * 1024
 MAX_APPROVALS = 16

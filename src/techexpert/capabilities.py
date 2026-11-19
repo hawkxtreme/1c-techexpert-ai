@@ -69,7 +69,7 @@ ROUTES={
      'bounded authored note; no independent diagnosis',['id','body','content_sha256']),
  'os.collect':dict(route(OS['properties'],[],['explicit node and existing local/SSH/WinRM access'],
      'bounded counter collection; no service setup or permission changes',['artifact_id','result','sources'],timeout=1830)),
- 'os.import':route(dict(measurements=FILE,**_input_fields(_sys.modules[__name__],single=True)),['measurements'],['provided OS metrics JSON or one approved catalogue member'],'private artifact snapshot',['artifact_id','result','sources']),
+ 'os.import':route(dict(measurements=FILE,expected_sha256=SHA256,**_input_fields(_sys.modules[__name__],single=True)),['measurements'],['provided OS metrics JSON or one approved catalogue member'],'private artifact snapshot',['artifact_id','result','sources']),
  'artifact.show':route(dict(artifact_id=CASE),['artifact_id'],['verified saved artifact'],'read saved evidence',['artifact_id','result','sources']),
 }
 # Keep the original13-operation compatibility workload separate from additions.
@@ -350,7 +350,7 @@ def execute(operation,args,state,output,*,stop=None,memory_bytes=None):
         if operation=='os.import' and args.get('input_plan'):
             from .input_adapters import import_selected
             data=import_selected(operation,args,state,output)
-        else:data=collect_os(output,args,should_stop=stop) if operation=='os.collect' else import_os(output,args['measurements'])
+        else:data=collect_os(output,args,should_stop=stop) if operation=='os.collect' else import_os(output,args['measurements'],expected_sha256=args.get('expected_sha256'))
         targets=[dict(kind='artifacts',id=data['artifact_id'])]
     elif operation=='artifact.show':
         from .artifacts import load_artifact

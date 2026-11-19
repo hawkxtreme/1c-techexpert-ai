@@ -13,6 +13,14 @@ description: "Спланировать и выполнить ограничен�
 
 `python techexpert.py os-plan --duration 300 --interval 1` только готовит параметры. `os-collect` явно запускает один сбор. Для SSH добавьте --transport ssh --host user@node, для WinRM — --transport winrm --host node. При необходимости SSH использует --identity-file и --known-hosts-file, сохраняя проверку ключа сервера. На удалённом узле нужен Python 3.10+; служба и доступ должны существовать заранее. WinRM использует текущую авторизацию Negotiate; службы/TrustedHosts/права не меняются.
 
+### Передача сбора оператору
+
+Когда оператор сам запускает сбор на нужном узле, подготовь `request.json` со `schema_version: 1`, `target` (`platform` — `windows` или `linux`, `hostname` — вывод `hostname` на этом узле), `window` (`start`, `end` в ISO 8601 с часовым поясом) и `collection` (`role`, при необходимости `duration_seconds`, `interval_seconds`, `max_bytes`). Для ролей `onec` и `storage` можно указать `file_base` — абсолютный локальный путь к каталогу файловой базы или файлу `.1CD` на узле оператора.
+
+1. Покажи `python techexpert.py os-operator-plan request.json`. После согласования сохрани тот же план с `--output plan.json --expected-sha256 <ticket_sha256>` и передай оператору файл и контрольную сумму.
+2. На выбранном узле оператор запускает `python techexpert.py os-operator-run plan.json --expected-sha256 <ticket_sha256>` из проверенного пакета той же версии. Команда выполняет один сбор в согласованном окне. При прерывании используй тот же план и тот же корень состояния. Для остановки работающего сбора есть `operation-cancel <run_id> --executor-id operator`; передай ему `--state-dir` рабочего каталога сбора перед именем команды. Его путь состоит из корня состояния на узле и `operator_state_suffix` из плана.
+3. Оператор возвращает файл из `measurements.path` и `measurements.sha256`. Выполни `os-import measurements.json --expected-sha256 <sha256>` или `os.import` с `expected_sha256`, прикрепи артефакт к текущему расследованию и проверь его окно. Импорт подтверждает целостность переданных байтов. Принадлежность наблюдения инциденту проверяется по другим свидетельствам.
+
 Локальный результат и `os-import measurements.json` сохраняются как artifact_id. Первое измерение и недоступные счётчики могут быть unknown. Проверяйте scope, полноту и сбросы. При обрыве SSH/WinRM остановка удалённого процесса остаётся неизвестной. Штатное достижение лимита объёма даёт частичные измерения и явный результат завершения.
 
 Команды запускайте из проверенного корня пакета; [общий контракт](../techexpert/references/local-cli.md) задаёт состояние и формат ошибок.

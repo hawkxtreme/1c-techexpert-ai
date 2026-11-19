@@ -205,7 +205,7 @@ def inspect_state(state):
         if _exists(path):
             problems.append(dict(kind=kind,status='writer_or_interruption'))
 
-    try:
+    def inspect(state):
         profiles = state/'profiles'
         marker(profiles/'write.lock','profiles')
         for path in children(profiles):
@@ -340,6 +340,17 @@ def inspect_state(state):
                     schema('os-observation',entry['plan'])
         managed(state/'operations','operations',_RUN)
         managed(state/'kernel-calls','kernel-calls',_ID)
+
+    try:
+        inspect(state)
+        for stage in children(state / os_observation.OPERATOR_ROOT):
+            if not _RUN.fullmatch(stage.name) or not stage.is_dir():
+                raise InputError('unexpected operator collection state entry')
+            schemas['os-observation'].add(os_observation.OPERATOR_STATE_CAPABILITY)
+            if fs.writer_active(stage):
+                problems.append(dict(kind='os-operator', id=stage.name, status='active'))
+            else:
+                inspect(stage)
     except _ERRORS:
         problems.append(dict(kind='saved_state',status='state_unavailable_or_incomplete'))
     return dict(activity='active' if any(item['status']=='active' for item in problems)
