@@ -2,7 +2,8 @@
 from copy import deepcopy
 from hashlib import sha256
 
-from . import context_disclosure as disclosure, context_excerpt, context_policy as policy, operation_state as fs
+from . import context_coverage, context_disclosure as disclosure, context_excerpt
+from . import context_policy as policy, operation_state as fs
 from .code_values import CodeError
 from .context_fields import ATTACHMENT_ID
 from .inputs import InputError
@@ -124,11 +125,14 @@ def verify_view(state, plan, run_id, doc, binding, record, saved):
     payload = bytes_of(reply['data'])
     if len(payload) != entry['payload_bytes'] or sha256(payload).hexdigest() != entry['payload_sha256']:
         raise InputError('program view payload differs from its disclosure receipt')
+    if request['kind'] in context_coverage.VIEWS:
+        context_coverage.verify_view(state, target, request['kind'], reply['data'])
 
 
 def pins(data):
+    # Coverage views verify the specific observed files in verify_view.
     return {(KINDS[item['source_kind']], item['source_id'], item['source_report_sha256'])
-            for call in data['calls'] if (item := call.get('view')) is not None}
+            for call in data['calls'] if (item := call.get('view')) is not None and item['view'] not in context_coverage.VIEWS}
 
 
 def withhold(state, value):

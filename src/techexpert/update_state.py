@@ -5,6 +5,7 @@ import re
 import stat
 
 from . import check_history, context_excerpt, context_intake, context_program, fix_verification, investigation_progress, investigation_task, native_jr_sqlite, operation_state as fs, operations, os_observation, report_references
+from . import context_coverage
 from .inputs import InputError, json_value, read_snapshot
 
 
@@ -171,6 +172,10 @@ def inspect_state(state):
                         or value.get('call_id')!=folder.name or value.get('plan_sha256')!=digest
                         or value.get('controller',{}).get('tree_finished') is not True):
                         raise InputError('controller completion unverified')
+                    if plan.get('action') == 'context-read' and value.get('response', {}).get('exit_code') == 0:
+                        selection = json_value(plan['arguments']['selection'], reject_duplicates=True)
+                        if selection['kind'] in context_coverage.VIEWS:
+                            schemas['context-disclosure'].add(context_coverage.READER_CAPABILITY)
             except _ERRORS:
                 problems.append(dict(kind=kind,id=folder.name,status='state_unavailable_or_incomplete'))
 

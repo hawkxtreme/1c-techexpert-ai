@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from . import context_excerpt, context_fields as fields, context_policy as policy, investigations
+from . import context_coverage, context_excerpt, context_fields as fields, context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
 
@@ -19,6 +19,7 @@ VIEWS = {
     'jr-evidence': ('jr', 'artifact'),
     'comparison': ('comparison', 'comparison'),
     context_excerpt.VIEW: (context_excerpt.CATEGORY, 'artifact'),
+    **context_coverage.VIEWS,
 }
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
@@ -55,6 +56,10 @@ def validate_request(value):
         optional.update(('offset', 'limit', 'window'))
     if kind == 'tj-events':
         optional.update(('event', 'source', 'linked_run'))
+    if kind in context_coverage.VIEWS:
+        optional.add('window')
+    if kind == 'tj-coverage':
+        optional.update(('offset', 'limit', 'event'))
     if kind.endswith('-evidence'):
         optional.add('record')
         record = args.get('record')
@@ -62,7 +67,7 @@ def validate_request(value):
             raise InputError('select a record identifier for this evidence view')
     if set(args) - set(schema['required']) - optional:
         raise InputError('filters are not available for this context view')
-    if kind == 'jr-events' and 'window' in args:
+    if (kind == 'jr-events' or kind in context_coverage.VIEWS) and 'window' in args:
         from .source_coverage import validate_request as validate_window
         args['window'] = validate_window(window=args['window'])['window']
     return args
@@ -227,7 +232,7 @@ def _fit(data, max_bytes):
         payload = compact(data).encode('utf-8')
         if len(payload) <= max_bytes:
             return payload
-        rows = data.get('records')
+        rows = data.get('records', data.get('sources') if 'total_sources' in data else None)
         if not rows or len(rows) == 1:
             raise InputError('context view exceeds the approved byte limit')
         rows.pop()
@@ -288,7 +293,10 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
             data = context_excerpt.read_view(state, doc, attachment, saved)
         else:
             aliases = fields.Aliases(saved['alias_key'], doc['investigation_id'])
-            data = _project(state, attachment, args, aliases)
+            data = (context_coverage.view(state, doc, attachment, args, aliases)
+                    if kind in context_coverage.VIEWS else _project(state, attachment, args, aliases))
+    except context_coverage.WindowRequired:
+        return _blocked('context_window_required', 'Select a bounded start and end with a known time zone.')
     except context_excerpt.ApprovalRequired:
         return _blocked('context_excerpt_approval_required', 'Review the exact local excerpt and confirm its digest.')
     except context_excerpt.ApprovalRevoked:

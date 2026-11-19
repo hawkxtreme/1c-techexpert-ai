@@ -273,11 +273,15 @@ def read_journal(state_dir,path,*,platform_version=None,utc_offset=None,consiste
 
 def _saved(state_dir,artifact_id):
     report,_=read_artifact_record(state_dir,artifact_id)
+    return _parse_saved(state_dir, report)
+
+
+def _parse_saved(state_dir, report):
     profile=report['result'].get('profile')
     if report['kind']!='native-jr' or profile not in (PROFILE,lgd.PROFILE):raise InputError('artifact is not a supported native JR snapshot')
     sources=[]
     for source in report['sources']:
-        data=read_snapshot(source_path(artifact_folder(state_dir,artifact_id),source))
+        data=read_snapshot(source_path(artifact_folder(state_dir,report['artifact_id']),source))
         if len(data)!=source['bytes'] or hashlib.sha256(data).hexdigest()!=source['sha256']:
             raise InputError('JR snapshot integrity mismatch during read')
         sources.append((source['name'],data))

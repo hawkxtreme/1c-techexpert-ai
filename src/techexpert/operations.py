@@ -409,7 +409,7 @@ def _run(state,request,admission,*,parent_guard=None):
         return run(state,original,parent_guard=parent_guard)
     fs.private(folder)
     with fs.writer(folder):
-        started=time.monotonic();plan=dict(schema_version=fs.plan_schema(request['operation']),request=request,state_dir=str(state),context=context,versions=versions,
+        started=time.monotonic();plan=dict(schema_version=fs.plan_schema(request),request=request,state_dir=str(state),context=context,versions=versions,
             deadline_monotonic=started+request['budget']['timeout_seconds'],created_at=fs.stamp(),investigation_dependencies=dependencies)
         if history is not None or request['operation']==context_program.OPERATION:
             plan['check_binding']=history
