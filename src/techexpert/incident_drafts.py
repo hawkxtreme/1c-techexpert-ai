@@ -290,7 +290,7 @@ def _source_bytes(state_dir,doc,evidence_id):
             raise InputError('encoded source snapshots require a separate prepared text excerpt; raw source bundles are not exported')
         if kind=='knowledge_use':
             raise InputError('private knowledge-use snapshots are not public excerpts; cite the card/source URL or provide separately reviewed observation text')
-        if kind in ('logcfg_proposal','logcfg_rollback'):
+        if kind in ('logcfg_proposal','logcfg_rollback','logcfg_observation'):
             raise InputError('private configuration XML and diffs require separate prepared text; raw logcfg artifacts are not public excerpts')
         if kind=='remote_capture':
             raise InputError('raw remote transfers require separate prepared text; use parsed reviewed observations, not transport bundles')

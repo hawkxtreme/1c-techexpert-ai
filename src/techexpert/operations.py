@@ -232,8 +232,11 @@ def _snapshots(state,operation,args,data,*,output=None):
         if (type(intake) is not dict or intake.get('artifact_id')!=args['input_plan']
             or intake.get('plan_report_digest')!=fs.digest(parent)):raise InputError('captured input catalogue identity mismatch')
     from . import profile_journals
-    if args.get('profile_journal', {}).get('read_mode') == profile_journals.FIXED_PREFIX:
+    selector = args.get('profile_journal', {})
+    if selector.get('read_mode') == profile_journals.FIXED_PREFIX:
         profile_journals.pin_prefix(operation, args, data, add)
+    if 'logcfg_file' in selector or 'logcfg_id' in selector:
+        profile_journals.pin_logcfg(operation, selector, data, add)
     return references
 
 def _worker(folder):

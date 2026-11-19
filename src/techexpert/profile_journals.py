@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import stat
 
-from . import context_policy, input_files, native_jr, native_tj, profile_files, storage, tj_reference
+from . import context_policy, input_files, logcfg_observation, native_jr, native_tj, profile_files, storage, tj_reference
 from . import operation_state as fs
 from .inputs import InputError, MAX_FILE_BYTES, MAX_TOTAL_BYTES
 from .investigation_progress import _occurrence_window
@@ -15,13 +15,13 @@ from .source_coverage import validate_request
 PREVIEW = 'source.check'
 CAPTURES = {'case.analyze': 'tj', 'jr.import': 'jr'}
 OPERATIONS = {PREVIEW, *CAPTURES}
-HOURLY_MINUTE = 'hourly_minute'
+HOURLY_MINUTE = logcfg_observation.HOURLY_MINUTE
 FIXED_PREFIX = 'fixed_prefix'
 PREFIX_PLAN = 'tj_prefix_plan'
 PREFIX_FAILURES = dict(source_truncated='journal_prefix_truncated', source_replaced='journal_prefix_replaced',
                        prefix_changed='journal_prefix_changed')
 REASONS = ('journal_preview_changed', 'journal_preview_incomplete', 'journal_coverage_limited',
-           'journal_parse_failed', 'journal_prefix_bounded', *PREFIX_FAILURES.values())
+           'journal_parse_failed', 'journal_prefix_bounded', 'logcfg_inspection_incomplete', *PREFIX_FAILURES.values())
 MAX_MEMBERS = 32
 
 
@@ -37,6 +37,11 @@ def schema(cap, operation):
             description='Declare short timestamps and one-hour rotation verified for this source and window.')
         selector['read_mode'] = cap.string(16, enum=[FIXED_PREFIX],
             description='Use a fixed byte boundary per selected TJ file, allowing append-only growth.')
+        selector['logcfg_id'] = dict(cap.CASE,
+            description='Use the supplied configuration previously read for this TJ and confirmed relevant to this window.')
+    if preview:
+        selector['logcfg_file'] = dict(cap.FILE,
+            description='Read only this absolute local logcfg.xml copy for the selected TJ. Use without window or reader options.')
     fields = dict(profile_journal=cap.obj(selector, () if preview else ('source',)))
     if not preview:
         fields['preview_sha256'] = cap.SHA256
@@ -50,7 +55,11 @@ def normalize(cap, operation, arguments):
     result = cap.validate(arguments, schema(cap, operation))
     selected = result['profile_journal']
     if selected and 'source' not in selected:
-        raise InputError('select a journal before giving a window or timestamp profile')
+        raise InputError('select a journal before specifying reader or configuration options')
+    if 'logcfg_file' in selected and selected.keys() != {'source', 'logcfg_file'}:
+        raise InputError('configuration inspection only takes the selected journal and the supplied copy')
+    if 'logcfg_id' in selected and 'timestamp_profile' in selected:
+        raise InputError('choose a retained configuration or a declared timestamp profile')
     if operation == 'case.analyze' and ('preview_id' in result) != (selected.get('read_mode') == FIXED_PREFIX):
         raise InputError('fixed-prefix capture requires the retained preview ID')
     if 'window' in selected:
@@ -149,7 +158,7 @@ def _files(root, kind, *, directory):
 
 INVENTORY_STATES = frozenset(('journal_layout_unsupported', 'journal_scan_limit', 'journal_inventory_changed',
     'linked_or_special_journal', 'no_journal_files', 'journal_byte_limit', 'hourly_filename_required',
-    'hourly_window_unsupported', 'no_hour_files_in_window'))
+    'hourly_window_unsupported', 'no_hour_files_in_window', 'logcfg_layout_conflict'))
 
 
 def _hourly_members(files, window, offset):
@@ -215,7 +224,7 @@ def _tj_review(root, profiles, selection, settings, window, state, manifest_path
     return raw, review
 
 
-def _plan(state, output, binding, source, public, window, selection):
+def _plan(state, output, binding, source, public, window, selection, *, logcfg_reference=None, log_location=None):
     kind = source['type']
     root = profile_files._ordinary_path(source['path'])
     profile_files._chain(root)
@@ -231,8 +240,11 @@ def _plan(state, output, binding, source, public, window, selection):
     raw = review = None
     if kind == 'tj':
         settings = source['settings']
+        if logcfg_reference is not None:
+            plan['logcfg_observation'] = logcfg_reference
+            settings = dict(settings, placement='folders')
         offset = settings['utc_offset']
-        if selection.get('timestamp_profile') == HOURLY_MINUTE:
+        if logcfg_reference is not None or selection.get('timestamp_profile') == HOURLY_MINUTE:
             profiles = _hourly_members(files, window, offset)
             public.update(timestamp_profile=HOURLY_MINUTE, files_outside_window=len(files) - len(profiles),
                           hour_basis='filename_and_requested_year_with_declared_offset')
@@ -241,6 +253,8 @@ def _plan(state, output, binding, source, public, window, selection):
         else:
             profiles = dict.fromkeys(files, dict(timestamp_format='iso', utc_offset=offset))
         files = list(profiles)
+        if log_location is not None:
+            logcfg_observation.check_layout(files, log_location)
         if len(files) > MAX_MEMBERS:
             raise InputError('journal_scan_limit')
         if sum(file.lstat().st_size for file in files) > native_tj.MAX_REFERENCE_SCAN_BYTES:
@@ -303,7 +317,7 @@ def _checked_prefix_plan(report, identifier, args):
     return saved
 
 
-def _capture_prefix(state, output, binding, source, window, args, stop):
+def _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference):
     from .artifacts import artifact_folder, load_artifact
 
     identifier = args['preview_id']
@@ -315,13 +329,15 @@ def _capture_prefix(state, output, binding, source, window, args, stop):
     plan = saved['plan']
     if plan['binding'] != binding or plan['window'] != window or plan['root'] != str(profile_files._ordinary_path(source['path'])):
         raise PreviewChanged('fixed-prefix preview binds another investigation revision, source or window')
+    if plan.get('logcfg_observation') != logcfg_reference:
+        raise PreviewChanged('configuration snapshot differs from the reviewed preview')
     if stop():
         raise InputError('journal capture stopped')
     path = output / 'profile-journal-manifest.json'
     with path.open('xb') as stream:
         stream.write(saved['manifest'].encode('utf-8'))
     return storage.investigate(path, output, reference_state=state, reference_sha256=fs.digest(plan['tj']),
-        prefix_review=plan['tj'], should_stop=stop)
+        prefix_review=plan['tj'], should_stop=stop, logcfg_observation=logcfg_reference)
 
 
 def pin_prefix(operation, args, data, add):
@@ -343,6 +359,22 @@ def pin_prefix(operation, args, data, add):
             raise InputError('captured TJ files differ from the reviewed prefixes')
 
 
+def pin_logcfg(operation, selection, data, add):
+    if data.get('kind') == logcfg_observation.KIND:
+        add('artifacts', data['artifact_id'])
+        return
+    identifier = selection.get('logcfg_id')
+    if identifier is None:
+        return
+    prefix = data.get('kind') == PREFIX_PLAN
+    reference = (data['result']['plan'] if prefix else data).get('logcfg_observation')
+    if reference is None and operation == PREVIEW and not prefix and data['journal_preview']['status'] != 'ready':
+        return
+    report = add('artifacts', identifier)
+    if report['kind'] != logcfg_observation.KIND or reference != logcfg_observation.dependency(report):
+        raise InputError('retained configuration disagrees with the reviewed journal settings')
+
+
 def execute(operation, args, state, output, binding, *, stop):
     doc = context_policy.selected_investigation(state, binding['investigation_id'], binding['expected_revision'])
     if fs.digest(doc) != binding['report_sha256'] or doc['profile_sha256'] != binding['profile_sha256']:
@@ -358,8 +390,19 @@ def execute(operation, args, state, output, binding, *, stop):
                                          bases=[bases[base] for base in source['base_ids']])
                                      for key, source in journals.items()]), []
     source = journals.get(ref)
+    if 'logcfg_file' in selection:
+        return logcfg_observation.inspect_copy(output, binding, ref, source, selection['logcfg_file'], stop=stop)
     timestamp_profile = selection.get('timestamp_profile')
-    status = _configuration_status(source, timestamp_profile) if source else 'source_not_configured'
+    logcfg_reference = log_location = None
+    logcfg_id = selection.get('logcfg_id')
+    if logcfg_id is not None and source and source['type'] == 'tj':
+        status, logcfg_reference, log_location = logcfg_observation.select(state, binding, ref, logcfg_id)
+        if status == 'configured':
+            status = _configuration_status(source, HOURLY_MINUTE)
+    elif logcfg_id is not None:
+        status = 'logcfg_source_unsupported'
+    else:
+        status = _configuration_status(source, timestamp_profile) if source else 'source_not_configured'
     fixed_prefix = selection.get('read_mode') == FIXED_PREFIX
     if fixed_prefix and status == 'configured' and source['type'] != 'tj':
         status = 'journal_read_mode_unsupported'
@@ -368,14 +411,17 @@ def execute(operation, args, state, output, binding, *, stop):
         status = 'window_required'
     public = dict(source=ref, kind=source['type'] if source else None, status=status, window=window,
                   window_basis=basis, source_bytes_read=False)
+    if logcfg_reference is not None:
+        public.update(logcfg_id=logcfg_id, timestamp_profile_basis='supplied_logcfg')
     if fixed_prefix and operation == 'case.analyze':
         if status != 'configured':
             raise PreviewChanged('configured TJ selection is unavailable')
-        report = _capture_prefix(state, output, binding, source, window, args, stop)
+        report = _capture_prefix(state, output, binding, source, window, args, stop, logcfg_reference)
         return report, [dict(kind='cases', id=report['case_id'])]
     if status == 'configured':
         try:
-            plan, path, raw, review = _plan(state, output, binding, source, public, window, selection)
+            plan, path, raw, review = _plan(state, output, binding, source, public, window, selection,
+                                           logcfg_reference=logcfg_reference, log_location=log_location)
         except profile_files._ObservationError as error:
             public['status'] = {'separate_access_required': 'separate_access_required',
                                 'absolute_path_required': 'absolute_path_required', 'linked_path': 'linked_or_special_journal',
@@ -388,7 +434,10 @@ def execute(operation, args, state, output, binding, *, stop):
     if operation == PREVIEW:
         if fixed_prefix and public['status'] == 'ready':
             return _save_prefix_plan(output, plan, raw, public)
-        return dict(journal_preview=public), []
+        data = dict(journal_preview=public)
+        if logcfg_reference is not None:
+            data['logcfg_observation'] = logcfg_reference
+        return data, []
     if (public['status'] != 'ready' or args['preview_sha256'] != public['preview_sha256']
             or CAPTURES[operation] != public['kind']):
         raise PreviewChanged('a matching preview of this configured journal and window is required')
@@ -398,13 +447,16 @@ def execute(operation, args, state, output, binding, *, stop):
         with path.open('xb') as stream:
             stream.write(raw)
         report = storage.investigate(path, output, reference_state=state,
-                                     reference_sha256=fs.digest(review), should_stop=stop)
+                                     reference_sha256=fs.digest(review), should_stop=stop, logcfg_observation=logcfg_reference)
         return report, [dict(kind='cases', id=report['case_id'])]
     report = _capture_jr(output, plan, source['settings'], stop)
     return report, [dict(kind='artifacts', id=report['artifact_id'])]
 
 
 def partial_reason(operation, args, data):
+    if 'logcfg_file' in args['profile_journal']:
+        info = data['result']['observation'] if data.get('kind') == logcfg_observation.KIND else data['logcfg']
+        return None if info['status'] == 'matched' else 'logcfg_inspection_incomplete'
     preview = data.get('journal_preview')
     if preview is not None and preview['status'] != 'ready':
         return 'journal_preview_incomplete'
@@ -416,7 +468,7 @@ def partial_reason(operation, args, data):
             return 'journal_prefix_bounded'
     if data['source_coverage']['status'] == 'observations_available':
         return None
-    if args['profile_journal'].get('timestamp_profile') == HOURLY_MINUTE:
+    if args['profile_journal'].get('timestamp_profile') == HOURLY_MINUTE or 'logcfg_observation' in data:
         parse_states = {source['reference_capture']['original_parse_status'] for source in data['sources']}
         if 'invalid' in parse_states and parse_states <= {'invalid', 'empty'}:
             return 'journal_parse_failed'

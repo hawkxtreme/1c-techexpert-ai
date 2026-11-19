@@ -51,6 +51,8 @@ def validate(request):
 def reader_capability(request):
     selector = request['arguments'].get('profile_journal')
     if selector is not None:
+        if 'logcfg_file' in selector or 'logcfg_id' in selector:
+            return 7
         if 'read_mode' in selector:
             return 6
         return 5 if 'timestamp_profile' in selector else 4
@@ -91,10 +93,13 @@ def metadata(operation, data):
     if operation == 'input.inspect':
         return _catalogue(data)
     if operation == 'source.check':
+        from .logcfg_observation import KIND as LOGCFG_OBSERVATION
         from .profile_journals import PREFIX_PLAN
         if data.get('kind') == PREFIX_PLAN:
             return dict(journal_preview=dict(data['result']['preview'], preview_id=data['artifact_id']))
-        for key in ('journal_sources', 'journal_preview'):
+        if data.get('kind') == LOGCFG_OBSERVATION:
+            return dict(logcfg=dict(data['result']['observation'], id=data['artifact_id']))
+        for key in ('journal_sources', 'journal_preview', 'logcfg'):
             if key in data:
                 return {key: data[key]}
         return _reference(data)

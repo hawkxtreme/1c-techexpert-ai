@@ -98,7 +98,7 @@ def job_report(bundle):
 
 
 def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None, reference_state=None,
-                prefix_review=None, should_stop=None):
+                prefix_review=None, should_stop=None, logcfg_observation=None):
     bundle = load_manifest(manifest_path, reference_sha256=reference_sha256,
                            reference_state=state_dir if reference_state is None else reference_state,
                            prefix_review=prefix_review, should_stop=should_stop)
@@ -120,6 +120,8 @@ def investigate(manifest_path, state_dir, *, intake=None, reference_sha256=None,
     result['source_acquisition']=bundle['source_attempts']
     if intake is not None:result['input_intake']=intake
     if reference_sha256 is not None:result['reference_plan_sha256']=reference_sha256
+    if logcfg_observation is not None:
+        result['logcfg_observation'] = logcfg_observation
     if bundle['manifest'].get('workload_profile')=='sc01-order-load-v1':
         result['order_load']=analyze_order_load(bundle,result)
     native_sources = [s for s in bundle['sources'] if s['format'] == '1c-tj-text-v1']

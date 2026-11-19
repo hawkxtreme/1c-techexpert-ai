@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from xml.sax.saxutils import quoteattr
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from src.techexpert import investigations, operations, profiles, storage
@@ -453,6 +454,111 @@ class ContextIntakeTests(unittest.TestCase):
         self.assertEqual(code, 1, replay)
         self.assertTrue(replay['replayed'])
         self.assertEqual(replay['attachment'], result['attachment'])
+
+    def test_retained_logcfg_supplies_parser_for_an_explicitly_selected_hourly_tj(self):
+        from src.techexpert import artifacts
+
+        destination = self.root / (PRIVATE + '-tj')
+        path = destination / '1cv8_123' / '26111509.log'
+        path.parent.mkdir(parents=True)
+        records = b'09:59.999999-1,CALL,1\n10:00.000000-2,SCALL,1\n'
+        path.write_bytes(records)
+        self.configured_journals(tj_path=path, timestamp_format='minute')
+        config = self.root / (PRIVATE + '-logcfg.xml')
+        xml = (f'<config xmlns="http://v8.1c.ru/v8/tech-log"><log location={quoteattr(str(destination))} history="0">'
+               '<event><eq property="name" value="call"/></event>'
+               f'<event><eq property="name" value="SCALL"/><eq property="Usr" value="{PRIVATE}"/></event>'
+               '<property name="all"/></log><defaultlog history="0"/></config>').encode()
+        config.write_bytes(xml)
+        inspect = self.request('source.check', dict(profile_journal=dict(source='j1', logcfg_file=str(config))), 'inspect-logcfg')
+        code, view = self.cli('context-intake', self.write_request(inspect))
+        self.assertEqual(code, 0, view)
+        info = view['data']['logcfg']
+        identifier = info['id']
+        self.assertEqual(info['status'], 'matched')
+        self.assertFalse(info['journal_bytes_read'])
+        self.assertEqual(info['settings'], dict(format='text', placement='folders', rotation='period',
+                                               rotation_hours=1, compression='none', history_hours=0))
+        self.assertEqual(info['events']['names'], ['CALL'])
+        self.assertEqual(info['events']['conditional_names'], ['SCALL'])
+        self.assertEqual(info['timestamp_profile'], 'hourly_minute')
+        self.assertEqual(info['runtime_applicability'], 'unverified')
+        self.assertEqual(config.read_bytes(), xml)
+        self.assertEqual(path.read_bytes(), records)
+        artifact = artifacts.load_artifact(self.state, identifier)
+        retained = artifacts.source_path(artifacts.artifact_folder(self.state, identifier), artifact['sources'][0])
+        self.assertEqual(retained.read_bytes(), xml)
+        self.assertEqual(view['snapshots'][0]['id'], identifier)
+        config.unlink()
+
+        selector = dict(source='j1', logcfg_id=identifier, read_mode='fixed_prefix')
+        args = dict(profile_journal=selector)
+        other = investigations.create(self.state, dict(task=PRIVATE))
+        unrelated = self.request('source.check', args, 'unrelated-logcfg')
+        unrelated['context']['investigation_id'] = other['investigation_id']
+        code, denied = self.cli('context-intake', self.write_request(unrelated))
+        self.assertEqual(code, 1, denied)
+        self.assertEqual(denied['data']['journal_preview']['status'], 'logcfg_scope_mismatch')
+        code, preview = self.cli('context-intake', self.write_request(self.request('source.check', args, 'logcfg-tj-preview')))
+        self.assertEqual(code, 0, preview)
+        plan = preview['data']['journal_preview']
+        self.assertEqual(plan['timestamp_profile_basis'], 'supplied_logcfg')
+        self.assertEqual({s['id'] for s in preview['snapshots']}, {identifier, plan['preview_id']})
+        args.update(preview_id=plan['preview_id'], preview_sha256=plan['preview_sha256'])
+        request = self.request('case.analyze', args, 'logcfg-tj-capture')
+        code, capture = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 0, capture)
+        case_id = capture['data']['material']['id']
+        report = storage.verified_case(self.state, case_id)
+        self.assertEqual(report['logcfg_observation']['id'], identifier)
+        self.assertEqual(storage.case_source_path(self.state, case_id, 's1').read_bytes(), b'10:00.000000-2,SCALL,1\n')
+        path.unlink()
+        code, replay = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 0, replay)
+        self.assertTrue(replay['replayed'])
+        retained.write_bytes(xml + b' ')
+        code, refused = self.cli('context-intake', self.write_request(request))
+        self.assertEqual(code, 2, refused)
+        self.assertNotIn('attachment', refused)
+
+    def test_logcfg_preview_requires_one_explicit_matching_and_supported_rule(self):
+        destination = self.root / (PRIVATE + '-tj')
+        path = destination / '1cv8_123' / '26111509.log'
+        path.parent.mkdir(parents=True)
+        self.configured_journals(tj_path=path, window=False)
+        config = self.root / 'logcfg.xml'
+        location = quoteattr(str(destination))
+        selected = f'<log location={location} format="json"><event/></log>'
+        unrelated = f'<log location={quoteattr(str(self.root / "unrelated"))}/>'
+        prefix = '<config xmlns="http://v8.1c.ru/v8/tech-log">'
+        cases = {
+            'ambiguous_location': selected + f'<log location={quoteattr(str(path.parent))}/>',
+            'unresolved_location': selected + '<log location="%PRIVATE%/logs"/>',
+            'unmatched_location': unrelated,
+            'matched': selected + unrelated,
+        }
+        args = dict(profile_journal=dict(source='j1', logcfg_file=str(config)))
+        for expected, rules in cases.items():
+            with self.subTest(expected=expected):
+                config.write_text(prefix + rules + '</config>', encoding='utf8')
+                _, view = self.cli('context-intake', self.write_request(self.request('source.check', args, expected)))
+                self.assertEqual(view['data']['logcfg']['status'], expected)
+                self.assertIsNone(view['data']['logcfg']['timestamp_profile'])
+                self.assertFalse(view['data']['logcfg']['journal_bytes_read'])
+        info = view['data']['logcfg']
+        self.assertEqual(info['settings']['format'], 'json')
+        args = dict(profile_journal=dict(source='j1', logcfg_id=info['id']))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check', args, 'unsupported-logcfg')))
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['journal_preview']['status'], 'logcfg_reader_unsupported')
+        self.assertNotIn('preview_sha256', view['data']['journal_preview'])
+
+        config.write_text(f'<!DOCTYPE config [<!ENTITY test "{PRIVATE}">]>{prefix}</config>', encoding='utf8')
+        args = dict(profile_journal=dict(source='j1', logcfg_file=str(config)))
+        code, view = self.cli('context-intake', self.write_request(self.request('source.check', args, 'invalid-xml')))
+        self.assertEqual(code, 1, view)
+        self.assertEqual(view['data']['logcfg']['status'], 'invalid_or_unsupported_xml')
+        self.assertEqual(view['snapshots'], [])
 
     def test_reviewed_tj_prefix_rejects_changed_window_truncation_and_replacement(self):
         self.configured_journals()
