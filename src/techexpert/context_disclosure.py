@@ -7,6 +7,7 @@ import time
 import uuid
 
 from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_os_window, context_tj_process
+from . import jr_job_runs
 from . import context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
@@ -21,6 +22,7 @@ VIEWS = {
     'tj-evidence': ('tj', 'case'),
     'jr-events': ('jr', 'artifact'),
     'jr-evidence': ('jr', 'artifact'),
+    jr_job_runs.VIEW: ('jr','artifact'),
     context_journal_match.VIEW: ('jr', 'artifact'),
     context_tj_process.VIEW: ('os','artifact'),
     'comparison': ('comparison', 'comparison'),
@@ -38,6 +40,7 @@ VIEW_READER_CAPABILITIES[context_journal_match.VIEW] = context_journal_match.REA
 VIEW_READER_CAPABILITIES[context_os_window.VIEW] = context_os_window.READER_CAPABILITY
 VIEW_READER_CAPABILITIES[context_os_window.PROCESS_VIEW] = context_os_window.PROCESS_READER_CAPABILITY
 VIEW_READER_CAPABILITIES[context_tj_process.VIEW] = context_tj_process.READER_CAPABILITY
+VIEW_READER_CAPABILITIES[jr_job_runs.VIEW] = jr_job_runs.READER_CAPABILITY
 ANCHORED_VIEWS = {context_journal_match.VIEW,context_tj_process.VIEW}
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
@@ -97,6 +100,10 @@ def validate_request(value):
         args.setdefault('within_seconds', context_journal_match.DEFAULT_RADIUS)
     if kind == context_tj_process.VIEW:
         optional.add('window')
+    if kind == jr_job_runs.VIEW:
+        optional.update(('window','record','offset','limit'))
+        if 'record' in args and (':r' not in args['record'] or 'window' in args):
+            raise InputError('choose a native JR job marker or a time window')
     if kind.endswith('-evidence'):
         optional.add('record')
         record = args.get('record')
@@ -104,7 +111,7 @@ def validate_request(value):
             raise InputError('select a record identifier for this evidence view')
     if set(args) - set(schema['required']) - optional:
         raise InputError('filters are not available for this context view')
-    if (kind in ('jr-events',context_os_window.VIEW,context_os_window.PROCESS_VIEW,context_tj_process.VIEW)
+    if (kind in ('jr-events',jr_job_runs.VIEW,context_os_window.VIEW,context_os_window.PROCESS_VIEW,context_tj_process.VIEW)
             or kind in context_coverage.VIEWS) and 'window' in args:
         from .source_coverage import validate_request as validate_window
         args['window'] = validate_window(window=args['window'])['window']
@@ -352,6 +359,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
                 data = reader.view(state,doc,attachment,anchor,args,aliases)
             elif kind in (context_os_window.VIEW,context_os_window.PROCESS_VIEW):
                 data = context_os_window.view(state,doc,attachment,args,aliases)
+            elif kind == jr_job_runs.VIEW:
+                data = jr_job_runs.view(state,doc,attachment,args,aliases)
             elif kind in context_coverage.VIEWS:
                 data = context_coverage.view(state,doc,attachment,args,aliases)
             else:
