@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 
-from . import context_coverage, context_excerpt, context_fields as fields, context_policy as policy, investigations
+from . import context_coverage, context_excerpt, context_fields as fields, context_journal_match, context_policy as policy, investigations
 from . import operation_state as fs, storage
 from .inputs import InputError
 from .native_tj import FORMATS as TJ_FORMATS
@@ -20,6 +20,7 @@ VIEWS = {
     'tj-evidence': ('tj', 'case'),
     'jr-events': ('jr', 'artifact'),
     'jr-evidence': ('jr', 'artifact'),
+    context_journal_match.VIEW: ('jr', 'artifact'),
     'comparison': ('comparison', 'comparison'),
     FIX_VIEW: ('comparison', 'artifact'),
     APDEX_VIEW: ('apdex', 'artifact'),
@@ -29,6 +30,7 @@ VIEWS = {
 VIEW_READER_CAPABILITIES = dict.fromkeys(context_coverage.VIEWS, context_coverage.READER_CAPABILITY)
 VIEW_READER_CAPABILITIES[FIX_VIEW] = 4
 VIEW_READER_CAPABILITIES[APDEX_VIEW] = 5
+VIEW_READER_CAPABILITIES[context_journal_match.VIEW] = context_journal_match.READER_CAPABILITY
 PAGES = ('tj-events', 'jr-events')
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
@@ -37,6 +39,8 @@ SUMMARY_REFERENCE = re.compile(r'view:([a-f0-9]{32}):([0-9]{20}-[a-f0-9]{32})')
 
 
 def allows_view(kind, saved):
+    if kind == context_journal_match.VIEW:
+        return {'tj','jr'} <= set(saved['categories'])
     return kind == context_excerpt.VIEW or VIEWS[kind][0] in saved['categories']
 
 
@@ -51,6 +55,8 @@ def argument_schema():
         event=cap.string(16, enum=list(fields.TJ_NAMES)), source=cap.string(4, pattern=fields.SOURCE_ID.pattern),
         offset=offset, limit=limit,
         window=cap.WINDOW, linked_run=dict(type='boolean'),
+        anchor_attachment=cap.string(62, pattern=fields.ATTACHMENT_ID.pattern),
+        within_seconds=dict(type='integer', minimum=1, maximum=context_journal_match.MAX_RADIUS),
     ), ('investigation_id', 'revision', 'attachment', 'kind'))
 
 
@@ -68,6 +74,12 @@ def validate_request(value):
         optional.add('window')
     if kind == 'tj-coverage':
         optional.update(('offset', 'limit', 'event'))
+    if kind == context_journal_match.VIEW:
+        optional.update(('anchor_attachment','record','within_seconds','offset','limit'))
+        if (args.get('anchor_attachment') in (None,args['attachment'])
+                or args.get('record') is None or ':r' in args['record']):
+            raise InputError('select a distinct TJ attachment and native record for the journal search')
+        args.setdefault('within_seconds', context_journal_match.DEFAULT_RADIUS)
     if kind.endswith('-evidence'):
         optional.add('record')
         record = args.get('record')
@@ -258,7 +270,7 @@ def _fit(data, max_bytes):
         data['byte_limit_reached'] = True
 
 
-def _record(state, doc, attachment, saved, kind, category, payload, consumer):
+def _record(state, doc, attachment, saved, kind, category, payload, consumer, *, anchor=None):
     folder = fs.private(_audit_folder(state, doc['investigation_id']))
     with fs.writer(folder):
         if len(_audit_paths(folder)) >= MAX_RECEIPTS:
@@ -280,6 +292,8 @@ def _record(state, doc, attachment, saved, kind, category, payload, consumer):
             item['withheld'] = ['unreviewed_source_content', 'source_paths']
         if consumer is not None:
             item['consumer'] = consumer
+        if anchor is not None:
+            item['anchor'] = anchor
         fs.write(folder / (receipt_id + '.json'), dict(entry=item, sha256=fs.digest(item)))
     return item
 
@@ -308,13 +322,19 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         return _blocked('context_attachment_unavailable', 'Choose a compatible attachment in the selected investigation revision.')
     if kind == APDEX_VIEW and attachment.get('scope') != 'apdex_preparation':
         return _blocked('context_attachment_unavailable', 'Choose a saved APDEX preparation in the selected investigation revision.')
+    anchor = None
     try:
         if kind == context_excerpt.VIEW:
             data = context_excerpt.read_view(state, doc, attachment, saved)
         else:
             aliases = fields.Aliases(saved['alias_key'], doc['investigation_id'])
-            data = (context_coverage.view(state, doc, attachment, args, aliases)
-                    if kind in context_coverage.VIEWS else _project(state, attachment, args, aliases))
+            if kind == context_journal_match.VIEW:
+                anchor = context_journal_match.anchor_ref(doc,args)
+                data = context_journal_match.view(state,doc,attachment,anchor,args,aliases)
+            elif kind in context_coverage.VIEWS:
+                data = context_coverage.view(state,doc,attachment,args,aliases)
+            else:
+                data = _project(state,attachment,args,aliases)
     except context_coverage.WindowRequired:
         return _blocked('context_window_required', 'Select a bounded start and end with a known time zone.')
     except context_excerpt.ApprovalRequired:
@@ -333,7 +353,7 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
                 return _blocked('context_policy_changed', 'Read the current context policy before retrying.')
             from .investigation_retention import require_available
             require_available(state, doc['investigation_id'])
-            entry = _record(state, doc, attachment, saved, kind, category, payload, consumer)
+            entry = _record(state, doc, attachment, saved, kind, category, payload, consumer, anchor=anchor)
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,

@@ -93,6 +93,8 @@ def main(argv=None):
             context_command.add_argument('--attachment', required=True)
             for option in ('record','source','event','start','end'):
                 context_command.add_argument('--'+option)
+            context_command.add_argument('--anchor-attachment')
+            context_command.add_argument('--within-seconds', type=int)
             context_command.add_argument('--linked-run', action='store_true', default=None)
     commands.add_parser('demo')
     analyze = commands.add_parser('analyze')
@@ -341,7 +343,8 @@ def main(argv=None):
             else:
                 from . import kernel
                 selection = {key: getattr(args,key) for key in ('investigation_id','revision','kind','attachment',
-                    'record','event','source','offset','limit','linked_run') if getattr(args,key) is not None}
+                    'record','event','source','offset','limit','linked_run','anchor_attachment','within_seconds')
+                    if getattr(args,key) is not None}
                 if args.start is not None or args.end is not None:
                     selection['window'] = dict(start=args.start,end=args.end)
                 call = kernel.invoke(args.state_dir, 'context-read',

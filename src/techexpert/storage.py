@@ -217,7 +217,7 @@ def load_case(state_dir, case_id, *, with_digest=False):
         raise InputError(f'Cannot resume case: {exc}') from exc
 
 
-def read_evidence(state_dir, case_id, evidence_id):
+def read_evidence(state_dir, case_id, evidence_id, *, native_metadata=False):
     match = re.fullmatch(r'(s[1-9][0-9]*):([1-9][0-9]*)', evidence_id)
     if not match:
         raise InputError('evidence id must be source:line, for example s1:2')
@@ -232,12 +232,19 @@ def read_evidence(state_dir, case_id, evidence_id):
             for record in scan:
                 if record['line']==int(match[2]):found=(record,scan.raw_record)
         if found is None:raise InputError('evidence id is not the start of a parsed native record')
-        record,raw=found;text=raw.decode('utf-8-sig').rstrip('\r\n')
-        proof = dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True,text=text[:4096],truncated=len(text)>4096)
+        record,raw=found
+        proof = dict(case_id=case_id,evidence_id=evidence_id,sha256=source['sha256'],**{k:record[k] for k in ('line','end_line','byte_start','byte_end')},integrity_verified=True,untrusted_source_content=True)
         if 'reference_capture' in source:
             from .tj_reference import original_location
             proof['original_location'] = original_location(source, record)
+        if native_metadata:
+            case_source_path(state_dir,case_id,match[1])
+            return dict(proof,event=record['event'],timestamp_utc=record['timestamp_utc'],time_basis=source['profile']['time_basis'])
+        text=raw.decode('utf-8-sig').rstrip('\r\n')
+        proof.update(text=text[:4096],truncated=len(text)>4096)
         return proof
+    if native_metadata:
+        raise InputError('expected saved native TJ evidence')
     data = read_snapshot(case_source_path(state_dir, case_id, match[1]))
     if hashlib.sha256(data).hexdigest() != source['sha256']:
         raise InputError('evidence snapshot integrity mismatch')

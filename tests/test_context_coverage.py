@@ -133,6 +133,90 @@ class ContextCoverageTests(unittest.TestCase):
         self.assertIsNone(unknown['journal']['records_in_window'])
         self.assertFalse(unknown['can_establish_absence'])
 
+    def test_journal_near_tj_requires_both_categories_and_keeps_half_open_evidence(self):
+        anchor = dict(anchor_attachment='A-tj', record='s1:2', within_seconds=1)
+        self.approve('jr')
+        with patch.object(storage, 'load_case', side_effect=AssertionError('read before policy')):
+            denied = self.view('jr-near-tj', 'A-jr', **anchor)
+        self.assertEqual(denied['stop_reason'], 'context_category_not_allowed')
+        self.approve('tj', 'jr')
+        result = self.view('jr-near-tj', 'A-jr', limit=1, **anchor)
+        self.assertEqual(result['status'], 'succeeded', result)
+        data = result['data']
+        self.assertEqual(data['anchor']['evidence']['id'],'s1:2')
+        self.assertEqual(data['anchor']['timestamp_utc'],'2026-11-16T07:05:43+00:00')
+        self.assertEqual(data['window']['end'],'2026-11-16T07:05:44+00:00')
+        self.assertEqual(data['matched_count'],4)
+        self.assertEqual(data['next_offset'],1)
+        self.assertEqual(data['records'][0]['recorded_delta_seconds'],-1)
+        self.assertEqual(data['records'][0]['evidence']['id'],'s2:r1')
+        self.assertEqual(result['disclosure']['anchor']['source_id'],self.case_id)
+        self.assertFalse(data['source_relation']['exact_correlation_allowed'])
+        self.assertEqual(data['clock_alignment'],'not_verified')
+        self.assertNotIn('_$Job$_.Start',json.dumps(result))
+        following = self.view('jr-near-tj','A-jr',offset=1,**anchor)['data']
+        self.assertEqual(len(following['records']),3)
+        self.assertIsNone(following['next_offset'])
+        unknown = self.view('jr-near-tj','A-unknown',**anchor)['data']
+        self.assertEqual(unknown['coverage']['status'],'time_zone_unknown')
+        self.assertIsNone(unknown['coverage']['records_in_window'])
+        self.assertFalse(unknown['can_establish_absence'])
+
+    def test_journal_candidate_retains_conflicting_passports_and_records(self):
+        revision = investigations.revise(self.state,self.iid,dict(source_bindings=[
+            dict(id='S-tj',attachment='A-tj',record_source='s1',reported=dict(infobase_identity=PRIVATE+'1')),
+            dict(id='S-jr',attachment='A-jr',reported=dict(infobase_identity=PRIVATE+'2'))],
+            source_links=[dict(id='L-pair',left='S-tj',right='S-jr',claim='same_infobase',reported=True)]),
+            expected_revision=self.revision)
+        self.revision = revision['revision']
+        self.approve('tj','jr')
+        result = self.view('jr-near-tj','A-jr',anchor_attachment='A-tj',record='s1:2',within_seconds=2,limit=1)
+        data = result['data']
+        self.assertEqual(data['matched_count'],5)
+        self.assertEqual(data['source_relation']['status'],'conflict')
+        self.assertIn('different_infobase_claims',data['source_relation']['reasons'])
+        self.assertEqual(data['source_relation']['saved_links'][0]['id'],'L-pair')
+        self.assertEqual(data['source_relation']['tj_passport'],'S-tj')
+        self.assertEqual(data['source_relation']['jr_passport'],'S-jr')
+        self.assertFalse(data['source_relation']['exact_correlation_allowed'])
+        self.assertEqual(investigations.load(self.state,self.iid,revision=self.revision),revision)
+
+    def test_journal_candidate_program_pins_both_attachments_and_reader(self):
+        from src.techexpert.update_state import inspect_state
+
+        self.approve('tj','jr')
+        selection = dict(kind='jr-near-tj',attachment='A-jr',anchor_attachment='A-tj',
+                         record='s1:2',within_seconds=1,limit=1)
+        full = dict(selection,investigation_id=self.iid,revision=self.revision)
+        self.assertEqual(kernel.invoke(self.state,'context-read',dict(selection=context_disclosure.compact(full)))['exit_code'],0)
+        scope = [{key: selection[key] for key in ('kind','attachment','anchor_attachment')}]
+        program = 'return api("context.read", selected)["data"]["records"][0]["evidence"]["id"]'
+        request = dict(schema_version=1,operation_key='near-journal',executor_id='tests',operation='code.context',
+                       arguments=dict(program=program,bindings=dict(selected=selection),scope=dict(views=scope)),
+                       context=dict(investigation_id=self.iid,expected_revision=self.revision))
+
+        def run(value):
+            path = self.write('near-program.json',value)
+            call = kernel.invoke(self.state,'run',dict(request=str(path)))
+            stream = io.StringIO()
+            kernel.emit(call,stream)
+            return json.loads(stream.getvalue())
+
+        without_anchor = dict(request,operation_key='wrong-near-journal',arguments=dict(request['arguments'],
+                              scope=dict(views=[dict(kind='jr-near-tj',attachment='A-jr')])))
+        self.assertNotEqual(run(without_anchor)['status'],'succeeded')
+        initial = run(request)
+        self.assertEqual(initial['status'],'succeeded',initial)
+        self.assertEqual(initial['data']['value'],'s2:r1')
+        self.assertTrue(run(request)['replayed'])
+        schemas = inspect_state(self.state)['schemata']
+        self.assertIn(6,schemas['context-disclosure'])
+        self.assertIn(6,schemas['context-program'])
+        storage.case_source_path(self.state,self.case_id,'s1').write_bytes(b'damaged')
+        denied = run(request)
+        self.assertNotEqual(denied['status'],'succeeded')
+        self.assertIsNone(denied.get('data'))
+
     def test_protected_coverage_of_unsupported_attachment_is_metadata_only(self):
         from src.techexpert import artifacts
         candidate = artifacts.save_artifact(self.state, 'sample', {}, [], {})

@@ -2,7 +2,7 @@
 from copy import deepcopy
 from hashlib import sha256
 
-from . import context_coverage, context_disclosure as disclosure, context_excerpt
+from . import context_coverage, context_disclosure as disclosure, context_excerpt, context_journal_match
 from . import context_policy as policy, operation_state as fs
 from .code_values import CodeError
 from .context_fields import ATTACHMENT_ID
@@ -17,21 +17,30 @@ READ_ERRORS = (OSError, ValueError, KeyError, TypeError, RecursionError)
 
 def formal_arguments(cap, regular):
     values = deepcopy(regular)
-    view = cap.obj(dict(attachment=cap.string(62, pattern=ATTACHMENT_ID.pattern),
-                        kind=cap.string(24, enum=list(disclosure.VIEWS))), ('attachment', 'kind'))
+    label = cap.string(62, pattern=ATTACHMENT_ID.pattern)
+    view = cap.obj(dict(attachment=label, kind=cap.string(24, enum=list(disclosure.VIEWS)),
+                        anchor_attachment=label), ('attachment', 'kind'))
     values['scope'] = cap.obj(dict(views=dict(type='array', minItems=1, maxItems=32, items=view)), ('views',))
     return values
 
 
 def selections(args):
-    return {(entry['attachment'], entry['kind']) for entry in args['scope']['views']}
+    return {_selection(entry) for entry in args['scope']['views']}
+
+
+def _selection(entry):
+    return entry['attachment'], entry['kind'], entry.get('anchor_attachment')
 
 
 def normalize(args):
     views = args['scope']['views']
     if len(selections(args)) != len(views):
         raise CodeError('scope_denied', 'Select each attachment and view only once.')
-    args['scope']['views'] = sorted(views, key=lambda row: (row['attachment'], row['kind']))
+    for row in views:
+        label, kind, anchor = _selection(row)
+        if (anchor is not None) != (kind == context_journal_match.VIEW) or anchor == label:
+            raise CodeError('scope_denied', 'Select the distinct TJ anchor attachment in the journal view scope.')
+    args['scope']['views'] = sorted(views, key=lambda row: (row['attachment'], row['kind'], row.get('anchor_attachment','')))
     return args
 
 
@@ -55,11 +64,11 @@ def authorize(state, plan):
     if saved['rule_version'] != policy.RULE_VERSION:
         raise CodeError('context_policy_review_required', 'Review the current disclosure rules before running the program.')
     attachments = {item['id']: item['kind'] for item in doc['attachments']}
-    for label, view in selections(plan['request']['arguments']):
+    for label, view, anchor in selections(plan['request']['arguments']):
         _, kind = disclosure.VIEWS[view]
         if not disclosure.allows_view(view, saved):
             raise CodeError('context_category_not_allowed', 'Continue with views covered by the saved policy.')
-        if attachments.get(label) != kind:
+        if attachments.get(label) != kind or (anchor is not None and attachments.get(anchor) != 'case'):
             raise CodeError('scope_denied', 'Use an approved view of an attachment in the selected revision.')
     binding = dict(investigation_id=doc['investigation_id'], scope_sha256=scope, policy_sha256=fs.digest(saved))
     if 'check_binding' in plan and (plan['check_binding'] or {}).get('policy') != binding:
@@ -73,8 +82,7 @@ def call_request(plan, operation, args):
         raise CodeError('scope_denied', 'Only the selected context.read views of this investigation revision are available.')
     request = disclosure.validate_request(dict(args, investigation_id=context['investigation_id'],
                                                 revision=context['expected_revision']))
-    pair = request['attachment'], request['kind']
-    if pair not in selections(plan['request']['arguments']):
+    if _selection(request) not in selections(plan['request']['arguments']):
         raise CodeError('scope_denied', 'This attachment and view are outside the selected scope.')
     return request
 
@@ -92,8 +100,12 @@ def body_receipt(value, limit):
 
 
 def proof_for_call(entry):
-    return {key: entry[key] for key in ('id', 'attachment', 'view', 'source_kind', 'source_id', 'source_report_sha256',
-                                        'payload_sha256', 'payload_bytes')}
+    keys = ('id', 'attachment', 'view', 'source_kind', 'source_id', 'source_report_sha256',
+            'payload_sha256', 'payload_bytes')
+    proof = {key: entry[key] for key in keys}
+    if 'anchor' in entry:
+        proof['anchor'] = entry['anchor']
+    return proof
 
 
 def verify_view(state, plan, run_id, doc, binding, record, saved):
@@ -117,6 +129,8 @@ def verify_view(state, plan, run_id, doc, binding, record, saved):
         raise InputError('program view source or policy identity mismatch')
     if request['kind'] == context_excerpt.VIEW:
         context_excerpt.require_approval(state, target['target_id'], target['report_sha256'])
+    if request['kind'] == context_journal_match.VIEW and entry.get('anchor') != context_journal_match.anchor_ref(doc,request):
+        raise InputError('saved journal view anchor differs from its selected investigation evidence')
     reply = saved['reply']
     if (set(reply) != {'status', 'data', 'truncated'} or reply['status'] != 'succeeded' or
             type(reply['truncated']) is not bool or reply['truncated'] != record['truncated'] or
@@ -131,8 +145,11 @@ def verify_view(state, plan, run_id, doc, binding, record, saved):
 
 def pins(data):
     # Coverage views verify the specific observed files in verify_view.
-    return {(KINDS[item['source_kind']], item['source_id'], item['source_report_sha256'])
-            for call in data['calls'] if (item := call.get('view')) is not None and item['view'] not in context_coverage.VIEWS}
+    views = [item for call in data['calls'] if (item := call.get('view')) is not None and item['view'] not in context_coverage.VIEWS]
+    pinned = {(KINDS[item['source_kind']], item['source_id'], item['source_report_sha256']) for item in views}
+    pinned.update(('cases',anchor['source_id'],anchor['source_report_sha256'])
+                  for item in views if (anchor := item.get('anchor')) is not None)
+    return pinned
 
 
 def withhold(state, value):

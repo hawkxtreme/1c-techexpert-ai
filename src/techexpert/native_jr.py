@@ -335,7 +335,7 @@ def _window_rows(result, window):
     return selected, coverage
 
 
-def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20,window=None):
+def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20,window=None,nearest_to=None):
     from .source_coverage import validate_request
 
     if type(offset) is not int or offset<0 or type(limit) is not int or not 1<=limit<=100:raise InputError('invalid JR pagination')
@@ -343,6 +343,11 @@ def list_events(state_dir,artifact_id,*,event=None,offset=0,limit=20,window=None
     _,result=_saved(state_dir,artifact_id)
     records, coverage = _window_rows(result, window) if window else (result['records'], None)
     selected = records if event is None else [record for record in records if record['event']==event]
+    if nearest_to is not None:
+        if window is None:
+            raise InputError('nearest registration records require explicit time bounds')
+        anchor = parse_time(nearest_to)
+        selected = sorted(selected, key=lambda record: abs(parse_time(record['timestamp']) - anchor))
     output=[]
     for record in selected[offset:offset+limit]:
         item={k:v for k,v in record.items() if k not in ('data','uninterpreted_tail','comment','row_values')}
