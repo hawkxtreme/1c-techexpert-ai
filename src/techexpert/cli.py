@@ -7,8 +7,14 @@ from pathlib import Path
 from .inputs import InputError
 from .operation_state import StateSpaceError
 from .profiles import doctor, load_profile
-from .storage import (ROOT, default_state_dir, investigate, load_case, read_evidence, list_native_events,
+from .state_location import StateLocationError
+from .storage import (ROOT, investigate, load_case, read_evidence, list_native_events,
                       compare_cases, load_comparison)
+
+
+STATELESS_COMMANDS = ('state-location', 'capabilities', 'starter-inspect', 'profile-upgrade', 'profile-resolve',
+                      'profile-impact', 'source-check', 'os-plan', 'os-operator-plan', 'client-endpoint',
+                      'source-help', 'investigation-export-verify', 'knowledge', 'knowledge-card')
 
 
 def emit(value):
@@ -19,8 +25,11 @@ def main(argv=None):
     if hasattr(sys.stdout, 'reconfigure'):
         sys.stdout.reconfigure(encoding='utf-8',newline='\n')
     parser = argparse.ArgumentParser(description='1C TechExpert AI: local evidence tools for your AI harness')
-    parser.add_argument('--state-dir', type=Path, default=default_state_dir())
+    parser.add_argument('--state-dir', type=Path, help='override the saved service state directory for this invocation')
     commands = parser.add_subparsers(dest='command', required=True)
+    location = commands.add_parser('state-location', help='show or select the service state default for new sessions')
+    location.add_argument('--select', type=Path, metavar='DIRECTORY')
+    location.add_argument('--expected-revision', type=int)
     mcp=commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
     mcp.add_argument('--profile',choices=['full','direct','program','context'],default='full')
     catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
@@ -333,7 +342,18 @@ def main(argv=None):
         from .mcp_server import serve
         return serve(args.state_dir,profile=args.profile)
     try:
-        if args.command=='capabilities':
+        from . import state_location
+
+        if args.state_dir is None and args.command not in STATELESS_COMMANDS:
+            args.state_dir = Path(state_location.load()['state_dir'])
+        if args.command == 'state-location':
+            if args.select is not None:
+                result = state_location.save(args.select, expected_revision=args.expected_revision)
+            else:
+                if args.expected_revision is not None:
+                    raise InputError('--expected-revision requires --select.')
+                result = state_location.load()
+        elif args.command=='capabilities':
             from .capabilities import catalogue
             result=catalogue(args.operation)
         elif args.command in ('context-intake','context-attach'):
@@ -777,7 +797,7 @@ def main(argv=None):
             status,_=outcome(operation,result)
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status'] in ('blocked', 'state_storage_blocked') else 0
-    except StateSpaceError as exc:
+    except (StateSpaceError, StateLocationError) as exc:
         from .responses import normalize
 
         emit(normalize(exc.response()))

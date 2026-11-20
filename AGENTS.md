@@ -10,6 +10,8 @@ The bundled `normalized-events-v1` fixture is synthetic. Do not advertise native
 
 Inputs remain at independent user-selected locations. Private snapshots and investigation state default to the user's local application-data directory, not the repository. Do not commit private logs, credentials or case state. Tests may use disposable temporary directories. Saving an environment profile does not connect to a database, start a collector or alter logcfg.xml.
 
+The optional per-user state-location setting is a revisioned default for new invocations. Keep the selection separate from the investigation files. Selecting a directory checks its local path and managed free-space floor. Saving changes only the settings file. An explicit --state-dir binds that invocation. Default MCP discovery stays passive. The first managed call with an available state path binds the session, and existing sessions keep their bound directories.
+
 The canonical technical specification remains in the user's Pages. README describes only the implemented local path and its limits. Changes in this repository do not authorize publication, production changes or a new model provider.
 
 Operator OS plans pin one local run, a named target and a bounded time window. Preview is passive. Preserve the ticket and its private state for replay. Return exact bytes from the sealed measurement artifact. Import checks the supplied digest and records reported provenance. A matching hostname and digest do not establish source ownership or incident coverage.

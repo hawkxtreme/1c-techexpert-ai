@@ -2,13 +2,14 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+from pathlib import Path
 import queue
 import sys
 import threading
 
-from . import kernel,mcp_tools as tools
+from . import kernel, operation_state as fs, state_location
+from . import mcp_tools as tools
 from .inputs import InputError,json_value
-from .operation_state import StateSpaceError
 
 MAX_LINE=256*1024
 MAX_IN_FLIGHT=10
@@ -127,6 +128,15 @@ class Server:
         if method!='server/discover' and self.legacy_initialized and self.legacy_ready:return tools.LEGACY
         raise RPCError(-32602,'Supply per-request protocolVersion/clientCapabilities or complete the supported legacy initialize handshake.')
 
+    def _state_for_call(self):
+        # Discovery and refused admission leave a default session eligible for first-run selection.
+        with self.lock:
+            if self.state is None:
+                selected = fs.safe(Path(state_location.load()['state_dir']))
+                fs.require_free_space(selected)
+                self.state = selected
+            return self.state
+
     def launch(self,identifier,params,version):
         if set(params)-{'name','arguments','_meta'} or not isinstance(params.get('name'),str):raise RPCError(-32602,'Expected tools/call name and arguments.')
         name=params['name'];arguments=params.get('arguments',{})
@@ -140,10 +150,10 @@ class Server:
         def run():
             if entry['cancel'].is_set():self._release(entry);return
             try:
-                call=kernel.invoke(self.state,action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
+                call=kernel.invoke(self._state_for_call(),action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
                 value=(call,identifier)
             except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-                if isinstance(exc, StateSpaceError):
+                if isinstance(exc, (fs.StateSpaceError, state_location.StateLocationError)):
                     failure = exc.response()
                 elif action == 'context-read' and isinstance(exc, PermissionError):
                     from .context_disclosure import state_access_denied
