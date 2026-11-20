@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from .inputs import InputError
+from .operation_state import StateSpaceError
 from .profiles import doctor, load_profile
 from .storage import (ROOT, default_state_dir, investigate, load_case, read_evidence, list_native_events,
                       compare_cases, load_comparison)
@@ -496,8 +497,8 @@ def main(argv=None):
                                         properties=filters, offset=args.offset, limit=args.limit, linked_run=args.linked_run,window=window)
         elif args.command == 'init':
             from .gui import run_gui
-            run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,investigation_id=args.investigation,entrypoint_sha256=args.entrypoint_sha256)
-            return 0
+            return run_gui(args.state_dir, open_browser=args.open_browser, ttl=args.ttl,
+                           investigation_id=args.investigation, entrypoint_sha256=args.entrypoint_sha256)
         elif args.command == 'apdex':
             from .artifacts import import_apdex
             result=import_apdex(args.state_dir,args.measurements,args.target,inventory_only=args.inventory,
@@ -775,7 +776,12 @@ def main(argv=None):
                 'jr-import':'jr.import','os-import':'os.import','os-collect':'os.collect','client-import':'client.import'}[args.command]
             status,_=outcome(operation,result)
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
-        return 2 if args.command=='readiness' and result['status']=='blocked' else 0
+        return 2 if args.command=='readiness' and result['status'] in ('blocked', 'state_storage_blocked') else 0
+    except StateSpaceError as exc:
+        from .responses import normalize
+
+        emit(normalize(exc.response()))
+        return 2
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
         if args.command == 'context-read' and isinstance(exc, PermissionError):
             from .context_disclosure import state_access_denied

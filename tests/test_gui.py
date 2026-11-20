@@ -41,6 +41,26 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertFalse((self.state_dir / 'profiles').exists())
         self.assertFalse((self.state_dir / 'cases').exists())
 
+    def test_readiness_shows_low_space_before_the_local_file_check(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        base = self.state_dir.parent / 'file-infobase'
+        request = dict(tj_bases=[dict(id='ib', mode='file', connection=str(base))])
+        free = 5 * 1024**3
+        with patch('shutil.disk_usage', return_value=SimpleNamespace(free=free)):
+            status, _, body = self.request('GET', '/api/readiness')
+            self.assertEqual(status, 200)
+            ready = json.loads(body)
+            self.assertEqual(ready['status'], 'state_storage_blocked')
+            self.assertEqual(ready['state_storage']['free_bytes'], free)
+            self.assertTrue(ready['capabilities']['run_synthetic_demo'])
+            status, _, body = self.request('POST', '/api/file-check', request)
+        self.assertEqual(status, 409)
+        self.assertIn('служебном хранилище', json.loads(body)['error'])
+        self.assertIn('10 ГиБ', json.loads(body)['error'])
+        self.assertFalse(self.state_dir.exists())
+
     def storage(self, action, **data):
         status, _, body = self.request('POST', '/api/storage', dict(action=action, **data))
         return status, json.loads(body)

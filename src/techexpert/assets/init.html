@@ -260,12 +260,14 @@
       function syncDemoButton(){q('#run-demo').disabled=busy || !readinessState?.capabilities.run_synthetic_demo || ['completed','damaged'].includes(readinessState?.demonstration.status);}
       function renderReadiness(data){
         readinessState=data;
-        const title=q('#readiness-title');title.textContent=data.status==='blocked'?'Комплект требует восстановления':data.status==='needs_harness_confirmation'?'Комплект проверен · подтверждение агента требуется':'Комплект готов к анализу файлов';
+        const titles={blocked:'Комплект требует восстановления',state_storage_blocked:'Проверьте служебное хранилище',needs_harness_confirmation:'Комплект проверен · подтверждение агента требуется'};
+        q('#readiness-title').textContent=titles[data.status] || 'Комплект готов к анализу файлов';
         const box=q('#readiness-results');box.replaceChildren();
         const names={runtime:'Локальные инструменты',instructions:'Инструкции и навыки',catalogues:'Шаблоны и справка',knowledge:'База знаний',demo:'Комплектный пример',bundle:'Поставка'};
         data.checks.forEach(item=>box.append(element('p',(names[item.id] || 'Компонент')+': '+(item.status==='ready'?'готово':'требуется восстановление полной совместимой поставки'),'note')));
         if(data.knowledge.status==='ready')box.append(element('p','База знаний: '+data.knowledge.cards+' карточек, ревизия '+data.knowledge.revision+'. Локальный поиск проверен.','note'));
         if(data.status==='blocked')box.append(element('p',data.actions.restore_complete_bundle,'hint'));
+        if(data.actions.check_state_storage)box.append(element('p',data.actions.check_state_storage,'hint'));
         if(data.harness.status!=='caller_reported_loaded')box.append(element('p','Точку входа подтверждает агент текущего чата. Отдельная модель и ключ ИИ не нужны.','note'));
         box.append(element('p',data.specialized.sql==='not_applicable'?'SQL и RAC неприменимы к выбранным файловым базам.':'SQL и RAC не проверялись; для анализа предоставленных файлов они не обязательны.','note'));
         if(data.profile.status==='invalid')box.append(element('p','Сохранённые настройки повреждены или недоступны. Вернитесь к агенту для разбора; прежние данные сохраняются.','hint'));

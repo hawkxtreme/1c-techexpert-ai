@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from . import profiles
 from .gui_storage import Storage, StorageConflict, setup_context
+from .operation_state import StateSpaceError
 
 
 MAX_BODY = 64 * 1024
@@ -232,10 +233,9 @@ class InitHandler(BaseHTTPRequestHandler):
         try:
             if self.path=='/api/demo':
                 if data:raise ValueError('Демонстрация использует только комплектный синтетический SC-01, без параметров источников.')
-                from .readiness import check,read_demo,run_demo
+                from .readiness import check,read_demo,require_demo,run_demo
                 with self.server.demo_lock:
-                    report=check(self.server.state_dir)
-                    if not report['capabilities']['run_synthetic_demo']:raise ValueError('Восстановите полный совместимый комплект перед проверкой на примере.')
+                    require_demo(check(self.server.state_dir))
                     previous=read_demo(self.server.state_dir)
                     if previous['status']!='completed':run_demo(self.server.state_dir)
                     result=read_demo(self.server.state_dir)
@@ -334,6 +334,10 @@ class InitHandler(BaseHTTPRequestHandler):
                     result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
                     self.server.saved_profile_revision=result['revision']
             self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
+        except StateSpaceError as error:
+            from .readiness import state_storage_help
+
+            self._error(409, state_storage_help(error.storage))
         except StorageConflict as error:
             self._error(409, str(error))
         except profiles.ProfileRevisionConflict:
@@ -352,6 +356,9 @@ def create_server(state_dir, ttl=900, investigation_id=None,entrypoint_sha256=No
 def run_gui(state_dir, open_browser=False, ttl=900, investigation_id=None,entrypoint_sha256=None):
     from .readiness import check
     report=check(state_dir,entrypoint_sha256=entrypoint_sha256,investigation_id=investigation_id)
+    if report['state_storage']['free_bytes'] is None:
+        print(json.dumps({'url': None,'readiness':report},ensure_ascii=False), flush=True)
+        return 2
     server = create_server(state_dir, ttl=ttl,investigation_id=investigation_id,entrypoint_sha256=entrypoint_sha256)
     print(json.dumps({'url': server.url,'readiness':report},ensure_ascii=False), flush=True)
     try:
@@ -362,3 +369,4 @@ def run_gui(state_dir, open_browser=False, ttl=900, investigation_id=None,entryp
         pass
     finally:
         server.server_close()
+    return 0

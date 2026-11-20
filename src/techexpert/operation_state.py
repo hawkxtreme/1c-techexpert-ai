@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import stat
 
@@ -16,7 +17,21 @@ from .inputs import InputError,read_snapshot,json_value
 from .storage import write_json
 
 MAX_DOCUMENT=17*1024**2
+MIN_FREE_STATE_BYTES = 10 * 1024**3
 PROMOTION_BLOCKED = 'promotion_blocked'
+
+
+class StateSpaceError(InputError):
+    def __init__(self, free_bytes):
+        minimum_gib = MIN_FREE_STATE_BYTES // 1024**3
+        super().__init__(f'Managed calls require {minimum_gib} GiB free. Free space in the selected state storage. '
+                         'For a new investigation, select a local state directory with sufficient space.')
+        self.storage = dict(status='insufficient_space', free_bytes=free_bytes,
+                            minimum_free_bytes=MIN_FREE_STATE_BYTES, action='check_state_storage')
+
+    def response(self):
+        return dict(status='invalid_input', stop_reason='state_space_insufficient',
+                    message=str(self), state_storage=self.storage)
 
 def stamp():return datetime.now(timezone.utc).isoformat()
 def encode(value):return (json.dumps(value,ensure_ascii=False,sort_keys=True,allow_nan=False,indent=2)+'\n').encode('utf-8')
@@ -30,6 +45,22 @@ def safe(path):
         except FileNotFoundError:continue
         if stat.S_ISLNK(info.st_mode) or getattr(info,'st_file_attributes',0)&0x400:raise InputError('linked operation state rejected')
     return path
+
+
+def require_free_space(path):
+    """Read the volume of a selected state path or its nearest existing parent."""
+    for parent in (path, *path.parents):
+        try:
+            info = parent.stat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISDIR(info.st_mode):
+            raise InputError('kernel state volume requires a directory')
+        free_bytes = shutil.disk_usage(parent).free
+        if free_bytes < MIN_FREE_STATE_BYTES:
+            raise StateSpaceError(free_bytes)
+        return free_bytes
+    raise InputError('kernel state volume unavailable')
 
 def private(path):
     path=safe(path);path.mkdir(parents=True,exist_ok=True)

@@ -8,6 +8,7 @@ import threading
 
 from . import kernel,mcp_tools as tools
 from .inputs import InputError,json_value
+from .operation_state import StateSpaceError
 
 MAX_LINE=256*1024
 MAX_IN_FLIGHT=10
@@ -142,7 +143,9 @@ class Server:
                 call=kernel.invoke(self.state,action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
                 value=(call,identifier)
             except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
-                if action == 'context-read' and isinstance(exc, PermissionError):
+                if isinstance(exc, StateSpaceError):
+                    failure = exc.response()
+                elif action == 'context-read' and isinstance(exc, PermissionError):
                     from .context_disclosure import state_access_denied
                     failure = state_access_denied()
                 else:

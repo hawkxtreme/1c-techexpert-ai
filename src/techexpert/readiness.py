@@ -4,7 +4,7 @@ import re
 import sys
 from pathlib import Path,PurePosixPath
 
-from . import __version__
+from . import __version__, operation_state as fs
 from .inputs import InputError,json_value,read_snapshot,load_manifest
 from .storage import ROOT,investigate,load_case,write_json,read_evidence
 from .profiles import load_profile
@@ -97,6 +97,36 @@ def _demo_input(root):
         raise InputError('synthetic installation example is incomplete')
     return path
 
+def _state_storage(state_dir):
+    free_bytes = None
+    try:
+        free_bytes = fs.require_free_space(fs.safe(state_dir))
+    except fs.StateSpaceError as error:
+        return error.storage
+    except PermissionError:
+        status = 'access_denied'
+    except (OSError, ValueError, TypeError):
+        status = 'unavailable'
+    else:
+        status = 'sufficient'
+    return dict(status=status, free_bytes=free_bytes, minimum_free_bytes=fs.MIN_FREE_STATE_BYTES,
+                action=None if status == 'sufficient' else 'check_state_storage')
+
+
+def state_storage_help(storage):
+    if storage['status'] == 'insufficient_space':
+        gib = 1024**3
+        free = storage['free_bytes'] * 100 // gib / 100
+        available = f'{free:.2f}'.replace('.', ',')
+        minimum = storage['minimum_free_bytes'] // gib
+        return (f'Недостаточно места в служебном хранилище. Свободно {available} ГиБ, '
+                f'для управляемых операций требуется {minimum} ГиБ. '
+                'Освободите место в текущем хранилище или сообщите агенту путь для нового расследования.')
+    if storage['status'] == 'access_denied':
+        return 'Проверьте доступ текущего агента к служебному хранилищу и его родительским каталогам.'
+    return 'Не удалось проверить служебное хранилище. Уточните в текущем чате путь к доступной локальной папке.'
+
+
 def _profile(state_dir,investigation_id):
     try:
         if investigation_id:
@@ -165,32 +195,50 @@ def check(state_dir,*,root=None,entrypoint_sha256=None,investigation_id=None):
         except ERRORS:damaged('demo')
     local_ready=all(good[key] for key in ('runtime','instructions','catalogues','knowledge'))
     harness_status='not_confirmed' if entrypoint_sha256 is None else 'caller_reported_loaded' if entrypoint_sha256==entry_hash and good['instructions'] else 'stale_entrypoint'
-    profile,bases=_profile(state_dir,investigation_id)
-    try:demonstration=read_demo(state_dir)
-    except ERRORS:demonstration=dict(status='damaged',action='inspect_saved_demo_without_rerunning')
+    storage=_state_storage(state_dir)
+    state_volume_observed=storage['free_bytes'] is not None
+    if state_volume_observed:
+        profile,bases=_profile(state_dir,investigation_id)
+        try:demonstration=read_demo(state_dir)
+        except ERRORS:demonstration=dict(status='damaged',action='inspect_saved_demo_without_rerunning')
+    else:
+        profile,bases=dict(status='unavailable',revision=None),[]
+        demonstration=dict(status='unavailable')
     file_only=bool(bases) and all(base['mode']=='file' for base in bases)
     harness_ready=harness_status=='caller_reported_loaded'
+    storage_ready=storage['status']=='sufficient'
+    status=('blocked' if not local_ready else 'state_storage_blocked' if not storage_ready else
+            'ready_for_supplied_files' if harness_ready else 'needs_harness_confirmation')
     return dict(schema_version=1,product_version=__version__,scenario='SC-01',
-        status='blocked' if not local_ready else 'ready_for_supplied_files' if harness_ready else 'needs_harness_confirmation',
-        checks=checks,knowledge=knowledge,
+        status=status, checks=checks,knowledge=knowledge,state_storage=storage,
         harness=dict(status=harness_status,entrypoint=ENTRY,expected_sha256=entry_hash,hash_normalization='utf8-lf-v1',
             independently_attested=False,action=None if harness_ready else 'read_entrypoint_in_current_harness'),
-        capabilities=dict(analyze_supplied_files=local_ready and harness_ready,run_synthetic_demo=local_ready and good['demo']),
+        capabilities=dict(analyze_supplied_files=local_ready and harness_ready and storage_ready,
+                          run_synthetic_demo=local_ready and good['demo'] and state_volume_observed),
         profile=profile,sources=dict(status='configured_not_checked' if profile.get('sources',0) else 'not_configured',paths_probed=False),
         specialized=dict(sql='not_applicable' if file_only else 'not_checked',rac='not_applicable' if file_only else 'not_checked',
             testpilot='optional_endpoint_and_environment_not_checked',server_license='not_required_for_supplied_file_analysis'),
         demonstration=demonstration,
         actions=dict(restore_complete_bundle='Восстановите полную совместимую поставку, сохранив частные расследования. Не собирайте базу знаний вручную.',
-            read_entrypoint_in_current_harness='Агенту: прочитать точку входа этого комплекта и подтвердить её текущую ревизию в том же чате.'),
+            read_entrypoint_in_current_harness='Агенту: прочитать точку входа этого комплекта и подтвердить её текущую ревизию в том же чате.',
+            check_state_storage=None if storage_ready else state_storage_help(storage)),
         side_effects=dict(source_connections=False,collection_started=False,profile_changed=False,demo_started=False,state_created=False),
         limitations=['Integrity hashes detect inconsistent package content; they do not authenticate the publisher.',
             'Harness loading is caller-reported, not independent model attestation.',
-            'Configured paths are not connectivity/format/coverage checks; write access is not probed.'])
+            'State free space is observed at the time of the check. Space reservation and write access are outside this check.',
+            'Source connectivity, format and coverage require separate checks.'])
+
+def require_demo(report):
+    if report['capabilities']['run_synthetic_demo']:
+        return
+    if report['state_storage']['free_bytes'] is None:
+        raise InputError(report['actions']['check_state_storage'])
+    raise InputError('Восстановите полный совместимый комплект перед проверкой на примере.')
+
 
 def run_demo(state_dir,*,root=None):
     root=Path(ROOT if root is None else root).resolve()
-    if not check(state_dir,root=root)['capabilities']['run_synthetic_demo']:
-        raise InputError('Восстановите полный совместимый комплект: безопасный демонстрационный SC-01 недоступен.')
+    require_demo(check(state_dir,root=root))
     path=_demo_input(root)
     result=investigate(path,state_dir)
     _,digest=load_case(state_dir,result['case_id'],with_digest=True)

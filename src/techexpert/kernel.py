@@ -6,12 +6,12 @@ import math
 import os
 from pathlib import Path
 import re
-import shutil
 import time
 import uuid
 
 from . import operation_state as fs,kernel_process
 from .inputs import InputError
+from .operation_state import require_free_space as _space
 
 CHUNK=65536
 MAX_RESPONSE=16*1024**2
@@ -60,14 +60,6 @@ def _arguments(action,value):
         selected = normalize(json_value(value['comparison'], reject_duplicates=True))
         return dict(value,comparison=json.dumps(selected, separators=(',', ':')))
     return dict(value,request=str(Path(value['request']).absolute())) if action in _REQUEST_ACTIONS else dict(value)
-
-
-def _space(path):
-    for parent in (path,*path.parents):
-        if parent.exists():
-            if shutil.disk_usage(parent).free<10*1024**3:raise InputError('kernel calls retain a 10 GiB free floor; select a local state volume with space')
-            return
-    raise InputError('kernel state volume unavailable')
 
 
 def folder(state,call_id):

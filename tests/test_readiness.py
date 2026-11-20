@@ -1,12 +1,14 @@
 import hashlib
 import importlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
 import tempfile
 import subprocess
 import sys
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -64,6 +66,81 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(result['demonstration']['status'],'not_run')
         self.assertTrue(result['capabilities']['run_synthetic_demo'])
         self.assertFalse(self.state.exists())
+
+    def test_state_space_controls_file_readiness_at_the_kernel_floor(self):
+        minimum = 10 * 1024**3
+        for free, status, available in (
+            (minimum - 1, 'state_storage_blocked', False),
+            (minimum, 'ready_for_supplied_files', True),
+        ):
+            with self.subTest(free=free), patch('shutil.disk_usage', return_value=SimpleNamespace(free=free)) as usage:
+                result = self.check(entrypoint_sha256=self.entry_hash)
+                self.assertEqual(result['status'], status)
+                check = result.get('state_storage', {})
+                self.assertEqual(check.get('status'), 'sufficient' if available else 'insufficient_space')
+                self.assertEqual((check['free_bytes'], check['minimum_free_bytes']), (free, minimum))
+                self.assertEqual(check['action'], None if available else 'check_state_storage')
+                self.assertEqual(result['capabilities']['analyze_supplied_files'], available)
+                self.assertTrue(result['capabilities']['run_synthetic_demo'])
+                self.assertEqual(result['demonstration']['status'], 'not_run')
+                usage.assert_called_once_with(self.folder)
+                self.assertFalse(self.state.exists())
+
+    def test_state_space_observation_reports_denied_and_unknown_as_unknown_bytes(self):
+        for error, status in ((PermissionError('private-ancestor'), 'access_denied'),
+                              (OSError('private-volume'), 'unavailable')):
+            with self.subTest(status=status), patch('shutil.disk_usage', side_effect=error):
+                result = self.check(entrypoint_sha256=self.entry_hash)
+                self.assertEqual(result['status'], 'state_storage_blocked')
+                self.assertEqual(result['state_storage']['status'], status)
+                self.assertIsNone(result['state_storage']['free_bytes'])
+                self.assertFalse(result['capabilities']['analyze_supplied_files'])
+                self.assertNotIn(str(error), json.dumps(result))
+                self.assertFalse(self.state.exists())
+
+    def test_state_space_unavailable_blocks_state_reads_and_init_listener(self):
+        from contextlib import redirect_stdout
+        from src.techexpert import cli, gui
+
+        stdout = io.StringIO()
+        with patch('shutil.disk_usage', side_effect=PermissionError('private-volume')), \
+             patch.object(self.api, '_profile', side_effect=AssertionError('unavailable state was read')), \
+             patch.object(self.api, 'read_demo', side_effect=AssertionError('unavailable demo was read')), \
+             patch.object(gui, 'create_server', side_effect=AssertionError('unavailable state started an init session')), \
+             redirect_stdout(stdout):
+            self.assertEqual(cli.main(['--state-dir', str(self.state), 'init']), 2)
+        result = json.loads(stdout.getvalue())
+        self.assertIsNone(result['url'])
+        ready = result['readiness']
+        self.assertEqual(ready['state_storage']['status'], 'access_denied')
+        self.assertEqual(ready['profile']['status'], 'unavailable')
+        self.assertEqual(ready['demonstration']['status'], 'unavailable')
+        self.assertFalse(ready['capabilities']['run_synthetic_demo'])
+        self.assertFalse(self.state.exists())
+
+    def test_state_space_refusal_matches_for_cli_and_mcp_before_controller_starts(self):
+        from contextlib import redirect_stdout
+        from src.techexpert import cli, mcp_server, mcp_tools
+
+        state = self.state
+        request = dict(investigation_id='a' * 32, revision=1, attachment='A-1', kind='case-summary')
+        arguments = ['--state-dir', str(state), 'context-read', request['investigation_id'],
+                     request['kind'], '--revision', '1', '--attachment', 'A-1']
+        stdout = io.StringIO()
+        server = mcp_server.Server(state, None, None, profile='context')
+        free = 6 * 1024**3
+        with server.pool, patch('shutil.disk_usage', return_value=SimpleNamespace(free=free)), redirect_stdout(stdout):
+            self.assertEqual(cli.main(arguments), 2)
+            server.launch(1, dict(name=mcp_tools.CONTEXT_READ, arguments=request), mcp_tools.MODERN)
+            message, _ = server.outgoing.get(timeout=5)
+        wire = message['result']
+        self.assertTrue(wire['isError'])
+        local = json.loads(stdout.getvalue())
+        self.assertEqual(local, wire['structuredContent'])
+        self.assertEqual(local.get('stop_reason'), 'state_space_insufficient')
+        self.assertEqual(local['state_storage']['free_bytes'], free)
+        self.assertIsNone(local['data'])
+        self.assertFalse(state.exists())
 
     def test_harness_loading_is_explicit_caller_report_not_model_attestation(self):
         result=self.check()
