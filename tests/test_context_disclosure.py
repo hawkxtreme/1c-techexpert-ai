@@ -117,6 +117,44 @@ class ContextDisclosureTests(unittest.TestCase):
         _, after = self.cli(*request)
         self.assertEqual(after['stop_reason'], 'context_category_not_allowed')
 
+    def test_read_reports_executor_access_denial_before_admission_in_cli_and_mcp(self):
+        from contextlib import redirect_stdout
+        from src.techexpert import cli, kernel, mcp_server, mcp_tools
+
+        selection = dict(investigation_id=self.doc['investigation_id'], revision=self.doc['revision'],
+                         kind='case-summary', attachment='A-1')
+        arguments = ['--state-dir', str(self.state), 'context-read', selection['investigation_id'],
+                     selection['kind'], '--revision', str(selection['revision']), '--attachment', 'A-1']
+        server = mcp_server.Server(self.state, None, None, profile='context')
+        denied = PermissionError(13, 'access denied', str(self.root / PRIVATE))
+        stdout = io.StringIO()
+        with server.pool, patch.object(kernel.fs, 'safe', side_effect=denied), redirect_stdout(stdout):
+            self.assertEqual(cli.main(arguments), 2)
+            server.launch(1, dict(name=mcp_tools.CONTEXT_READ, arguments=selection), mcp_tools.MODERN)
+            message, _ = server.outgoing.get(timeout=5)
+        wire = message['result']
+        self.assertTrue(wire['isError'])
+        for transport, response in (('cli', json.loads(stdout.getvalue())), ('mcp', wire['structuredContent'])):
+            with self.subTest(transport=transport):
+                self.assertEqual(response.get('stop_reason'), 'context_state_access_denied')
+                self.assertIsNone(response['data'])
+                self.assertNotIn(PRIVATE, json.dumps(response))
+        self.assertFalse((self.state / 'kernel-calls').exists())
+
+    def test_read_distinguishes_a_denied_saved_investigation_from_missing_policy(self):
+        from src.techexpert import context_disclosure, context_policy
+
+        request = dict(investigation_id=self.doc['investigation_id'], revision=self.doc['revision'],
+                       kind='case-summary', attachment='A-1')
+        self.assertEqual(context_disclosure.read(self.state, request)['stop_reason'], 'context_policy_required')
+        denied = PermissionError(13, 'access denied', str(self.root / PRIVATE))
+        with patch.object(context_policy, 'selected_investigation', side_effect=denied):
+            response = context_disclosure.read(self.state, request)
+        self.assertEqual(response['stop_reason'], 'context_state_access_denied')
+        self.assertIsNone(response['data'])
+        self.assertNotIn(PRIVATE, json.dumps(response))
+        self.assertFalse((self.state / 'context-disclosure').exists())
+
     def test_withheld_and_unattached_reads_do_not_open_source_snapshots(self):
         from src.techexpert import context_disclosure
         identity = dict(investigation_id=self.doc['investigation_id'], revision=self.doc['revision'])

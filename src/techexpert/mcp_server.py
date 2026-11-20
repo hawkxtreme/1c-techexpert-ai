@@ -141,8 +141,13 @@ class Server:
             try:
                 call=kernel.invoke(self.state,action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
                 value=(call,identifier)
-            except (OSError,ValueError,KeyError,TypeError,RecursionError):
-                value=dict(jsonrpc='2.0',id=identifier,result=tools.result(dict(status='failed',message='Local invocation could not complete. Inspect retained operation state before retrying the same key.'),version))
+            except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
+                if action == 'context-read' and isinstance(exc, PermissionError):
+                    from .context_disclosure import state_access_denied
+                    failure = state_access_denied()
+                else:
+                    failure = dict(status='failed', message='Local invocation could not complete. Inspect retained operation state before retrying the same key.')
+                value = dict(jsonrpc='2.0', id=identifier, result=tools.result(failure,version))
             if entry['cancel'].is_set() or self.closed.is_set():self._release(entry)
             else:self.send(value,entry)
         self.pool.submit(run)

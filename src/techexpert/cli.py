@@ -777,6 +777,12 @@ def main(argv=None):
             return {'succeeded':0,'partial':1,'cancelled':130}[status]
         return 2 if args.command=='readiness' and result['status']=='blocked' else 0
     except (OSError, ValueError, KeyError, TypeError, RecursionError) as exc:
+        if args.command == 'context-read' and isinstance(exc, PermissionError):
+            from .context_disclosure import state_access_denied
+            from .responses import normalize
+
+            emit(normalize(state_access_denied()))
+            return 2
         if args.command.startswith('context-') or getattr(args,'handle',False):
             emit(dict(status='error', code='context_input_or_state_error',
                       message='Verify the selected investigation, available local state and current policy plan.'))

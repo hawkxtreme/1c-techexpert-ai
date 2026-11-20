@@ -158,6 +158,11 @@ def _blocked(reason, next_step):
                 limitations=[next_step])
 
 
+def state_access_denied():
+    return _blocked('context_state_access_denied',
+                    'Check access to the selected state directory and its parents from this harness before retrying.')
+
+
 def _audit_folder(state, investigation_id):
     if not re.fullmatch('[a-f0-9]{32}', investigation_id):
         raise InputError('invalid context investigation identifier')
@@ -373,6 +378,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         scope_sha256, _ = policy.scope(doc)
         folder = policy.policy_folder(state, scope_sha256)
         saved = policy.stored_policy(folder, scope_sha256)
+    except PermissionError:
+        return state_access_denied()
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_policy_unavailable', 'Verify the saved investigation and its local disclosure policy.')
     if expected_policy_sha256 is not None and (saved is None or fs.digest(saved) != expected_policy_sha256):
@@ -412,6 +419,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         return _blocked('context_excerpt_approval_required', 'Review the exact local excerpt and confirm its digest.')
     except context_excerpt.ApprovalRevoked:
         return _blocked('context_excerpt_revoked', 'The excerpt approval was revoked. Choose available evidence.')
+    except PermissionError:
+        return state_access_denied()
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_evidence_unavailable', 'Check the retained evidence, requested record and source format locally.')
     try:
@@ -425,6 +434,8 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
             from .investigation_retention import require_available
             require_available(state, doc['investigation_id'])
             entry = _record(state, doc, attachment, saved, kind, category, payload, consumer, anchor=anchor)
+    except PermissionError:
+        return state_access_denied()
     except (OSError, ValueError, KeyError, TypeError, RecursionError):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,
