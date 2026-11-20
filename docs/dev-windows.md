@@ -4,17 +4,16 @@
 
 ## Перенести комплект
 
-Перенесите Git bundle актуальной ветки на Dev и откройте PowerShell в каталоге, где нужен checkout. Укажите фактический путь к файлу.
+Откройте PowerShell на Dev в каталоге, где нужен checkout, и клонируйте рабочую ветку из GitHub.
 
 ```powershell
-$TechExpertBundle = 'C:\Transfer\1c-techexpert-ai-dev.bundle'
-git clone --branch feature/sc01-local-pilot $TechExpertBundle 1c-techexpert-ai
+git clone --branch feature/sc01-local-pilot https://github.com/hawkxtreme/1c-techexpert-ai.git
 Set-Location .\1c-techexpert-ai
 git rev-parse HEAD
 python --version
 ```
 
-Сверьте `HEAD` с контрольным SHA, переданным вместе с bundle. В комплект входят код, навыки, знания и безопасные примеры. Лицензия, доступы и базы берутся из действующего Dev-контура. Для переноса конкретного сохранённого расследования предусмотрен [частный экспорт](../skills/report-and-evidence/SKILL.md).
+Сверьте `HEAD` с нужным коммитом в рабочей ветке. В репозитории есть код, навыки, знания и безопасные примеры. Лицензия, доступы и базы берутся из действующего Dev-контура. Сохранённое расследование можно перенести частным экспортом. [Рабочая ветка](https://github.com/hawkxtreme/1c-techexpert-ai/tree/feature/sc01-local-pilot) · [Частный экспорт](../skills/report-and-evidence/SKILL.md)
 
 ## Перед запуском
 
