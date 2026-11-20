@@ -65,6 +65,21 @@ def main(argv=None):
         commands.add_parser(name).add_argument('document',type=Path)
     profile_impact=commands.add_parser('profile-impact');profile_impact.add_argument('before',type=Path);profile_impact.add_argument('after',type=Path)
     profile_save=commands.add_parser('profile-save');profile_save.add_argument('document',type=Path);profile_save.add_argument('--expected-revision',type=int,required=True)
+    setup = commands.add_parser('profile-setup', help='prepare source settings in the current chat without a browser')
+    setup_steps = setup.add_subparsers(dest='setup_step', required=True)
+    inspect_setup = setup_steps.add_parser('inspect')
+    inspect_setup.add_argument('--investigation')
+    preview_setup = setup_steps.add_parser('preview')
+    preview_setup.add_argument('request', type=Path)
+    apply_setup = setup_steps.add_parser('apply')
+    apply_setup.add_argument('plan', type=Path)
+    apply_setup.add_argument('--expected-sha256', required=True)
+    setup_ras = setup_steps.add_parser('discover-ras', help='read registered infobases from an explicitly selected RAS')
+    setup_ras.add_argument('--endpoint', required=True)
+    setup_ras.add_argument('--executable', default='rac')
+    setup_ras.add_argument('--docker-container')
+    setup_ras.add_argument('--cluster')
+    setup_ras.add_argument('--infobase')
     from . import context_disclosure, context_policy
     commands.add_parser('context-intake', help='save selected diagnostics with a metadata-only response').add_argument('request',type=Path)
     context_attach=commands.add_parser('context-attach', help='link an existing protected intake to the chosen investigation revision')
@@ -458,6 +473,22 @@ def main(argv=None):
             from .profiles import save_profile
             from .inputs import read_snapshot,json_value
             result=save_profile(args.state_dir,json_value(read_snapshot(args.document,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
+        elif args.command == 'profile-setup':
+            from . import profile_setup
+            from .inputs import json_value, read_snapshot
+
+            if args.setup_step == 'inspect':
+                result = profile_setup.inspect(args.state_dir, args.investigation)
+            elif args.setup_step == 'discover-ras':
+                from .profiles import discover_ras
+                result = discover_ras(args.endpoint, executable=args.executable, docker_container=args.docker_container,
+                                      cluster=args.cluster, infobase=args.infobase)
+            elif args.setup_step == 'preview':
+                request = json_value(read_snapshot(args.request, 2 * 1024**2).decode('utf-8-sig'), reject_duplicates=True)
+                result = profile_setup.preview(args.state_dir, request)
+            else:
+                plan = json_value(read_snapshot(args.plan, 2 * 1024**2).decode('utf-8-sig'), reject_duplicates=True)
+                result = profile_setup.apply(args.state_dir, plan, expected_sha256=args.expected_sha256)
         elif args.command == 'profile':
             result = load_profile(args.state_dir, revision=args.revision) or dict(status='not_configured', next_step='init')
             if args.resolved and result.get('schema_version'):

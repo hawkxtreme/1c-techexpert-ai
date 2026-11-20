@@ -295,18 +295,13 @@ class InitHandler(BaseHTTPRequestHandler):
                 from .profile_resources import editor_context
                 result=editor_context(data['profile'])
             elif self.path=='/api/profile-compose':
-                if set(data)-{'view','draft_profile','connection_bindings','connection_edits','base_registrations','discovery_resources','base_merge','registration_decisions'} or 'view' not in data:raise ValueError('Недопустимое поле редактора профиля.')
                 expected=self._expected_profile_revision()
                 if expected is None:return
-                from .profile_resources import compose_profile,resource_impact,retain_editor_resources,editor_context
+                from .profile_resources import prepare_editor_profile
                 with self.server.profile_lock:
                     before = self._editing_profile()
                     profiles.require_profile_revision(before, expected)
-                    draft=data.get('draft_profile')
-                    result=compose_profile(draft if draft is not None else before,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'),base_registrations=data.get('base_registrations'),discovery_resources=data.get('discovery_resources'),base_merge=data.get('base_merge'),registration_decisions=data.get('registration_decisions'))
-                    result['profile']=retain_editor_resources(result['profile'],before)
-                    result['editor']=editor_context(result['profile'])
-                    result['impact']=resource_impact(before,result['profile'])
+                    result = prepare_editor_profile(before, data)
             elif self.path=='/api/check':
                 result=profiles.check_profile(data)
             elif self.path == '/api/file-check':

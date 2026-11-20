@@ -285,6 +285,18 @@ def editor_context(profile):
     return dict(profile=graph,view=effective_profile(graph),connection_bindings=bindings,connections=list(connections.values()),scope='configuration_only_not_connected')
 
 
+def prepare_editor_profile(saved, edit):
+    """Prepare the same canonical graph for the browser and chat-based setup."""
+    options = ('connection_bindings', 'connection_edits', 'base_registrations',
+               'discovery_resources', 'base_merge', 'registration_decisions')
+    _object(edit, ('view', 'draft_profile', *options), ('view',))
+    before = edit.get('draft_profile')
+    result = compose_profile(saved if before is None else before, edit['view'],
+                             **{key: edit[key] for key in options if key in edit})
+    profile = retain_editor_resources(result['profile'], saved)
+    return dict(result, profile=profile, editor=editor_context(profile), impact=resource_impact(saved, profile))
+
+
 def compose_profile(before,view,*,connection_bindings=None,connection_edits=None,base_registrations=None,discovery_resources=None,base_merge=None,registration_decisions=None):
     """Compile the simple GUI view without discarding the canonical graph.
 

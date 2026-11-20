@@ -215,7 +215,7 @@ def require_profile_revision(profile, expected):
         raise ProfileRevisionConflict('profile revision changed; inspect the displayed profile before saving')
 
 
-def save_profile(state_dir, profile, *, expected_revision=None, pinned_profile=_CURRENT_PROFILE):
+def save_profile(state_dir, profile, *, expected_revision=None, pinned_profile=_CURRENT_PROFILE, make_current=True):
     """Allocate a revision against the displayed baseline under the profile writer."""
     clean = validate_profile(profile)
     folder = Path(state_dir) / 'profiles'
@@ -231,9 +231,21 @@ def save_profile(state_dir, profile, *, expected_revision=None, pinned_profile=_
         if len((json.dumps(clean,ensure_ascii=False,indent=2)+'\n').encode('utf-8')) > 1024*1024:
             raise InputError('profile exceeds 1 MiB; reduce its size before saving')
         write_json(folder / f"{clean['revision']}.json", clean)
-        if previous == current:
+        if make_current and previous == current:
             write_json(folder / 'current.json', clean)
     return clean
+
+
+def promote_saved_profile(state_dir, saved, *, previous):
+    """Publish an already bound revision while its reviewed default still matches."""
+    folder = Path(state_dir) / 'profiles'
+    with profile_writer(folder):
+        if load_profile(state_dir) != previous:
+            return False
+        if load_profile(state_dir, revision=saved['revision']) != saved:
+            raise ProfileRevisionConflict('saved profile changed before default promotion')
+        write_json(folder / 'current.json', saved)
+    return True
 
 
 def load_profile(state_dir, *, revision=None):
