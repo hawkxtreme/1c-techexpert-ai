@@ -50,13 +50,15 @@ class PluginInstallTests(unittest.TestCase):
         portable=self.document('mcp.json')['mcpServers'];legacy=self.document('.mcp.json')['mcpServers']
         self.assertEqual(portable,legacy);self.assertEqual(set(portable),{'techexpert'})
         server=portable['techexpert'];self.assertEqual(server['type'],'stdio')
-        self.assertEqual(server['command'],'python3');self.assertNotIn('env',server)
+        self.assertEqual(server['command'],'python3')
+        self.assertEqual(server['env'],{'PYTHON_MANAGER_AUTOMATIC_INSTALL':'0'})
         args=[item.replace('${PLUGIN_ROOT}',str(self.bundle)) for item in server['args']]
         self.assertEqual(args[:2],['-X','utf8']);self.assertEqual(Path(args[2]),self.bundle/'techexpert.py')
         self.assertEqual(args[3:],['mcp-stdio'])
         cwd=server['cwd'].replace('${PLUGIN_ROOT}',str(self.bundle))
         self.assertEqual(Path(cwd),self.bundle)
         state=self.home/'private data';env=dict(os.environ,LOCALAPPDATA=str(state),XDG_STATE_HOME=str(state))
+        env.update(server['env'])
         env.pop('PYTHONDONTWRITEBYTECODE', None)
         env.pop('PYTHONPYCACHEPREFIX', None)
         requests=[dict(jsonrpc='2.0',id=1,method='initialize',params=dict(protocolVersion='2025-11-25',capabilities={},clientInfo=dict(name='plugin-package-test',version='1'))),

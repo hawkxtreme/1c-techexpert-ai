@@ -61,6 +61,22 @@ class ReleasePackageTests(unittest.TestCase):
         with self.assertRaisesRegex(InputError,'MCP configuration'):
             read_package(self.changed(runtime))
 
+    def test_runtime_environment_must_match_between_package_entrypoints(self):
+        from src.techexpert.release_packages import read_package
+
+        def legacy_compatibility_entry(parts):
+            name = '.mcp.json'
+            manifest = json.loads(parts[name])
+            server = manifest['mcpServers']['techexpert']
+            server.pop('env', None)
+            parts[name] = json.dumps(manifest).encode()
+            inventory = json.loads(parts[MANIFEST])
+            inventory['members'][name] = hashlib.sha256(parts[name]).hexdigest()
+            parts[MANIFEST] = json.dumps(inventory).encode()
+
+        with self.assertRaisesRegex(InputError, 'MCP configuration'):
+            read_package(self.changed(legacy_compatibility_entry))
+
     def test_reports_runtime_and_knowledge_edits_separately(self):
         from src.techexpert.release_packages import read_package, compare_packages
         def knowledge_revision(parts):

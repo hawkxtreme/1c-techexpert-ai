@@ -5,6 +5,7 @@
       "type": "stdio",
       "command": "python3",
       "args": ["-X", "utf8", "${PLUGIN_ROOT}/techexpert.py", "mcp-stdio"],
+      "env": {"PYTHON_MANAGER_AUTOMATIC_INSTALL": "0"},
       "cwd": "${PLUGIN_ROOT}"
     }
   }

@@ -38,7 +38,8 @@ def main(argv=None):
         operation=commands.add_parser(name);operation.add_argument('run_id')
         if name=='operation-cancel':operation.add_argument('--executor-id',required=True)
     kernel_call=commands.add_parser('kernel-call');kernel_call.add_argument('call_id')
-    commands.add_parser('doctor')
+    doctor_command = commands.add_parser('doctor')
+    doctor_command.add_argument('--check-plugin', action='store_true', help='check the shipped Python launcher in this environment')
     starter=commands.add_parser('starter-inspect',help='read only the selected starter list; omitted path selects the current user default')
     starter.add_argument('path',type=Path,nargs='?')
     readiness=commands.add_parser('readiness')
@@ -344,6 +345,12 @@ def main(argv=None):
     try:
         from . import state_location
 
+        if args.command == 'doctor' and args.check_plugin:
+            from .plugin_runtime import check
+
+            result = check()
+            emit(result)
+            return 0 if result['status'] == 'available' else 2
         if args.state_dir is None and args.command not in STATELESS_COMMANDS:
             args.state_dir = Path(state_location.load()['state_dir'])
         if args.command == 'state-location':

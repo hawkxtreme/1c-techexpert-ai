@@ -7,6 +7,7 @@ import re
 from . import input_files, input_zip
 from .inputs import InputError, json_value
 from .operation_state import safe
+from .plugin_runtime import LAUNCH_ENV, LAUNCHER
 from .readiness import MANIFEST, canonical, parse_inventory
 
 
@@ -118,10 +119,11 @@ def read_package(path):
     if plugin.get('skills')!='./skills/' or plugin.get('mcpServers')!='./.mcp.json':
         raise InputError('unsupported local plugin entrypoint')
     local = '${PLUGIN_ROOT}'
-    stdio = dict(type='stdio',command='python3',args=['-X','utf8',local+'/techexpert.py','mcp-stdio'],cwd=local)
-    for configuration in ('mcp.json','.mcp.json'):
-        if _json(contents[configuration]).get('mcpServers')!={'techexpert':stdio}:
-            raise InputError('unsupported local MCP configuration')
+    stdio = dict(type='stdio',command=LAUNCHER,args=['-X','utf8',local+'/techexpert.py','mcp-stdio'],cwd=local)
+    portable, compatibility = (_json(contents[name]).get('mcpServers') for name in ('mcp.json','.mcp.json'))
+    supported = ({'techexpert':stdio}, {'techexpert':dict(stdio, env=LAUNCH_ENV)})
+    if portable != compatibility or portable not in supported:
+        raise InputError('unsupported local MCP configuration')
     book = _json(contents['knowledge/index.json'])
     revision = book.get('revision')
     if type(revision) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}', revision):
