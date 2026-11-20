@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "revision": "2026.11.19.2",
+  "revision": "2026.11.20.1",
   "sources": [
     {
       "id": "1c-tj-event-types",
@@ -974,8 +974,8 @@
       "status": "reviewed",
       "type": "method",
       "author": "TechExpert contributors (agent-assisted)",
-      "date": "2026-11-16",
-      "revision": 2,
+      "date": "2026-11-20",
+      "revision": 3,
       "applicability": "Apply only after verifying environment, source version and evidence scope",
       "signs": [
         "лицензия",

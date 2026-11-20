@@ -2,19 +2,19 @@
 
 Это дополнительный транспорт к тому же конечному каталогу, который использует operation-run. Отдельный ИИ, API-ключ, SDK Python и серверная лицензия для него не требуются. Интерпретацию выполняет текущий harness. Сначала прочитай [контракт операций](operations.md), сохрани согласованные источники и пределы шага.
 
-Если harness поддерживает локальный MCP STDIO, укажи доступный Python, проверенный абсолютный путь к techexpert.py и отдельный частный state-dir. Пример команды запуска процесса:
+Для локального MCP STDIO укажи Python, абсолютный путь к `techexpert.py` в выбранном checkout и частный каталог состояния. Подставь пути компьютера, на котором будет работать MCP.
 
 ```powershell
-python D:/project/1c-techexpert-ai/techexpert.py --state-dir D:/private/techexpert-state mcp-stdio
+python "C:/path/to/1c-techexpert-ai/techexpert.py" --state-dir "C:/path/to/private-state" mcp-stdio
 ```
 
-Процесс читает UTF-8 JSON-RPC из stdin, пишет только сообщения в stdout; диагностика идёт в stderr. Слушающего HTTP-порта нет. Настройка конкретного harness и факт успешного обнаружения инструментов проверяются отдельно; наличие этой команды или plugin.json не доказывает установку MCP в Codex. Глобальные настройки пользователя самостоятельно не заменяй.
+Процесс читает UTF-8 JSON-RPC из stdin, пишет сообщения в stdout и диагностику в stderr. Временный браузерный мастер на loopback открывается при явном вызове `techexpert_init` в полном профиле. Проверяй обнаружение инструментов в выбранном клиенте. [Установка и открытие мастера](first-run.md)
 
 Проверены две формы протокола: 2025-11-25 с initialize/notifications/initialized и 2026-07-28 с server/discover и обязательными protocolVersion/clientCapabilities в _meta каждого запроса. Метаданные клиента не являются правами доступа и не сохраняются в запросе операции. Другие версии и расширения, sampling, elicitation, tasks, ресурсы и prompts не предоставляются.
 
-Полный tools/list возвращает 38 диагностических инструментов: techexpert_input_inspect, techexpert_case_analyze/show/coverage/events/evidence/compare, techexpert_comparison_show, techexpert_source_check/compare, techexpert_sample_describe, techexpert_logcfg_prepare/rollback_plan, techexpert_remote_plan/profile_plan/inspect/capture/parse, techexpert_knowledge_search/card, techexpert_os_collect/import, techexpert_artifact_show/evidence, techexpert_apdex_import, techexpert_jr_import/events/record, techexpert_source_snapshot/search/read, techexpert_rac_observe, techexpert_postgresql_observe, techexpert_sqlserver_observe, techexpert_client_import/observe techexpert_investigation_sources и techexpert_fix_verify и techexpert_apdex_prepare. Их operation_key, executor_id, arguments, budget и необязательный context совпадают с полями CLI без поля operation: оно закреплено именем инструмента. Ещё два инструмента — techexpert_code_execute/inspect — выполняют ограниченные программы и читают сохранённый журнал. Пять инструментов управления: techexpert_operation_status/result/reconcile/cancel и techexpert_kernel_call; их точные схемы также возвращает tools/list.
+`tools/list` возвращает актуальные инструменты и их схемы. Управляемому вызову передаются `operation_key`, `executor_id`, `arguments`, необязательные пределы и контекст по схеме инструмента. Название MCP-инструмента задаёт операцию. В CLI её указывают в поле `operation` запроса.
 
-Фиксированный `--profile direct` оставляет 39 диагностических операций и 6 операций управления. `--profile program` предоставляет 2 инструмента для программ и те же 6 операций управления. Полный профиль содержит 53 инструмента. `techexpert_investigation_progress` доступен во всех профилях и принимает `investigation_id`.
+`--profile direct` предоставляет прямые диагностические вызовы, `--profile program` — запуск и чтение программ, `--profile context` — входы и выдачу по политике контекста, ход расследования и поиск по знаниям. `--profile full` включает полный каталог и мастер настройки. Для сохранённых операций используйте `techexpert_operation_status`, `techexpert_operation_result`, `techexpert_operation_cancel`, `techexpert_operation_reconcile` и `techexpert_kernel_call` в поддерживающих их профилях. Ход расследования читает `techexpert_investigation_progress`.
 
 В профилях `full` и `context` доступен `techexpert_investigation_task`. Агент передаёт `operation_key` и `text` из чата, а для нового случая по выбранному шаблону достаточно `template_id`. Для уточнения передай текст и точный `context`. Сохраняются только явно переданные изменения `episode`, где `null` очищает указанное поле. Ответ содержит идентификатор, ревизию записи и текущую ревизию. Текст остаётся в частном отчёте. Сбор источников запускается отдельным действием.
 
@@ -27,11 +27,11 @@ python D:/project/1c-techexpert-ai/techexpert.py --state-dir D:/private/techexpe
 Для проверки переносимого пакета без внешнего SDK:
 
 ```powershell
-python scripts/mcp_sc01_smoke.py --state-dir D:/private/techexpert-mcp-test
-python scripts/mcp_sc01_smoke.py --state-dir D:/private/techexpert-mcp-test --protocol 2025-11-25
+python scripts/mcp_sc01_smoke.py --state-dir "C:/path/to/private-mcp-test"
+python scripts/mcp_sc01_smoke.py --state-dir "C:/path/to/private-mcp-test" --protocol 2025-11-25
 ```
 
-Это явный импорт двух комплектных преобразованных лабораторных случаев, сравнение и проверка десяти фиксированных ответов. В частном mcp-smoke сохраняются конкретные IDs и qa.xml для будущей независимой read-only оценки агента. Передавай модели вопросы, скрыв эталонные ответы. Проверка не запускает 1С, не доказывает новый производственный инцидент, пять повторов, слепую диагностику или преимущество в токенах. Профиль проверки: [MCP0.15](../../../evaluations/mcp-0.15.0.md).
+Сценарий импортирует два комплектных лабораторных снимка, сравнивает их и проверяет ответы MCP. Он сохраняет идентификаторы и `qa.xml` в частном состоянии. Для независимой оценки используй вопросы без эталонных ответов. [Фиксированные проверки](../../../evaluations/mcp-sc01.xml) · [Протокол оценки навыка](../../../evaluations/sc01-codex-skill.md)
 
 source.compare доступен как techexpert_source_compare. Это read-only инструмент с двумя точными ссылками на сохранённые источники; форма before/after одинакова в CLI, MCP и CodeMode. Он не запускает сбор и не требует background-job профиля. Пользовательские снимки и версии отчётов сохраняются; результат требует интерпретации текущим harness.
 
