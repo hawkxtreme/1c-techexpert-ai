@@ -406,7 +406,7 @@ class GuiHTTPTests(unittest.TestCase):
         self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
         self.assertTrue(any(x['id']=='fresh-code' for x in load_profile(self.state_dir)['sources']))
 
-    def test_pinned_gui_cannot_overwrite_a_different_current_profile(self):
+    def test_pinned_gui_saves_changes_for_the_case_without_replacing_current_profile(self):
         from src.techexpert.profiles import save_profile,load_profile
         from src.techexpert.investigations import create,load
         first=save_profile(self.state_dir,self.profile)
@@ -414,19 +414,70 @@ class GuiHTTPTests(unittest.TestCase):
         self.server.investigation_id=doc['investigation_id']
         other=json.loads(json.dumps(self.profile));other['name']='Other environment'
         fresh=save_profile(self.state_dir,other,expected_revision=first['revision'])
-        _,headers,body=self.request('GET','/api/profile');self.assertEqual(json.loads(body)['revision'],first['revision'])
-        status,_,_=self.request('POST','/api/profile',self.profile,headers={'If-Match':'"profile-'+str(first['revision'])+'"'})
-        self.assertEqual(status,409);self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
-        self.assertEqual(load(self.state_dir,doc['investigation_id'])['revision'],doc['revision'])
+        current_file = self.state_dir / 'profiles/current.json'
+        current_bytes = current_file.read_bytes()
+        _, headers, body = self.request('GET', '/api/profile')
+        view = json.loads(body)
+        self.assertEqual(view, first)
+        view['sources'][0]['path'] = str(self.state_dir.parent / 'independent diagnostic journal')
+        tag = {'If-Match': headers['ETag']}
+        status, _, raw = self.request('POST', '/api/profile-compose', {'view': view}, headers=tag)
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(current_file.read_bytes(), current_bytes)
+        self.assertFalse((self.state_dir / 'profiles/3.json').exists())
 
-    def test_unconfigured_pinned_gui_does_not_replace_a_later_global_profile(self):
+        status, _, raw = self.request('POST', '/api/profile', json.loads(raw)['profile'], headers=tag)
+        self.assertEqual(status, 200, raw)
+        saved = json.loads(raw)
+        self.assertEqual(saved['revision'], 3)
+        self.assertEqual(load(self.state_dir, doc['investigation_id']), doc)
+        status, _, raw = self.request('POST', '/api/context', dict(expected_revision=1, profile_revision=3))
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(json.loads(raw)['profile_revision'], 3)
+        self.assertEqual(load(self.state_dir, doc['investigation_id'])['profile_snapshot'], saved)
+        self.assertEqual(load(self.state_dir, doc['investigation_id'], revision=1), doc)
+        self.assertEqual(current_file.read_bytes(), current_bytes)
+        self.assertEqual(load_profile(self.state_dir), fresh)
+        self.assertEqual(self.request('POST', '/api/profile', self.profile, headers=tag)[0], 409)
+
+        next_default = save_profile(self.state_dir, other, expected_revision=fresh['revision'])
+        self.assertEqual(next_default['revision'], 4)
+        self.assertEqual(json.loads((self.state_dir / 'profiles/3.json').read_bytes()), saved)
+
+    def test_unconfigured_pinned_gui_saves_for_the_case_without_adopting_a_later_profile(self):
         from src.techexpert.profiles import save_profile,load_profile
-        from src.techexpert.investigations import create
+        from src.techexpert.investigations import create,load
         doc=create(self.state_dir,dict(task='Initially unconfigured',template_id='TPL-02',time_mode='past',scale='background'))
-        self.server.investigation_id=doc['investigation_id'];fresh=save_profile(self.state_dir,self.profile)
+        self.server.investigation_id = doc['investigation_id']
+        fresh = save_profile(self.state_dir, dict(self.profile, name='Other environment'))
         self.assertIsNone(json.loads(self.request('GET','/api/profile')[2]))
-        status,_,_=self.request('POST','/api/profile',self.profile,headers={'If-Match':'"profile-0"'})
-        self.assertEqual(status,409);self.assertEqual(load_profile(self.state_dir)['revision'],fresh['revision'])
+        status, _, raw = self.request('POST', '/api/profile', self.profile, headers={'If-Match': '"profile-0"'})
+        self.assertEqual(status, 200, raw)
+        saved = json.loads(raw)
+        status, _, raw = self.request('POST', '/api/context', dict(expected_revision=1, profile_revision=saved['revision']))
+        self.assertEqual(status, 200, raw)
+        self.assertEqual(load(self.state_dir, doc['investigation_id'])['profile_snapshot'], saved)
+        self.assertEqual(load_profile(self.state_dir), fresh)
+
+    def test_pending_profile_cannot_replace_a_concurrently_rebound_case(self):
+        from src.techexpert.investigations import create, load, revise
+        from src.techexpert.profiles import save_profile
+
+        other = save_profile(self.state_dir, dict(self.profile, name='Reviewed in chat'))
+        save_profile(self.state_dir, self.profile, expected_revision=other['revision'])
+        doc = create(self.state_dir, {'task': 'Check pinned source configuration'})
+        iid = self.server.investigation_id = doc['investigation_id']
+        self.request('GET', '/api/profile')
+        status, _, raw = self.request('POST', '/api/profile', dict(self.profile, name='Pending from wizard'))
+        self.assertEqual(status, 200, raw)
+        pending = json.loads(raw)['revision']
+
+        # Another agent explicitly pins an older, different profile while the wizard is open.
+        changed = revise(self.state_dir, iid, {'profile_revision': other['revision']}, expected_revision=1)
+        status, _, raw = self.request('POST', '/api/context', dict(expected_revision=changed['revision'], profile_revision=pending))
+        self.assertEqual(status, 400, raw)
+        self.assertIn('profile', json.loads(raw)['error'])
+        self.assertEqual(load(self.state_dir, iid), changed)
 
     def test_profile_etag_is_returned_and_updates_only_after_a_successful_save(self):
         status,headers,_=self.request('GET','/api/profile');self.assertEqual(status,200)

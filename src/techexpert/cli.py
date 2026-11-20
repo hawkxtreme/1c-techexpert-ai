@@ -55,6 +55,7 @@ def main(argv=None):
     update_plan.add_argument('--codex-profile',type=Path);update_plan.add_argument('--maintenance-window',action='store_true')
     commands.add_parser('update-status')
     profile_command=commands.add_parser('profile');profile_command.add_argument('--resolved',action='store_true')
+    profile_command.add_argument('--revision', type=int, help='read an exact saved environment profile revision')
     profile_files_command = commands.add_parser('profile-files', help='check selected local paths or find journal locations for file infobases')
     profile_files_command.add_argument('document', nargs='?', type=Path, help='explicit profile JSON, or the current saved profile')
     journal_discovery = profile_files_command.add_mutually_exclusive_group()
@@ -458,7 +459,7 @@ def main(argv=None):
             from .inputs import read_snapshot,json_value
             result=save_profile(args.state_dir,json_value(read_snapshot(args.document,1024*1024).decode('utf-8-sig'),reject_duplicates=True),expected_revision=args.expected_revision)
         elif args.command == 'profile':
-            result = load_profile(args.state_dir) or dict(status='not_configured', next_step='init')
+            result = load_profile(args.state_dir, revision=args.revision) or dict(status='not_configured', next_step='init')
             if args.resolved and result.get('schema_version'):
                 from .profile_resources import effective_profile
                 result=dict(canonical_schema_version=result['schema_version'],view=effective_profile(result),scope='ephemeral_adapter_configuration_not_runtime_ownership',saved=False,connected=False)

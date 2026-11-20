@@ -1,7 +1,10 @@
+import json
+import subprocess
+import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 from pathlib import Path
+from unittest.mock import patch
 
 
 def profile():
@@ -10,6 +13,20 @@ def profile():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_cli_reads_the_requested_profile_revision(self):
+        from src.techexpert.profiles import save_profile
+
+        with tempfile.TemporaryDirectory() as temp:
+            first = save_profile(temp, profile(), expected_revision=0)
+            current = save_profile(temp, dict(profile(), name='Another environment'), expected_revision=1)
+            cli = Path(__file__).resolve().parents[1] / 'techexpert.py'
+            command = [sys.executable, str(cli), '--state-dir', temp, 'profile']
+            result = subprocess.run(command + ['--revision', str(first['revision']), '--resolved'],
+                                    capture_output=True, check=True, timeout=10)
+            self.assertEqual(json.loads(result.stdout)['view'], first)
+            result = subprocess.run(command, capture_output=True, check=True, timeout=10)
+            self.assertEqual(json.loads(result.stdout), current)
+
     def test_profile_save_uses_expected_revision_without_overwriting_another_context(self):
         from src.techexpert.profiles import save_profile,load_profile
         import inspect

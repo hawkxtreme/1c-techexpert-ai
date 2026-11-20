@@ -16,7 +16,10 @@ from .storage import write_json, default_state_dir
 
 
 class ProfileRevisionConflict(InputError):
-    """The displayed profile no longer names the current environment revision."""
+    """The displayed profile no longer names the revision being edited."""
+
+
+_CURRENT_PROFILE = object()
 
 
 def doctor(state_dir=None):
@@ -205,31 +208,44 @@ def profile_writer(folder):
         lock.unlink()
 
 
-def save_profile(state_dir, profile, *, expected_revision=None):
+def require_profile_revision(profile, expected):
+    if type(expected) is not int or expected < 0:
+        raise InputError('invalid expected profile revision')
+    if (profile['revision'] if profile else 0) != expected:
+        raise ProfileRevisionConflict('profile revision changed; inspect the displayed profile before saving')
+
+
+def save_profile(state_dir, profile, *, expected_revision=None, pinned_profile=_CURRENT_PROFILE):
+    """Allocate a revision against the displayed baseline under the profile writer."""
     clean = validate_profile(profile)
     folder = Path(state_dir) / 'profiles'
     with profile_writer(folder):
-        current=load_profile(state_dir)
-        if current is not None and current['schema_version']==2 and clean['schema_version']==1:
+        current = load_profile(state_dir)
+        previous = current if pinned_profile is _CURRENT_PROFILE else pinned_profile
+        if previous is not None and previous['schema_version'] == 2 and clean['schema_version'] == 1:
             raise ProfileRevisionConflict('profile schema downgrade is not allowed; preserve shared resources')
-        if expected_revision is not None:
-            if type(expected_revision) is not int or expected_revision<0:raise InputError('invalid expected profile revision')
-            if (current['revision'] if current else 0)!=expected_revision:raise ProfileRevisionConflict('profile revision changed; inspect the current profile before saving')
+        if expected_revision is not None or pinned_profile is not _CURRENT_PROFILE:
+            require_profile_revision(previous, expected_revision)
         revisions = [int(p.stem) for p in folder.glob('*.json') if p.stem.isdecimal()]
         clean['revision'] = max(revisions, default=0) + 1
         if len((json.dumps(clean,ensure_ascii=False,indent=2)+'\n').encode('utf-8')) > 1024*1024:
             raise InputError('profile exceeds 1 MiB; reduce its size before saving')
         write_json(folder / f"{clean['revision']}.json", clean)
-        write_json(folder / 'current.json', clean)
+        if previous == current:
+            write_json(folder / 'current.json', clean)
     return clean
 
 
-def load_profile(state_dir):
-    path = Path(state_dir) / 'profiles/current.json'
-    if not path.exists():
+def load_profile(state_dir, *, revision=None):
+    if revision is not None and (type(revision) is not int or revision < 1):
+        raise InputError('invalid environment profile revision')
+    path = Path(state_dir) / 'profiles' / ('current.json' if revision is None else f'{revision}.json')
+    if revision is None and not path.exists():
         return None
-    value = json_value(read_snapshot(path, 1024*1024).decode('utf-8'))
+    value = json_value(read_snapshot(path, 1024*1024).decode('utf-8'), reject_duplicates=revision is not None)
     validate_profile(value)
+    if revision is not None and value.get('revision') != revision:
+        raise InputError('profile revision identity mismatch')
     return value
 
 

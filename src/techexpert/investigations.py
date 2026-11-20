@@ -569,15 +569,16 @@ def _create(state_dir,request,*,identifier,task_note=None):
     _validate(state_dir,doc);doc['analysis_basis_sha256']=_basis(doc)
     return _persist(state_dir,doc)
 
-def revise(state_dir,investigation_id,patch,*,expected_revision):
+def revise(state_dir,investigation_id,patch,*,expected_revision,expected_profile_hashes=None):
     _object(patch,EDITABLE)
     if type(expected_revision) is not int:raise InputError('expected revision required')
     from .investigation_retention import writer
     with writer(state_dir, investigation_id):
-        return _revise(state_dir, investigation_id, patch, expected_revision=expected_revision)
+        return _revise(state_dir, investigation_id, patch, expected_revision=expected_revision,
+                       expected_profile_hashes=expected_profile_hashes)
 
 
-def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None):
+def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None,expected_profile_hashes=None):
     folder=revision_folder(state_dir,investigation_id,1).parent.parent
     lock=folder/'write.lock'
     try:
@@ -622,10 +623,11 @@ def _revise(state_dir,investigation_id,patch,*,expected_revision,task_note=None)
         if 'profile_revision' in changes:
             number=changes.pop('profile_revision')
             if type(number) is not int or number<1:raise InputError('invalid environment profile revision')
-            profile=json_value(read_snapshot(Path(state_dir)/'profiles'/(str(number)+'.json'),1024*1024).decode('utf-8'),reject_duplicates=True)
-            validate_profile(profile)
-            if profile.get('revision')!=number:raise InputError('profile revision identity mismatch')
-            doc.update(profile_snapshot=profile,profile_sha256=_digest(profile))
+            profile = load_profile(state_dir, revision=number)
+            profile_sha256 = _digest(profile)
+            if expected_profile_hashes is not None and (previous['profile_sha256'], profile_sha256) != expected_profile_hashes:
+                raise InputError('source profile changed; review the saved profile and investigation before linking')
+            doc.update(profile_snapshot=profile, profile_sha256=profile_sha256)
         doc.update(changes);doc['revision']+=1;doc['parent_sha256']=_digest(previous)
         doc['created_at']=datetime.now(timezone.utc).isoformat()
         if task_note is not None:investigation_task.append(doc,task_note)

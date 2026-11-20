@@ -40,7 +40,7 @@ class InitServer(ThreadingHTTPServer):
         self.deadline = time.monotonic() + ttl
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
-        self.saved_profile_revision = None
+        self.pending_profile_binding = None
         self.configuration_result = (None, None)
         self.stop_requested = threading.Event()
         super().__init__(('127.0.0.1', 0), InitHandler)
@@ -110,6 +110,28 @@ class InitHandler(BaseHTTPRequestHandler):
             self._error(400,'Для сохранения требуется одна точная ревизия загруженного профиля.')
             return None
         return int(match[1])
+
+    def _editing_profile(self):
+        if self.server.investigation_id is None:
+            return profiles.load_profile(self.server.state_dir)
+        context = setup_context(self.server.state_dir, self.server.investigation_id)
+        return context['profile_snapshot'] if context else None
+
+    def _save_profile(self, data, expected):
+        state = self.server.state_dir
+        identifier = self.server.investigation_id
+        if identifier is None:
+            return profiles.save_profile(state, data, expected_revision=expected)
+
+        from .investigations import _digest, read_for_display
+        from .investigation_retention import writer
+
+        with writer(state, identifier):
+            context = read_for_display(state, identifier)
+            result = profiles.save_profile(state, data, expected_revision=expected,
+                                           pinned_profile=context['profile_snapshot'])
+        self.server.pending_profile_binding = (result['revision'], (context['profile_sha256'], _digest(result)))
+        return result
 
     @staticmethod
     def _context(doc):
@@ -188,10 +210,7 @@ class InitHandler(BaseHTTPRequestHandler):
                 self._reply(200, html.encode('utf-8'), 'text/html; charset=utf-8', nonce)
             elif self.path == '/api/profile':
                 with self.server.profile_lock:
-                    if self.server.investigation_id:
-                        context = setup_context(self.server.state_dir, self.server.investigation_id)
-                        result = context['profile_snapshot'] if context else None
-                    else:result = profiles.load_profile(self.server.state_dir)
+                    result = self._editing_profile()
                 self._json(200, result,etag=self._profile_etag(result))
             elif self.path == '/api/storage':
                 self._json(200, self.server.storage.settings(self.server.investigation_id))
@@ -256,13 +275,13 @@ class InitHandler(BaseHTTPRequestHandler):
                 with self.server.profile_lock:
                     if not self._guard(write=True, api=True):return
                     number=data['profile_revision']
-                    profile=profiles.load_profile(self.server.state_dir)
-                    if (type(number) is not int or number!=self.server.saved_profile_revision
-                        or profile is None or number!=profile['revision']):
-                        raise ValueError('Для привязки требуется актуальная ревизия, сохранённая в этом помощнике.')
+                    pending = self.server.pending_profile_binding
+                    if type(number) is not int or pending is None or number != pending[0]:
+                        raise ValueError('Для привязки укажите ревизию, сохранённую в этом помощнике.')
                     revised=revise(self.server.state_dir,self.server.investigation_id,
-                        {'profile_revision':number},expected_revision=data['expected_revision'])
-                    self.server.saved_profile_revision=None
+                        {'profile_revision':number},expected_revision=data['expected_revision'],
+                        expected_profile_hashes=pending[1])
+                    self.server.pending_profile_binding = None
                     self.server.configuration_result=(number, revised['revision'])
                     result=self._context(revised)
             elif self.path=='/api/ras':
@@ -281,16 +300,13 @@ class InitHandler(BaseHTTPRequestHandler):
                 if expected is None:return
                 from .profile_resources import compose_profile,resource_impact,retain_editor_resources,editor_context
                 with self.server.profile_lock:
-                    current=profiles.load_profile(self.server.state_dir)
-                    if (current['revision'] if current else 0)!=expected:raise profiles.ProfileRevisionConflict('profile revision changed')
-                    if self.server.investigation_id:
-                        from .investigations import load
-                        if load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']!=current:raise profiles.ProfileRevisionConflict('pinned profile differs')
+                    before = self._editing_profile()
+                    profiles.require_profile_revision(before, expected)
                     draft=data.get('draft_profile')
-                    result=compose_profile(draft if draft is not None else current,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'),base_registrations=data.get('base_registrations'),discovery_resources=data.get('discovery_resources'),base_merge=data.get('base_merge'),registration_decisions=data.get('registration_decisions'))
-                    result['profile']=retain_editor_resources(result['profile'],current)
+                    result=compose_profile(draft if draft is not None else before,data['view'],connection_bindings=data.get('connection_bindings'),connection_edits=data.get('connection_edits'),base_registrations=data.get('base_registrations'),discovery_resources=data.get('discovery_resources'),base_merge=data.get('base_merge'),registration_decisions=data.get('registration_decisions'))
+                    result['profile']=retain_editor_resources(result['profile'],before)
                     result['editor']=editor_context(result['profile'])
-                    result['impact']=resource_impact(current,result['profile'])
+                    result['impact']=resource_impact(before,result['profile'])
             elif self.path=='/api/check':
                 result=profiles.check_profile(data)
             elif self.path == '/api/file-check':
@@ -335,12 +351,7 @@ class InitHandler(BaseHTTPRequestHandler):
                 if expected is None:return
                 with self.server.profile_lock:
                     if not self._guard(write=True, api=True):return
-                    if self.server.investigation_id:
-                        from .investigations import load
-                        pinned=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
-                        if pinned!=profiles.load_profile(self.server.state_dir):raise profiles.ProfileRevisionConflict('pinned profile differs')
-                    result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
-                    self.server.saved_profile_revision=result['revision']
+                    result = self._save_profile(data, expected)
                     self.server.configuration_result=(result['revision'], None)
             self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
         except StateSpaceError as error:
@@ -350,7 +361,7 @@ class InitHandler(BaseHTTPRequestHandler):
         except StorageConflict as error:
             self._error(409, str(error))
         except profiles.ProfileRevisionConflict:
-            self._error(409,'Профиль изменён агентом, в другом окне или относится к иной закреплённой ревизии. Настройки не сохранены. Вернитесь в текущий чат, чтобы сопоставить изменения; автоматической перезаписи нет.')
+            self._error(409,'Настройки не сохранены. Откройте актуальную ревизию профиля и сопоставьте изменения в текущем чате.')
         except ValueError as error:
             self._error(400, str(error))
         except OSError:
