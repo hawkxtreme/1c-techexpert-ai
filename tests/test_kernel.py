@@ -84,7 +84,8 @@ class KernelBoundaryTests(unittest.TestCase):
 
     def test_finalization_is_bounded_and_sealed_work_can_be_resumed_without_reimport(self):
         path,request=self.request('case.analyze',manifest=str(ROOT/'examples/sc01/case.json'))
-        request['budget']=dict(timeout_seconds=1.5);path.write_text(json.dumps(request),encoding='utf-8')
+        # Allow the fixture to seal on slower volumes before the injected 10-second promotion delay.
+        request['budget']=dict(timeout_seconds=5);path.write_text(json.dumps(request),encoding='utf-8')
         code='import sys,time;from src.techexpert import kernel_controller,operations;operations._promote=lambda *a,**k:time.sleep(10);kernel_controller.main(sys.argv[1],int(sys.argv[2]))'
         with patch('src.techexpert.kernel_process.controller_argv',side_effect=self.injected(code)):
             call=self.api.invoke(self.state,'run',dict(request=str(path)))

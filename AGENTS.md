@@ -12,6 +12,8 @@ Inputs remain at independent user-selected locations. Private snapshots and inve
 
 The optional per-user state-location setting is a revisioned default for new invocations. Keep the selection separate from the investigation files. Selecting a directory checks its local path and managed free-space floor. Saving changes only the settings file. An explicit --state-dir binds that invocation. Default MCP discovery stays passive. The first managed call with an available state path binds the session, and existing sessions keep their bound directories.
 
+Full MCP `techexpert_init` opens one process-owned loopback wizard only on explicit `open`. Replay the same key within the session. Confirm the page responds before returning its short-lived URL. Status and close return only revisions recorded by that window. Closing or expiry stops the listener and rejects new profile writes. A disconnected session closes its listener. Keep GUI profile compare-and-swap and investigation revision checks in force. Discovery, open and status start no collection and save no profile.
+
 The canonical technical specification remains in the user's Pages. README describes only the implemented local path and its limits. Changes in this repository do not authorize publication, production changes or a new model provider.
 
 Operator OS plans pin one local run, a named target and a bounded time window. Preview is passive. Preserve the ticket and its private state for replay. Return exact bytes from the sealed measurement artifact. Import checks the supplied digest and records reported provenance. A matching hostname and digest do not establish source ownership or incident coverage.

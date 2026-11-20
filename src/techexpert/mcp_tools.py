@@ -30,8 +30,13 @@ CONTEXT_INTAKE='techexpert_context_intake'
 CONTEXT_ATTACH='techexpert_context_attach'
 CONTEXT_TASK='techexpert_investigation_task'
 OS_OBSERVATION='techexpert_os_observation'
+SETUP='techexpert_init'
+SETUP_ACTION='init-setup'
 PROGRESS='techexpert_investigation_progress'
 ATTACH_SCHEMA=cap.obj(dict(run_id=RUN,revision=cap.integer(1,1000,1)),('run_id','revision'))
+SETUP_SCHEMA=cap.obj(dict(action=cap.string(8, enum=['open','status','close']), operation_key=IDENTITY,
+    investigation_id=CALL, entrypoint_sha256=cap.SHA256, ttl_seconds=dict(type='integer', minimum=1, maximum=900)),
+    ('action','operation_key'))
 
 
 def selected_operations(profile='full'):
@@ -47,7 +52,7 @@ def control_names(profile):
     if profile in ('full', 'context'):
         names.update((CONTEXT_READ,CONTEXT_INTAKE,CONTEXT_ATTACH,CONTEXT_TASK))
     if profile=='full':
-        names.add(OS_OBSERVATION)
+        names.update((OS_OBSERVATION,SETUP))
     return names
 
 
@@ -134,10 +139,22 @@ def tools(profile='full'):
             inputSchema=os_observation.argument_schema(),outputSchema=responses.schema(),
             description='Preview, record the exact user-approved OS observation, or read its remaining budget. Does not launch a collection.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
+    if SETUP in controls:
+        result.append(dict(name=SETUP,title='init',inputSchema=deepcopy(SETUP_SCHEMA),outputSchema=responses.schema(),
+            description='Open the local browser setup window explicitly and return its loopback URL. Give it one fresh key per requested setup. '
+                        'Use that key to read saved profile and investigation revisions or close the window. Default lifetime is 15 minutes.',
+            annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     return sorted(result,key=lambda t:t['name'])
 
 
 def prepare(name,arguments,profile='full'):
+    if name == SETUP:
+        request = cap.validate(arguments, SETUP_SCHEMA)
+        if request['action'] == 'open':
+            request.setdefault('ttl_seconds', 900)
+        elif set(request) != {'action','operation_key'}:
+            raise InputError('Status and close accept the original setup key only.')
+        return SETUP_ACTION,request,None
     if name == CONTEXT_TASK:
         return investigation_task.ACTION,dict(request='inline-request.json'),investigation_task.normalize(arguments)
     if name == OS_OBSERVATION:

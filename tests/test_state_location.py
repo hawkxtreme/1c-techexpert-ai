@@ -112,3 +112,17 @@ class StateLocationTests(unittest.TestCase):
         self.assertEqual(code, 0, override)
         self.assertEqual(Path(override['state_dir']), self.selected)
         self.assertEqual(self.command('capabilities')[0], 0)
+
+    def test_low_space_setup_shows_recovery_and_keeps_the_default_mcp_unbound(self):
+        server = mcp_server.Server(None, None, None)
+        self.addCleanup(server.setup.shutdown)
+        with server.pool, patch.object(fs, 'require_free_space', side_effect=fs.StateSpaceError(3)):
+            request = dict(name='techexpert_init', arguments=dict(action='open', operation_key='low-space-setup'))
+            server.launch(1, request, mcp_tools.MODERN)
+            answer, entry = server.outgoing.get(timeout=10)
+            server._release(entry)
+            data = answer['result']['structuredContent']['data']
+            self.assertEqual(data['readiness']['status'], 'state_storage_blocked')
+            self.assertTrue(data['url'].startswith('http://127.0.0.1:'))
+            self.assertIsNone(server.state)
+            self.assertFalse(self.app_data.exists())

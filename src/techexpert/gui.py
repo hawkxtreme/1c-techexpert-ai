@@ -41,18 +41,22 @@ class InitServer(ThreadingHTTPServer):
         self.token = secrets.token_urlsafe(32)
         self.profile_lock = threading.Lock()
         self.saved_profile_revision = None
+        self.configuration_result = (None, None)
+        self.stop_requested = threading.Event()
         super().__init__(('127.0.0.1', 0), InitHandler)
         self.origin = f'http://127.0.0.1:{self.server_port}'
         self.url = f'{self.origin}/#token={self.token}'
 
     def serve_forever(self, poll_interval=0.05):
-        timer = threading.Timer(max(0, self.deadline - time.monotonic()), self.shutdown)
-        timer.daemon = True
-        timer.start()
+        def stop_at_deadline_or_request():
+            self.stop_requested.wait(max(0, self.deadline - time.monotonic()))
+            self.shutdown()
+
+        threading.Thread(target=stop_at_deadline_or_request, daemon=True).start()
         try:
             super().serve_forever(poll_interval=poll_interval)
         finally:
-            timer.cancel()
+            self.stop_requested.set()
             self.server_close()
 
 
@@ -128,7 +132,7 @@ class InitHandler(BaseHTTPRequestHandler):
         if (write and origins != [self.server.origin]) or (origins and origins != [self.server.origin]):
             self._error(403, 'Запрос разрешён только из окна локального помощника.')
             return False
-        if time.monotonic() >= self.server.deadline:
+        if self.server.stop_requested.is_set() or time.monotonic() >= self.server.deadline:
             self._error(410, 'Время работы помощника истекло. Повторите init в текущем чате.')
             return False
         parsed = urlsplit(self.path)
@@ -250,14 +254,17 @@ class InitHandler(BaseHTTPRequestHandler):
                 if not self.server.investigation_id:raise ValueError('Помощник открыт без выбранного расследования.')
                 if set(data)!={'expected_revision','profile_revision'}:raise ValueError('Помощник связывает сохранённые настройки. Вопросы об инциденте уточняются в чате.')
                 with self.server.profile_lock:
+                    if not self._guard(write=True, api=True):return
                     number=data['profile_revision']
                     profile=profiles.load_profile(self.server.state_dir)
                     if (type(number) is not int or number!=self.server.saved_profile_revision
                         or profile is None or number!=profile['revision']):
                         raise ValueError('Для привязки требуется актуальная ревизия, сохранённая в этом помощнике.')
-                    result=self._context(revise(self.server.state_dir,self.server.investigation_id,
-                        {'profile_revision':number},expected_revision=data['expected_revision']))
+                    revised=revise(self.server.state_dir,self.server.investigation_id,
+                        {'profile_revision':number},expected_revision=data['expected_revision'])
                     self.server.saved_profile_revision=None
+                    self.server.configuration_result=(number, revised['revision'])
+                    result=self._context(revised)
             elif self.path=='/api/ras':
                 if set(data)-{'endpoint','executable','docker_container','cluster','infobase'}:raise ValueError('Unsupported RAS parameter')
                 if type(data.get('endpoint')) is not str or ('executable' in data and type(data['executable']) is not str):raise ValueError('RAS endpoint and executable must be text')
@@ -327,12 +334,14 @@ class InitHandler(BaseHTTPRequestHandler):
                 expected=self._expected_profile_revision()
                 if expected is None:return
                 with self.server.profile_lock:
+                    if not self._guard(write=True, api=True):return
                     if self.server.investigation_id:
                         from .investigations import load
                         pinned=load(self.server.state_dir,self.server.investigation_id)['profile_snapshot']
                         if pinned!=profiles.load_profile(self.server.state_dir):raise profiles.ProfileRevisionConflict('pinned profile differs')
                     result = profiles.save_profile(self.server.state_dir, data,expected_revision=expected)
                     self.server.saved_profile_revision=result['revision']
+                    self.server.configuration_result=(result['revision'], None)
             self._json(200, result,etag=self._profile_etag(result) if self.path=='/api/profile' else None)
         except StateSpaceError as error:
             from .readiness import state_storage_help

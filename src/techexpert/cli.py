@@ -30,7 +30,7 @@ def main(argv=None):
     location = commands.add_parser('state-location', help='show or select the service state default for new sessions')
     location.add_argument('--select', type=Path, metavar='DIRECTORY')
     location.add_argument('--expected-revision', type=int)
-    mcp=commands.add_parser('mcp-stdio',help='local finite-tool MCP server over stdio; no network listener')
+    mcp=commands.add_parser('mcp-stdio',help='local fixed-tool MCP server over stdio')
     mcp.add_argument('--profile',choices=['full','direct','program','context'],default='full')
     catalogue=commands.add_parser('capabilities');catalogue.add_argument('operation',nargs='?')
     operation_run=commands.add_parser('operation-run');operation_run.add_argument('request',type=Path)

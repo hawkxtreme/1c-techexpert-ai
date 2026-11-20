@@ -1,4 +1,4 @@
-"""Local MCP stdio transport. Finite tools only; no listener or model provider."""
+"""Local MCP stdio transport with explicitly opened loopback setup."""
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -10,6 +10,7 @@ import threading
 from . import kernel, operation_state as fs, state_location
 from . import mcp_tools as tools
 from .inputs import InputError,json_value
+from .mcp_setup import SetupWindows
 
 MAX_LINE=256*1024
 MAX_IN_FLIGHT=10
@@ -63,11 +64,13 @@ class Server:
         self.outgoing=queue.Queue(maxsize=16);self.pool=ThreadPoolExecutor(max_workers=2,thread_name_prefix='mcp-tool')
         self.incoming=queue.Queue(maxsize=2)
         self.legacy_initialized=False;self.legacy_ready=False
+        self.setup=SetupWindows()
 
     def stop(self):
         self.closed.set()
         with self.lock:
             for entry in self.pending.values():entry['cancel'].set()
+        self.setup.request_shutdown()
 
     def _write(self,data):
         view=memoryview(data)
@@ -128,12 +131,18 @@ class Server:
         if method!='server/discover' and self.legacy_initialized and self.legacy_ready:return tools.LEGACY
         raise RPCError(-32602,'Supply per-request protocolVersion/clientCapabilities or complete the supported legacy initialize handshake.')
 
-    def _state_for_call(self):
+    def _state_for_call(self, *, setup=False):
         # Discovery and refused admission leave a default session eligible for first-run selection.
         with self.lock:
             if self.state is None:
                 selected = fs.safe(Path(state_location.load()['state_dir']))
-                fs.require_free_space(selected)
+                try:
+                    fs.require_free_space(selected)
+                except (InputError, OSError):
+                    # Setup can display the recovery action without binding future managed calls.
+                    if setup:
+                        return selected
+                    raise
                 self.state = selected
             return self.state
 
@@ -150,11 +159,18 @@ class Server:
         def run():
             if entry['cancel'].is_set():self._release(entry);return
             try:
-                call=kernel.invoke(self._state_for_call(),action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
-                value=(call,identifier)
+                if action == tools.SETUP_ACTION:
+                    response=self.setup.call(arguments,lambda:self._state_for_call(setup=True),entry['cancel'])
+                    value=dict(jsonrpc='2.0',id=identifier,result=tools.result(response,version))
+                else:
+                    call=kernel.invoke(self._state_for_call(),action,arguments,wire_version=version,request_document=request,cancel_event=entry['cancel'])
+                    value=(call,identifier)
             except (OSError,ValueError,KeyError,TypeError,RecursionError) as exc:
                 if isinstance(exc, (fs.StateSpaceError, state_location.StateLocationError)):
                     failure = exc.response()
+                elif action == tools.SETUP_ACTION:
+                    failure = dict(status='invalid_input', operation='init', stop_reason='setup_state_unavailable',
+                                   message='Check the selected state path and access from this MCP session.')
                 elif action == 'context-read' and isinstance(exc, PermissionError):
                     from .context_disclosure import state_access_denied
                     failure = state_access_denied()
@@ -237,6 +253,7 @@ class Server:
                     pending=b'';discarding=False
         finally:
             self.stop();self.pool.shutdown(wait=True,cancel_futures=False)
+            self.setup.shutdown()
         return 0
 
 

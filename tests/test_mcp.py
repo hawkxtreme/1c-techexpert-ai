@@ -2,6 +2,7 @@
 import importlib
 import importlib.util
 import hashlib
+import http.client
 import io
 import json
 import os
@@ -14,6 +15,7 @@ import threading
 import time
 import unittest
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
 ROOT=Path(__file__).resolve().parents[1]
 MODERN='2026-07-28'
@@ -65,9 +67,111 @@ class MCPTests(unittest.TestCase):
     def args(self,key='mcp-case',**args):
         return dict(operation_key=key,executor_id='test-harness',arguments=args or dict(card_id='SC01-ORDER-LOAD',limit=80))
 
+    def setup_call(self, process, replies, identifier, action, key='setup-test', **fields):
+        self.send(process, 'tools/call', dict(name='techexpert_init',
+            arguments=dict(action=action, operation_key=key, **fields)), identifier=identifier)
+        return self.receive(replies, identifier)['result']['structuredContent']
+
+    def setup_page(self, url, method, path, body=None, token=True, **extra):
+        address = urlsplit(url)
+        self.assertEqual(address.hostname, '127.0.0.1')
+        browser = http.client.HTTPConnection(address.hostname, address.port, timeout=3)
+        headers = dict(extra)
+        if token:
+            headers['Authorization'] = 'Bearer ' + parse_qs(address.fragment)['token'][0]
+        if body is not None:
+            headers.update(Origin='http://'+address.netloc, **{'Content-Type': 'application/json'})
+            body = json.dumps(body).encode('utf-8')
+        try:
+            browser.request(method, path, body=body, headers=headers)
+            response = browser.getresponse()
+            return response.status, response.read(512*1024)
+        finally:
+            browser.close()
+
+    def test_init_returns_the_link_and_exact_gui_resume_revisions(self):
+        from src.techexpert.investigations import create, load
+
+        document = create(self.state, {'task': 'Private file SC-01 task'})
+        investigation_id = document['investigation_id']
+        process, replies = self.start()
+        entry = ROOT/'skills/techexpert/SKILL.md'
+        entry_hash = hashlib.sha256(entry.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        arguments = dict(investigation_id=investigation_id, entrypoint_sha256=entry_hash)
+        result = self.setup_call(process, replies, 1, 'open', **arguments)
+        self.assertEqual(result['status'], 'succeeded', result)
+        setup = result['data']
+        self.assertEqual(setup['readiness']['status'], 'ready_for_supplied_files')
+        self.assertNotIn('Private file SC-01 task', json.dumps(setup))
+        self.assertFalse((self.state/'profiles').exists())
+        self.assertFalse((self.state/'kernel-calls').exists())
+        url = setup['url']
+        self.assertEqual(self.setup_page(url, 'GET', '/', token=False)[0], 200)
+        self.assertEqual(self.setup_page(url, 'GET', '/api/context', token=False)[0], 401)
+        self.assertEqual(self.setup_call(process, replies, 2, 'open', **arguments)['data']['url'], url)
+        _, raw = self.setup_page(url, 'GET', '/api/context')
+        self.assertEqual(json.loads(raw)['investigation_id'], investigation_id)
+
+        file_base = self.folder/'independent file database'
+        native_tj = self.folder/'independent native journal'
+        profile = dict(schema_version=1, name='Selected environment',
+            bases=[dict(id='file', name='Orders', mode='file', connection=str(file_base))],
+            sources=[dict(id='tj', type='tj', path=str(native_tj), host='', base_ids=['file'], settings={})])
+        status, raw = self.setup_page(url, 'POST', '/api/profile', profile, **{'If-Match': '"profile-0"'})
+        self.assertEqual(status, 200, raw)
+        mid = self.setup_call(process, replies, 3, 'status')['data']
+        self.assertEqual((mid['wizard_status'], mid['profile_revision'], mid['investigation_revision']), ('open', 1, None))
+        self.assertNotIn('url', mid)
+        status, raw = self.setup_page(url, 'POST', '/api/context', dict(expected_revision=1, profile_revision=1))
+        self.assertEqual(status, 200, raw)
+        done = self.setup_call(process, replies, 4, 'status')['data']
+        self.assertEqual((done['investigation_id'], done['profile_revision'], done['investigation_revision']),
+                         (investigation_id, 1, 2))
+        self.assertNotIn('url', done)
+        self.assertEqual(load(self.state, investigation_id)['profile_snapshot']['sources'][0]['path'], str(native_tj))
+        self.assertFalse(file_base.exists());self.assertFalse(native_tj.exists())
+        self.assertFalse((self.state/'cases').exists())
+
+    def test_init_busy_replay_and_close_keep_the_url_private(self):
+        process, replies = self.start()
+        opened = self.setup_call(process, replies, 1, 'open')['data']
+        url = opened['url']
+        other = self.setup_call(process, replies, 2, 'open', key='other-user-setup')
+        self.assertEqual(other['stop_reason'], 'setup_busy')
+        self.assertNotIn(url, json.dumps(other))
+        changed = self.setup_call(process, replies, 3, 'open', ttl_seconds=100)
+        self.assertEqual(changed['stop_reason'], 'setup_key_conflict')
+        foreign = self.setup_call(process, replies, 4, 'close', key='other-user-setup')
+        self.assertEqual(foreign['stop_reason'], 'setup_unknown')
+        self.assertEqual(self.setup_page(url, 'GET', '/', token=False)[0], 200)
+        closed = self.setup_call(process, replies, 5, 'close')['data']
+        self.assertEqual(closed['wizard_status'], 'closed')
+        self.assertNotIn('url', closed)
+        with self.assertRaises(OSError):
+            self.setup_page(url, 'GET', '/', token=False)
+        replay = self.setup_call(process, replies, 6, 'open')['data']
+        self.assertEqual(replay['wizard_status'], 'closed')
+        self.assertNotIn('url', replay)
+        self.assertFalse(self.state.exists())
+
+    def test_init_expiry_and_mcp_disconnect_close_the_listening_socket(self):
+        process, replies = self.start()
+        expired_url = self.setup_call(process, replies, 1, 'open', ttl_seconds=1)['data']['url']
+        time.sleep(1.1)
+        expired = self.setup_call(process, replies, 2, 'status')['data']
+        self.assertEqual(expired['wizard_status'], 'expired')
+        with self.assertRaises(OSError):
+            self.setup_page(expired_url, 'GET', '/', token=False)
+        other_url = self.setup_call(process, replies, 3, 'open', key='setup-after-expiry')['data']['url']
+        process.stdin.close()
+        self.assertEqual(process.wait(timeout=10), 0)
+        with self.assertRaises(OSError):
+            self.setup_page(other_url, 'GET', '/', token=False)
+        self.assertFalse(self.state.exists())
+
     def test_catalogue_is_passive_complete_and_closed(self):
         from src.techexpert.capabilities import ROUTES
-        tools=self.tools();self.assertEqual(len(tools),53)
+        tools=self.tools();self.assertEqual(len(tools),54)
         self.assertTrue({'techexpert_'+name.replace('.','_') for name in ROUTES}<=tools.keys())
         self.assertFalse(self.state.exists())
         for tool in tools.values():
@@ -115,7 +219,7 @@ class MCPTests(unittest.TestCase):
         self.send(p,'notifications/initialized',identifier=None,modern=False)
         self.send(p,'tools/list',identifier=2,modern=False)
         result=self.receive(q,2)['result'];self.assertNotIn('resultType',result)
-        self.assertEqual(len(result['tools']),53);self.assertFalse(self.state.exists())
+        self.assertEqual(len(result['tools']),54);self.assertFalse(self.state.exists())
 
     def test_context_profile_exposes_retained_views_and_bundled_knowledge(self):
         p,replies=self.start(profile='context')
