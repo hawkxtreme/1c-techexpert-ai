@@ -135,7 +135,7 @@ class MCPTests(unittest.TestCase):
 
     def test_context_catalogue_runs_private_intake_and_returns_an_attachment(self):
         from src.techexpert import context_policy
-        from src.techexpert.investigations import create,load
+        from src.techexpert.investigations import create,load,revise
         doc=create(self.state,{'task':'Private initial intake'})
         p,replies=self.start(profile='context')
         args=dict(operation='case.analyze',operation_key='initial-context-mcp',executor_id='test',
@@ -176,6 +176,18 @@ class MCPTests(unittest.TestCase):
         self.assertEqual(intake['captured_input_bytes'],(ROOT/'examples/sc01/events.jsonl').stat().st_size)
         self.assertEqual(progress['bytes_scope'],'saved result file size and source lengths recorded at capture')
         self.assertNotIn('Private initial intake',json.dumps(progress))
+        case_id = view['data']['material']['id']
+        labels = ['A-second', attachment]
+        grouped = revise(self.state, iid, dict(attachments=[
+            dict(id=label, kind='case', target_id=case_id) for label in labels]), expected_revision=2)
+        self.send(p,'tools/call',dict(name='techexpert_context_read',arguments=dict(
+            investigation_id=iid, revision=grouped['revision'], kind='case-summary', attachments=labels)),identifier=5)
+        result = self.receive(replies,5)['result']
+        self.assertFalse(result['isError'])
+        group = result['structuredContent']
+        self.assertEqual(json.loads(result['content'][0]['text']), group)
+        self.assertEqual([row['attachment'] for row in group['data']['views']], labels)
+        self.assertEqual([row['data'] for row in group['data']['views']], [direct['data'], direct['data']])
 
     def test_modern_metadata_required_on_every_request_and_not_borrowed_from_previous(self):
         p,q=self.start();self.send(p,'server/discover');self.receive(q)

@@ -73,8 +73,8 @@ def main(folder,memory_bytes):
         elif action=='context-intake':value=context_intake.acquire(state,request)
         elif action=='context-attach':value=context_intake.attach(state,args['run_id'],int(args['revision']))
         elif action=='context-read':
-            from .context_disclosure import read
-            value=read(state,json_value(args['selection'],reject_duplicates=True))
+            from .context_disclosure import read_selection
+            value=read_selection(state,json_value(args['selection'],reject_duplicates=True))
         elif action=='investigation-progress':
             from .investigation_progress import view
             comparison = json_value(args['comparison'], reject_duplicates=True) if 'comparison' in args else None

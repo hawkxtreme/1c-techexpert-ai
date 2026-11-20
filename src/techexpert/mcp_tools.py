@@ -110,10 +110,11 @@ def tools(profile='full'):
         result.append(dict(name='techexpert_'+suffix,title=suffix,description=description,inputSchema=deepcopy(args),outputSchema=responses.schema(),
             annotations=dict(readOnlyHint=action not in ('reconcile','cancel'),destructiveHint=False,idempotentHint=True,openWorldHint=False)))
     if CONTEXT_READ in controls:
-        from .context_disclosure import argument_schema
-        result.append(dict(name=CONTEXT_READ,title='context.read',inputSchema=argument_schema(),outputSchema=responses.schema(),
-            description='Read one pinned investigation attachment through its reviewed model disclosure policy. '
-                        'Rows contain typed fields and scoped aliases. Each prepared view has a local disclosure receipt.',
+        from .context_disclosure import selection_schema
+        result.append(dict(name=CONTEXT_READ,title='context.read',inputSchema=selection_schema(),outputSchema=responses.schema(),
+            description='Read pinned investigation evidence through its reviewed disclosure policy. '
+                        'Use attachment for a single view or attachments for summaries of one kind and revision. '
+                        'Each prepared view has a local disclosure receipt.',
             annotations=dict(readOnlyHint=False,destructiveHint=False,idempotentHint=False,openWorldHint=False)))
     if CONTEXT_INTAKE in controls:
         result.append(dict(name=CONTEXT_INTAKE,title='context.intake',inputSchema=intake_schema(),outputSchema=responses.schema(),
@@ -142,8 +143,8 @@ def prepare(name,arguments,profile='full'):
     if name == OS_OBSERVATION:
         return os_observation.ACTION,dict(request='inline-request.json'),os_observation.normalize(arguments)
     if name == CONTEXT_READ:
-        from .context_disclosure import compact,validate_request
-        return 'context-read',dict(selection=compact(validate_request(arguments))),None
+        from .context_disclosure import compact,validate_selection
+        return 'context-read',dict(selection=compact(validate_selection(arguments))),None
     if name == CONTEXT_INTAKE:
         if type(arguments) is not dict or set(arguments)-intake_schema()['properties'].keys():
             raise InputError('unsupported local intake arguments')

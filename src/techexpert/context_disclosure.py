@@ -47,6 +47,7 @@ VIEW_READER_CAPABILITIES[context_tj_process.VIEW] = context_tj_process.READER_CA
 VIEW_READER_CAPABILITIES[jr_job_runs.VIEW] = jr_job_runs.READER_CAPABILITY
 ANCHORED_VIEWS = {context_journal_match.VIEW,context_tj_process.VIEW}
 PAGES = ('tj-events', 'jr-events')
+SUMMARY_VIEWS = ('case-summary', 'comparison', FIX_VIEW, APDEX_VIEW)
 MAX_ROWS = 40
 MAX_RECEIPTS = 4096
 AUDIT_NAME = re.compile(r'[0-9]{20}-[a-f0-9]{32}\.json')
@@ -74,6 +75,32 @@ def argument_schema():
         within_seconds=dict(type='integer', minimum=1, maximum=context_journal_match.MAX_RADIUS),
         metric_group=cap.string(8,enum=list(context_os_window.GROUPS)),
     ), ('investigation_id', 'revision', 'attachment', 'kind'))
+
+
+def selection_schema():
+    schema = argument_schema()
+    schema['required'].remove('attachment')
+    schema['properties']['attachments'] = dict(
+        type='array', minItems=2, maxItems=8, uniqueItems=True, items=schema['properties']['attachment'],
+        description='Labels of summary views of one kind in this investigation revision.')
+    schema['oneOf'] = [{'required': ['attachment']}, {'required': ['attachments']}]
+    return schema
+
+
+def validate_selection(value):
+    from .capabilities import validate
+
+    if type(value) is not dict or 'attachments' not in value:
+        return validate_request(value)
+    schema = selection_schema()
+    if set(value) != {*schema['required'], 'attachments'}:
+        raise InputError('select only a revision, summary kind and distinct attachment labels for a group')
+    args = validate(value, schema)
+    if args['kind'] not in SUMMARY_VIEWS:
+        raise InputError('select a summary view when reading several attachments together')
+    if len(set(args['attachments'])) != len(args['attachments']):
+        raise InputError('choose each summary attachment once')
+    return args
 
 
 def validate_request(value):
@@ -402,3 +429,33 @@ def read(state, request, *, expected_policy_sha256=None, consumer=None):
         return _blocked('context_receipt_unavailable', 'Check the local disclosure journal or retry after the current policy update.')
     return dict(status='succeeded', operation='context.read', data=data, disclosure=entry,
                 truncated=data['byte_limit_reached'], limitations=_limitations(kind))
+
+
+def read_selection(state, request):
+    args = validate_selection(request)
+    if 'attachments' not in args:
+        return read(state, args)
+
+    labels = args.pop('attachments')
+    views = []
+    shared = None
+    for label in labels:
+        expected = shared['policy_sha256'] if shared is not None else None
+        result = read(state, dict(args, attachment=label), expected_policy_sha256=expected)
+        if result['status'] != 'succeeded':
+            return dict(result, blocked_attachment=label)
+        entry = result['disclosure']
+        if shared is None:
+            shared = {key: entry[key] for key in ('view', 'state', 'investigation_id', 'investigation_revision',
+                                                'policy_scope_sha256', 'policy_sha256', 'policy')}
+        proof = {key: entry[key] for key in ('id', 'source_id', 'source_kind', 'source_report_sha256',
+                    'payload_sha256', 'payload_bytes', 'reference') if key in entry}
+        views.append(dict(attachment=label, data=result['data'], disclosure=proof))
+
+    data = dict(views=views)
+    payload = compact(data).encode('utf-8')
+    if len(payload) > shared['policy']['max_bytes']:
+        return _blocked('context_output_limit', 'Read fewer summaries within the reviewed disclosure byte limit.')
+    shared.update(views_prepared=len(views), payload_bytes=len(payload), payload_sha256=sha256(payload).hexdigest())
+    return dict(status='succeeded', operation='context.read', data=data, disclosure=shared,
+                truncated=False, limitations=_limitations(args['kind']))

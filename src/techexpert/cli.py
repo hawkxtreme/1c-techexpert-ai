@@ -90,7 +90,8 @@ def main(argv=None):
             context_command.add_argument('--offset', type=int)
         if name == 'context-read':
             context_command.add_argument('kind', choices=context_disclosure.VIEWS)
-            context_command.add_argument('--attachment', required=True)
+            context_command.add_argument('--attachment', action='append', required=True,
+                                         help='attachment label; repeat for summaries of one kind')
             for option in ('record','source','event','start','end','metric-group'):
                 context_command.add_argument('--'+option)
             context_command.add_argument('--anchor-attachment')
@@ -364,13 +365,17 @@ def main(argv=None):
                                                       limit=20 if args.limit is None else args.limit)
             else:
                 from . import kernel
-                selection = {key: getattr(args,key) for key in ('investigation_id','revision','kind','attachment',
+                selection = {key: getattr(args,key) for key in ('investigation_id','revision','kind',
                     'record','event','source','offset','limit','linked_run','anchor_attachment','within_seconds','metric_group')
                     if getattr(args,key) is not None}
+                if len(args.attachment) == 1:
+                    selection['attachment'] = args.attachment[0]
+                else:
+                    selection['attachments'] = args.attachment
                 if args.start is not None or args.end is not None:
                     selection['window'] = dict(start=args.start,end=args.end)
                 call = kernel.invoke(args.state_dir, 'context-read',
-                    dict(selection=context_disclosure.compact(context_disclosure.validate_request(selection))))
+                    dict(selection=context_disclosure.compact(context_disclosure.validate_selection(selection))))
                 kernel.emit(call, sys.stdout)
                 return call['exit_code']
         elif args.command.startswith('operation-') or args.command=='kernel-call':

@@ -147,6 +147,74 @@ class ContextDisclosureTests(unittest.TestCase):
         _, history = self.cli('context-history')
         self.assertEqual(history['entries'][0]['state'], 'prepared')
 
+    def test_cli_reads_several_summaries_with_their_own_evidence_receipts(self):
+        from src.techexpert import context_disclosure
+
+        revision = self.doc['revision']
+        self.doc = investigations.revise(self.state, self.doc['investigation_id'], dict(attachments=[
+            dict(id='A-second', kind='case', target_id=self.case['case_id']),
+            dict(id='A-first', kind='case', target_id=self.case['case_id']),
+        ]), expected_revision=revision)
+        self.permit('case')
+        code, reply = self.cli('context-read', 'case-summary', '--attachment', 'A-first',
+                               '--attachment', 'A-second')
+        self.assertEqual(code, 0, reply)
+        views = reply['data']['views']
+        self.assertEqual([view['attachment'] for view in views], ['A-first', 'A-second'])
+        references = {view['disclosure']['reference'] for view in views}
+        self.assertEqual(len(references), 2)
+        for view in views:
+            proof = context_disclosure.verify_case_summary(
+                self.state, view['disclosure']['reference'], self.case)
+            self.assertEqual(proof['attachment'], view['attachment'])
+            self.assertEqual(view['data']['native_event_count'], 2)
+        payload = context_disclosure.compact(reply['data']).encode('utf8')
+        self.assertEqual(reply['disclosure']['payload_bytes'], len(payload))
+        self.assertEqual(reply['disclosure']['payload_sha256'], sha256(payload).hexdigest())
+
+    def test_mcp_group_uses_the_current_policy_at_delivery(self):
+        from src.techexpert import kernel, mcp_tools
+
+        self.doc = investigations.revise(self.state, self.doc['investigation_id'], dict(attachments=[
+            dict(id=label, kind='case', target_id=self.case['case_id']) for label in ('A-1', 'A-2')
+        ]), expected_revision=self.doc['revision'])
+        self.permit('case')
+        request = dict(investigation_id=self.doc['investigation_id'], revision=self.doc['revision'],
+                       kind='case-summary', attachments=['A-1', 'A-2'])
+        action, arguments, _ = mcp_tools.prepare('techexpert_context_read', request, 'context')
+        call = kernel.invoke(self.state, action, arguments, wire_version='2025-11-25')
+        self.assertEqual(call['exit_code'], 0)
+        allowed = io.StringIO()
+        kernel.emit(call, allowed)
+        payload = json.loads(allowed.getvalue())['structuredContent']
+        self.assertEqual([row['attachment'] for row in payload['data']['views']], ['A-1', 'A-2'])
+        self.permit()
+        stream = io.StringIO()
+        kernel.emit(call, stream)
+        response = json.loads(stream.getvalue())
+        self.assertTrue(response['isError'])
+        self.assertEqual(response['structuredContent']['stop_reason'], 'context_policy_changed')
+        self.assertIsNone(response['structuredContent']['data'])
+
+    def test_group_respects_the_reviewed_byte_limit_and_rejects_duplicate_labels(self):
+        from src.techexpert import context_disclosure, context_policy, mcp_tools
+
+        attachments = ['A-' + str(index) for index in range(1, 9)]
+        self.doc = investigations.revise(self.state, self.doc['investigation_id'], dict(attachments=[
+            dict(id=label, kind='case', target_id=self.case['case_id']) for label in attachments
+        ]), expected_revision=self.doc['revision'])
+        approval = (self.state, self.doc['investigation_id'], self.doc['revision'], ['case'], 4096)
+        context_policy.save(*approval, context_policy.plan(*approval)['plan_sha256'])
+        request = dict(investigation_id=self.doc['investigation_id'], revision=self.doc['revision'],
+                       kind='case-summary', attachments=attachments)
+        with self.assertRaises(InputError):
+            mcp_tools.prepare('techexpert_context_read', dict(request, attachments=['A-1', 'A-1']), 'context')
+        options = [value for label in attachments for value in ('--attachment', label)]
+        code, reply = self.cli('context-read', 'case-summary', *options)
+        self.assertEqual(code, 2)
+        self.assertEqual(reply['stop_reason'], 'context_output_limit')
+        self.assertIsNone(reply['data'])
+
     def test_journal_views_seal_coordinates_and_hide_comments_and_subjects(self):
         from src.techexpert import native_jr
         journal = self.root / 'journal'

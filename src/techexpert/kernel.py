@@ -51,9 +51,9 @@ def _arguments(action,value):
     if 'revision' in value and (not re.fullmatch('[1-9][0-9]{0,3}',value['revision']) or
                                 int(value['revision'])>1000):raise InputError('invalid investigation revision')
     if action=='context-read':
-        from .context_disclosure import compact,validate_request
+        from .context_disclosure import compact,validate_selection
         from .inputs import json_value
-        return dict(selection=compact(validate_request(json_value(value['selection'],reject_duplicates=True))))
+        return dict(selection=compact(validate_selection(json_value(value['selection'],reject_duplicates=True))))
     if action=='investigation-progress' and 'comparison' in value:
         from .investigation_changes import normalize
         from .inputs import json_value
